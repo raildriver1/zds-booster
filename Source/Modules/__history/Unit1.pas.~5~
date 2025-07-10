@@ -1,0 +1,160 @@
+unit Unit1;
+
+interface
+
+procedure InitGame; // Инициализация
+procedure DrawScene; // Функция отрисовки
+procedure ProcessGame; // Обработка игровой логики
+procedure FreeResources; // Освобождение ресурсов
+
+implementation
+
+uses
+  OpenGL, Windows, DrawFunc3D, Variables, EngineUtils, Math, EngineCore;
+
+var
+  // Переменные для отслеживания вращения объектов
+  RotationAngleX, RotationAngleY, RotationAngleZ: Single;
+  // Позиции объектов
+  SpherePositions: array[0..4] of TVertex;
+  // Множитель скорости вращения
+  RotationSpeed: Single;
+  // Цвета объектов
+  ObjectColor: array[0..4] of Integer;
+  // Время для анимации
+  Time: Single;
+  i: Integer;
+
+// Функция отрисовки сцены
+procedure DrawScene;
+var
+  i: Integer;
+begin
+  // Очищаем буфер глубины
+  ClearZBuffer;
+  
+  // Устанавливаем свет
+  SetLight(0, 5.0, 10.0, 5.0, RGB(255, 255, 220), 20.0, True, 5.0);
+  
+  // Рисуем пол
+  BeginObj3D;
+    Color3D(RGB(100, 100, 150), 255, False, 0);
+    Position3D(0, -3, -20);
+    RotateX(90);
+    DrawPlane(50.0, 50.0);
+  EndObj3D;
+  
+  // Рисуем вращающиеся кубы
+  BeginObj3D;
+    Position3D(-5, -1, -15);
+    RotateX(RotationAngleX);
+    RotateY(RotationAngleY);
+    Color3D(RGB(255, 100, 100), 255, False, 10);
+    DrawCube(2.0, 2.0, 2.0);
+  EndObj3D;
+  
+  BeginObj3D;
+    Position3D(5, -1, -15);
+    RotateZ(RotationAngleZ);
+    RotateY(-RotationAngleY);
+    Color3D(RGB(100, 255, 100), 255, False, 10);
+    DrawCube(2.0, 2.0, 2.0);
+  EndObj3D;
+  
+  // Рисуем сферы с разными цветами
+  for i := 0 to 4 do
+  begin
+    BeginObj3D;
+      Position3D(SpherePositions[i].X, 
+                SpherePositions[i].Y + Sin(Time * 2 + i * 0.7) * 0.5, 
+                SpherePositions[i].Z);
+      Color3D(ObjectColor[i], 255, False, 30);
+      DrawSphere(0.7);
+    EndObj3D;
+  end;
+  
+  // Рисуем центральный объект
+  BeginObj3D;
+    Position3D(0, 0, -15);
+    RotateY(RotationAngleY * 0.5);
+    RotateX(RotationAngleX * 0.3);
+    Color3D(RGB(200, 200, 255), 200, True, 50);
+    DrawEllipse(1.5, 1.0, 1.5);
+  EndObj3D;
+  
+  // Рисуем вращающийся цилиндр
+  BeginObj3D;
+    Position3D(0, -1, -10);
+    RotateX(90);
+    RotateZ(RotationAngleZ);
+    Color3D(RGB(255, 255, 100), 255, False, 20);
+    DrawCylinder(0.5, 3.0);
+  EndObj3D;
+end;
+
+// Игровая логика
+procedure ProcessGame;
+begin
+  // Увеличиваем время для анимации
+  Time := Time + 0.01 * RotationSpeed;
+  
+  // Увеличиваем углы вращения для анимации
+  RotationAngleX := RotationAngleX + 0.2 * RotationSpeed;
+  RotationAngleY := RotationAngleY + 0.3 * RotationSpeed;
+  RotationAngleZ := RotationAngleZ + 0.1 * RotationSpeed;
+  
+  // Изменяем скорость вращения в зависимости от клавиши
+  if IsKeyPressed(VK_UP) then
+    RotationSpeed := RotationSpeed + 0.01
+  else if IsKeyPressed(VK_DOWN) then
+    RotationSpeed := RotationSpeed - 0.01;
+    
+  // Ограничиваем скорость вращения
+  if RotationSpeed < 0.1 then RotationSpeed := 0.1;
+  if RotationSpeed > 5.0 then RotationSpeed := 5.0;
+  
+  // Перемещение сфер влево-вправо
+  if IsKeyPressed(VK_LEFT) then
+  begin
+    for i := 0 to 4 do
+      SpherePositions[i].X := SpherePositions[i].X + 0.1;
+  end
+  else if IsKeyPressed(VK_RIGHT) then
+  begin
+    for i := 0 to 4 do
+      SpherePositions[i].X := SpherePositions[i].X - 0.1;
+  end;
+end;
+
+// Инициализация игры
+procedure InitGame;
+var
+  i: Integer;
+begin
+  // Инициализируем переменные
+  RotationAngleX := 0;
+  RotationAngleY := 0;
+  RotationAngleZ := 0;
+  RotationSpeed := 1.0;
+  Time := 0;
+  
+  // Случайные цвета для сфер
+  Randomize;
+  for i := 0 to 4 do
+  begin
+    ObjectColor[i] := RGB(100 + Random(155), 100 + Random(155), 100 + Random(155));
+    
+    // Инициализация позиций сфер
+    SpherePositions[i].X := -6 + i * 3;
+    SpherePositions[i].Y := 0;
+    SpherePositions[i].Z := -12;
+  end;
+end;
+
+// Освобождение ресурсов
+procedure FreeResources;
+begin
+  // Здесь ничего не нужно освобождать, так как мы не загружали внешних ресурсов
+end;
+
+end.
