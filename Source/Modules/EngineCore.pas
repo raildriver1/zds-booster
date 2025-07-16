@@ -23,7 +23,7 @@ unit EngineCore;
 interface
 uses SysUtils, Windows, Messages, Variables, OpenGl, DrawFunc2D, Textures,
 EngineUtils, DrawFunc3D, Console, Sound, DPC_packages, Advanced3D, Net,
-IniFile;
+IniFile, CheatMenu; // <-- Добавить эту строку
 
 {$R DGLEngine.res}
 {$R Logo.res}
@@ -118,7 +118,7 @@ Xcoord, Ycoord : Integer;
 
 h_Instance : HINST;
 
-
+LastConfigReadTime: DWORD = 0;
 
 procedure SetTextureLODBias(x : integer); stdcall;
 begin
@@ -398,7 +398,18 @@ end;
 {------------------------------------------------------------------------------}
 procedure EngineMainProcess;
 var i : integer;
+CurrentTime: DWORD;
 begin
+
+CurrentTime := GetTimer;
+  
+  // Чтение конфига раз в 2 секунды (2000 мс)
+  if (CurrentTime - LastConfigReadTime) >= 1000 then
+  begin
+    ProcessAllModules;
+    LastConfigReadTime := CurrentTime;
+  end;
+
      if ShowLogo and (LogoA<>0) then LogoA:=LogoA-1;
      if @ProcessGame<>nil then ProcessGame;
 
@@ -448,11 +459,14 @@ begin
       //PSingle($8CC9A4)^ := -2.0;
         ProcessFreecam;
 
-        if not success then
-          begin
-            ApplyMaxVisibleDistance;
-            success := True;
-          end;
+//        if not success then
+//          begin
+//            ApplyMaxVisibleDistance;
+//            ProcessStepForwardConfig;
+//            PatchDrawSkyCall;
+//
+//            success := True;
+//          end;
         
         LoadSettingsAndCustomModels;
 
@@ -472,11 +486,16 @@ begin
          for i:=0 to length(Plugins)-1 do
           if(Plugins[i].Loaded) and (@Plugins[i].DrawPre<>nil) then Plugins[i].DrawPre;
 
+
        if @glDraw<>nil then glDraw;
+
+
 
        if length(Plugins)<>0 then
          for i:=0 to length(Plugins)-1 do
           if(Plugins[i].Loaded) and (@Plugins[i].DrawPost<>nil) then Plugins[i].DrawPost;
+
+       DrawCheatMenu;
 
        if ShowLogo and (LogoA<>0) then
        begin
@@ -852,7 +871,7 @@ begin
       end;
       result := 0;
      end;
-     
+
     WM_SETFOCUS:
      begin
       try
@@ -881,6 +900,10 @@ begin
       begin
         try
           keys[wParam] := True;
+
+          if wParam = VK_INSERT then
+            ToggleMenu;
+
         except
           // Игнорируем ошибки массива клавиш
         end;
@@ -949,6 +972,8 @@ begin
           MouseMove := True;
           MoveXcoord := LOWORD(lParam);
           MoveYcoord := HIWORD(lParam);
+
+          HandleMenuHover(Round(MoveXcoord), Round(MoveYcoord));
         except
           // Игнорируем ошибки мыши
         end;
@@ -964,6 +989,9 @@ begin
           MBLeft := true;
           Xcoord := LOWORD(lParam);
           Ycoord := HIWORD(lParam);
+
+          HandleMenuClick(Xcoord, Ycoord);
+
         except
           // Игнорируем ошибки мыши
         end;
@@ -1021,6 +1049,8 @@ begin
           MouseButton := 0;
           XCoord := 0;
           YCoord := 0;
+
+          HandleMenuMouseUp;
         except
           // Игнорируем ошибки мыши
         end;
@@ -1240,12 +1270,16 @@ var
   real_win_h,real_win_w, i, Major, Minor : integer;
   SysInfo : _SYSTEM_INFO;
 
+
+
  function BoolToInt(Bool : boolean) : byte;
  begin
  if bool then result:=1 else result:=0;
  end;
 
 begin
+
+  LastConfigReadTime := GetTimer;
 
   AddToLogFile(EngineLog,ENGINE_LABEL+' Started...',true,true,true);
   AddToLogFile(EngineLog,'Build: '+VERSION);
@@ -1626,12 +1660,14 @@ end;
 
   LoadLogo;
 
-  if not ConfigLoaded then
-  begin
-    LoadConfigFile;  // Эта функция определена в DrawFunc3D
-  end;
+//  if not ConfigLoaded then
+//  begin
+//    LoadConfigFile;  // Эта функция определена в DrawFunc3D
+//  end;
 
   if @LoadTextures<>nil then LoadTextures;
+
+  InitCheatMenu;
 
   Result := True;
 end;

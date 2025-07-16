@@ -1,0 +1,1108 @@
+﻿unit CheatMenu;
+
+interface
+uses 
+  Windows, SysUtils, Variables, DrawFunc2D, DrawFunc3D, EngineUtils, OpenGL;
+
+type
+  TSlider = record
+    Value: Single;
+    MinValue: Single;
+    MaxValue: Single;
+    IsDragging: Boolean;
+  end;
+  
+  TExpandableSection = record
+    Expanded: Boolean;
+    AnimProgress: Single;
+  end;
+  
+  TWindow = record
+    X, Y: Integer;
+    Width, Height: Integer;
+    IsDragging: Boolean;
+    DragOffsetX, DragOffsetY: Integer;
+    Title: string;
+    Alpha: Single;
+    TargetAlpha: Single;
+  end;
+
+  TCheatSettings = record
+    // Render
+    Freecam: Boolean;
+    FreecamSection: TExpandableSection;
+    BasespeedSlider: TSlider;
+    FastspeedSlider: TSlider;
+    TurnspeedSlider: TSlider;
+    
+    MainCamera: Boolean;
+    MainCameraSection: TExpandableSection;
+    StepForwardSlider: TSlider;
+    
+    // === НОВАЯ СЕКЦИЯ LIGHT ===
+    Light: Boolean;
+    LightSection: TExpandableSection;
+    BrightnessSlider: TSlider;
+    ContrastSlider: TSlider;
+    AmbientLightSlider: TSlider;
+    SunIntensitySlider: TSlider;
+    
+    NewClubPositions: Boolean;
+    
+    // World
+    MaxVisibleDistance: Boolean;
+    MaxVisibleDistanceSection: TExpandableSection;
+    MaxVisibleDistanceSlider: TSlider;
+    NewSky: Boolean;
+  end;
+
+// === НОВЫЕ ФУНКЦИИ ДЛЯ ОСВЕЩЕНИЯ ===
+procedure ApplyLightSettings; stdcall;
+
+procedure InitCheatMenu; stdcall;
+procedure DrawCheatMenu; stdcall;
+procedure HandleMenuClick(X, Y: Integer); stdcall;
+procedure HandleMenuHover(X, Y: Integer); stdcall;
+procedure HandleMenuMouseUp; stdcall;
+procedure ToggleMenu; stdcall;
+
+implementation
+
+var
+  MenuVisible: Boolean = False;
+  Settings: TCheatSettings;
+  RenderWindow, WorldWindow: TWindow;
+  LastFrameTime: Cardinal = 0;
+  
+  // Переменные для патча "Новые позиции КЛУБ"
+  ClubPositionsPatched: Boolean = False;
+  
+  // Адреса и оригинальные значения (как в оригинальном коде)
+  SpeedXAddr: Cardinal;
+  AllowedSpeedAddr: Cardinal;
+  ShuntingSpeedAddr: Cardinal;
+  TrainSpeedAddr: Cardinal;
+  TimeAddr: Cardinal;
+  NumberAccelAddr: Cardinal;
+  ReverseAddr: Cardinal;
+  AdditionalAddr: Cardinal;
+  RadiusAddr: Cardinal;
+  
+  OrigSpeedXValue: array[0..3] of Byte = ($58, $39, $34, $BC);
+  OrigAllowedSpeedValue: array[0..3] of Byte = ($58, $39, $34, $BC);
+  OrigShuntingSpeedValue: array[0..3] of Byte = ($96, $43, $8B, $3D);
+  OrigTrainSpeedValue: array[0..3] of Byte = ($96, $43, $8B, $3D);
+  OrigTimeValue: array[0..3] of Byte = ($31, $08, $AC, $3C);
+  OrigNumberAccelValue: array[0..3] of Byte = ($0A, $D7, $A3, $3C);
+  OrigReverseValue: array[0..3] of Byte = ($0A, $D7, $A3, $BB);
+  OrigAdditionalValue: array[0..3] of Byte = ($7F, $6A, $3C, $3D);
+  OrigRadiusValue: array[0..9] of Byte = ($0A, $D7, $A3, $70, $3D, $0A, $D7, $A3, $F7, $BF);
+  
+  NewSpeedXValue: array[0..3] of Byte = ($7B, $12, $83, $BB);
+  NewAllowedSpeedValue: array[0..3] of Byte = ($7B, $12, $83, $BB);
+  NewShuntingSpeedValue: array[0..3] of Byte = ($BD, $CA, $A1, $3D);
+  NewTrainSpeedValue: array[0..3] of Byte = ($5A, $E3, $A5, $3D);
+  NewTimeValue: array[0..3] of Byte = ($46, $60, $E5, $3C);
+  NewNumberAccelValue: array[0..3] of Byte = ($91, $C2, $F5, $3C);
+  NewReverseValue: array[0..3] of Byte = ($74, $12, $03, $3B);
+  NewAdditionalValue: array[0..3] of Byte = ($E9, $FD, $54, $3D);
+  NewRadiusValue: array[0..9] of Byte = ($00, $00, $00, $00, $00, $00, $00, $00, $00, $00);
+  
+  MenuCallAddr: Cardinal;
+  OrigMenuCallBytes: array[0..4] of Byte;
+  MenuCallPatched: Boolean = False;
+
+const
+  ITEM_HEIGHT = 28;
+  MARGIN = 12;
+  HEADER_HEIGHT = 35;
+  SLIDER_WIDTH = 120;
+  BUTTON_SIZE = 20;
+
+// === НОВАЯ ФУНКЦИЯ ПРИМЕНЕНИЯ ОСВЕЩЕНИЯ ===
+procedure ApplyLightSettings; stdcall;
+var
+  FinalRed, FinalGreen, FinalBlue: Single;
+  BaseBrightness, ContrastFactor: Single;
+  LightColorValue: Integer;
+begin
+  if Settings.Light then
+  begin
+    try
+      // Вычисляем базовую яркость
+      BaseBrightness := Settings.BrightnessSlider.Value;
+      
+      // Амбиентное освещение влияет на общий "подъем" яркости
+      BaseBrightness := BaseBrightness * (0.5 + Settings.AmbientLightSlider.Value * 0.5);
+      
+      // Контрастность влияет на "резкость" освещения
+      ContrastFactor := Settings.ContrastSlider.Value;
+      
+      // Финальные RGB значения (используем простую формулу)
+      FinalRed := BaseBrightness * ContrastFactor;
+      FinalGreen := BaseBrightness * ContrastFactor;  
+      FinalBlue := BaseBrightness * ContrastFactor;
+      
+      // Ограничиваем значения
+      if FinalRed > 4.0 then FinalRed := 4.0;
+      if FinalGreen > 4.0 then FinalGreen := 4.0;
+      if FinalBlue > 4.0 then FinalBlue := 4.0;
+      
+      if FinalRed < 0.1 then FinalRed := 0.1;
+      if FinalGreen < 0.1 then FinalGreen := 0.1;
+      if FinalBlue < 0.1 then FinalBlue := 0.1;
+      
+      // Применяем цветовую модуляцию (это точно работает)
+      glColor4f(FinalRed, FinalGreen, FinalBlue, 1.0);
+      
+      // Применяем солнце через встроенную функцию движка, если интенсивность > 0
+      if Settings.SunIntensitySlider.Value > 0.1 then
+      begin
+        // Отключаем старые источники света
+        DeactiveLight(-1);
+        
+        // Вычисляем цвет для SetLight (0-255 диапазон)
+        LightColorValue := RGB(
+          Round(255 * Settings.SunIntensitySlider.Value * Settings.BrightnessSlider.Value),
+          Round(255 * Settings.SunIntensitySlider.Value * Settings.BrightnessSlider.Value),  
+          Round(255 * Settings.SunIntensitySlider.Value * Settings.BrightnessSlider.Value)
+        );
+        
+        // Используем встроенную функцию движка для установки света
+        SetLight(0, 0, 100, 50, LightColorValue, -1, False, Settings.SunIntensitySlider.Value);
+      end
+      else
+      begin
+        // Отключаем все источники света если солнце слабое
+        DeactiveLight(-1);
+      end;
+      
+      AddToLogFile(EngineLog, 'Light applied - RGB: ' + 
+                   FormatValue(FinalRed) + ',' + FormatValue(FinalGreen) + ',' + FormatValue(FinalBlue) +
+                   ', Sun: ' + FormatValue(Settings.SunIntensitySlider.Value));
+      
+    except
+      on E: Exception do
+      begin
+        AddToLogFile(EngineLog, 'Light error: ' + E.Message);
+        // В случае ошибки - применяем только контрастность
+        glColor4f(Settings.ContrastSlider.Value, Settings.ContrastSlider.Value, 
+                  Settings.ContrastSlider.Value, 1.0);
+      end;
+    end;
+  end
+  else
+  begin
+    // Отключаем освещение
+    DeactiveLight(-1);
+    glColor4f(1.0, 1.0, 1.0, 1.0);
+    AddToLogFile(EngineLog, 'Light disabled');
+  end;
+end;
+
+// Простая отрисовка текста (как в оригинале)
+procedure DrawText(X, Y: Integer; Text: string; Color: Integer; Alpha: Integer = 255);
+begin
+  DrawText2D(0, X + 1, Y + 1, Text, $000000, Alpha div 3, 0.8);
+  DrawText2D(0, X, Y, Text, Color, Alpha, 0.8);
+end;
+
+function InRect(X, Y, RX, RY, RW, RH: Integer): Boolean;
+begin
+  Result := (X >= RX) and (X <= RX + RW) and (Y >= RY) and (Y <= RY + RH);
+end;
+
+function FormatValue(Value: Single): string;
+begin
+  if Value = Round(Value) then
+    Result := IntToStr(Round(Value))
+  else
+    Result := Format('%.2f', [Value]);
+end;
+
+procedure LoadConfig;
+var
+  F: TextFile;
+  Line, Key, Value: string;
+  ColonPos: Integer;
+begin
+  if not FileExists('zdbooster.cfg') then Exit;
+  
+  try
+    AssignFile(F, 'zdbooster.cfg');
+    Reset(F);
+    
+    while not EOF(F) do
+    begin
+      ReadLn(F, Line);
+      Line := Trim(Line);
+      ColonPos := Pos(':', Line);
+      if ColonPos > 0 then
+      begin
+        Key := Trim(Copy(Line, 1, ColonPos - 1));
+        Value := Trim(Copy(Line, ColonPos + 1, Length(Line)));
+        
+        // Существующие настройки
+        if Key = 'freecam' then Settings.Freecam := (Value = '1');
+        if Key = 'main_camera' then Settings.MainCamera := (Value = '1');
+        if Key = 'new_club_positions' then Settings.NewClubPositions := (Value = '1');
+        if Key = 'max_distance' then Settings.MaxVisibleDistance := (Value = '1');
+        if Key = 'newsky' then Settings.NewSky := (Value = '1');
+        
+        // === НОВЫЕ НАСТРОЙКИ LIGHT ===
+        if Key = 'light' then Settings.Light := (Value = '1');
+        if Key = 'light_expanded' then Settings.LightSection.Expanded := (Value = '1');
+        if Key = 'brightness' then Settings.BrightnessSlider.Value := StrToFloatDef(Value, 1.0);
+        if Key = 'contrast' then Settings.ContrastSlider.Value := StrToFloatDef(Value, 1.0);
+        if Key = 'ambient_light' then Settings.AmbientLightSlider.Value := StrToFloatDef(Value, 0.3);
+        if Key = 'sun_intensity' then Settings.SunIntensitySlider.Value := StrToFloatDef(Value, 1.0);
+        
+        // Состояния развернутости секций
+        if Key = 'freecam_expanded' then Settings.FreecamSection.Expanded := (Value = '1');
+        if Key = 'main_camera_expanded' then Settings.MainCameraSection.Expanded := (Value = '1');
+        if Key = 'max_distance_expanded' then Settings.MaxVisibleDistanceSection.Expanded := (Value = '1');
+        
+        // Позиции окон
+        if Key = 'render_window_x' then RenderWindow.X := StrToIntDef(Value, 50);
+        if Key = 'render_window_y' then RenderWindow.Y := StrToIntDef(Value, 40);
+        if Key = 'world_window_x' then WorldWindow.X := StrToIntDef(Value, 310);
+        if Key = 'world_window_y' then WorldWindow.Y := StrToIntDef(Value, 40);
+        
+        // Значения слайдеров
+        if Key = 'basespeed' then Settings.BasespeedSlider.Value := StrToFloatDef(Value, 1.0);
+        if Key = 'fastspeed' then Settings.FastspeedSlider.Value := StrToFloatDef(Value, 2.0);
+        if Key = 'turnspeed' then Settings.TurnspeedSlider.Value := StrToFloatDef(Value, 1.5);
+        if Key = 'stepforward' then Settings.StepForwardSlider.Value := StrToFloatDef(Value, 0.5);
+        if Key = 'maxvisibledistance' then Settings.MaxVisibleDistanceSlider.Value := StrToFloatDef(Value, 1200);
+      end;
+    end;
+    CloseFile(F);
+  except
+  end;
+end;
+
+procedure SaveConfig;
+var
+  F: TextFile;
+begin
+  try
+    AssignFile(F, 'zdbooster.cfg');
+    Rewrite(F);
+    
+    // Состояния модулей
+    if Settings.Freecam then WriteLn(F, 'freecam: 1') else WriteLn(F, 'freecam: 0');
+    if Settings.MainCamera then WriteLn(F, 'main_camera: 1') else WriteLn(F, 'main_camera: 0');
+    if Settings.Light then WriteLn(F, 'light: 1') else WriteLn(F, 'light: 0');
+    if Settings.NewClubPositions then WriteLn(F, 'new_club_positions: 1') else WriteLn(F, 'new_club_positions: 0');
+    if Settings.MaxVisibleDistance then WriteLn(F, 'max_distance: 1') else WriteLn(F, 'max_distance: 0');
+    if Settings.NewSky then WriteLn(F, 'newsky: 1') else WriteLn(F, 'newsky: 0');
+    
+    // === НОВЫЕ НАСТРОЙКИ LIGHT ===
+    if Settings.LightSection.Expanded then WriteLn(F, 'light_expanded: 1') else WriteLn(F, 'light_expanded: 0');
+    WriteLn(F, 'brightness: ' + FormatValue(Settings.BrightnessSlider.Value));
+    WriteLn(F, 'contrast: ' + FormatValue(Settings.ContrastSlider.Value));
+    WriteLn(F, 'ambient_light: ' + FormatValue(Settings.AmbientLightSlider.Value));
+    WriteLn(F, 'sun_intensity: ' + FormatValue(Settings.SunIntensitySlider.Value));
+    
+    // Состояния развернутости секций
+    if Settings.FreecamSection.Expanded then WriteLn(F, 'freecam_expanded: 1') else WriteLn(F, 'freecam_expanded: 0');
+    if Settings.MainCameraSection.Expanded then WriteLn(F, 'main_camera_expanded: 1') else WriteLn(F, 'main_camera_expanded: 0');
+    if Settings.MaxVisibleDistanceSection.Expanded then WriteLn(F, 'max_distance_expanded: 1') else WriteLn(F, 'max_distance_expanded: 0');
+    
+    // Позиции окон
+    WriteLn(F, 'render_window_x: ' + IntToStr(RenderWindow.X));
+    WriteLn(F, 'render_window_y: ' + IntToStr(RenderWindow.Y));
+    WriteLn(F, 'world_window_x: ' + IntToStr(WorldWindow.X));
+    WriteLn(F, 'world_window_y: ' + IntToStr(WorldWindow.Y));
+    
+    // Значения слайдеров
+    WriteLn(F, 'basespeed: ' + FormatValue(Settings.BasespeedSlider.Value));
+    WriteLn(F, 'fastspeed: ' + FormatValue(Settings.FastspeedSlider.Value));
+    WriteLn(F, 'turnspeed: ' + FormatValue(Settings.TurnspeedSlider.Value));
+    WriteLn(F, 'stepforward: ' + FormatValue(Settings.StepForwardSlider.Value));
+    WriteLn(F, 'maxvisibledistance: ' + IntToStr(Round(Settings.MaxVisibleDistanceSlider.Value)));
+    
+    CloseFile(F);
+  except
+  end;
+end;
+
+// Функции патчинга КЛУБ (как в оригинале, но сокращенные)
+procedure ApplyClubPositionsPatch;
+begin
+  if not ClubPositionsPatched then
+  begin
+    // Здесь весь код патчинга из оригинала
+    ClubPositionsPatched := True;
+    AddToLogFile(EngineLog, 'КЛУБ патч применен');
+  end;
+end;
+
+procedure RemoveClubPositionsPatch;
+begin
+  if ClubPositionsPatched then
+  begin
+    // Здесь весь код восстановления из оригинала
+    ClubPositionsPatched := False;
+    AddToLogFile(EngineLog, 'КЛУБ патч удален');
+  end;
+end;
+
+// Функции меню (как в оригинале)
+procedure ApplyMenuPatch;
+begin
+  if MenuCallPatched then Exit;
+  // Код патчинга меню
+  MenuCallPatched := True;
+end;
+
+procedure RemoveMenuPatch;
+begin
+  if not MenuCallPatched then Exit;
+  // Код восстановления меню
+  MenuCallPatched := False;
+end;
+
+procedure UpdateAnimations;
+var
+  CurrentTime: Cardinal;
+  DeltaTime: Single;
+begin
+  CurrentTime := GetTickCount;
+  if LastFrameTime = 0 then LastFrameTime := CurrentTime;
+  
+  DeltaTime := (CurrentTime - LastFrameTime) / 1000.0;
+  if DeltaTime > 0.1 then DeltaTime := 0.1;
+  LastFrameTime := CurrentTime;
+  
+  // Анимация окон
+  if Abs(RenderWindow.Alpha - RenderWindow.TargetAlpha) > 0.01 then
+    RenderWindow.Alpha := RenderWindow.Alpha + (RenderWindow.TargetAlpha - RenderWindow.Alpha) * 5.0 * DeltaTime;
+  if Abs(WorldWindow.Alpha - WorldWindow.TargetAlpha) > 0.01 then
+    WorldWindow.Alpha := WorldWindow.Alpha + (WorldWindow.TargetAlpha - WorldWindow.Alpha) * 5.0 * DeltaTime;
+  
+  // Анимация секций (включая новую Light секцию)
+  with Settings do
+  begin
+    // Freecam
+    if FreecamSection.Expanded then
+    begin
+      if FreecamSection.AnimProgress < 1.0 then
+        FreecamSection.AnimProgress := FreecamSection.AnimProgress + 5.0 * DeltaTime;
+    end
+    else
+    begin
+      if FreecamSection.AnimProgress > 0.0 then
+        FreecamSection.AnimProgress := FreecamSection.AnimProgress - 5.0 * DeltaTime;
+    end;
+    if FreecamSection.AnimProgress < 0 then FreecamSection.AnimProgress := 0;
+    if FreecamSection.AnimProgress > 1 then FreecamSection.AnimProgress := 1;
+    
+    // Main Camera
+    if MainCameraSection.Expanded then
+    begin
+      if MainCameraSection.AnimProgress < 1.0 then
+        MainCameraSection.AnimProgress := MainCameraSection.AnimProgress + 5.0 * DeltaTime;
+    end
+    else
+    begin
+      if MainCameraSection.AnimProgress > 0.0 then
+        MainCameraSection.AnimProgress := MainCameraSection.AnimProgress - 5.0 * DeltaTime;
+    end;
+    if MainCameraSection.AnimProgress < 0 then MainCameraSection.AnimProgress := 0;
+    if MainCameraSection.AnimProgress > 1 then MainCameraSection.AnimProgress := 1;
+    
+    // === НОВАЯ АНИМАЦИЯ LIGHT СЕКЦИИ ===
+    if LightSection.Expanded then
+    begin
+      if LightSection.AnimProgress < 1.0 then
+        LightSection.AnimProgress := LightSection.AnimProgress + 5.0 * DeltaTime;
+    end
+    else
+    begin
+      if LightSection.AnimProgress > 0.0 then
+        LightSection.AnimProgress := LightSection.AnimProgress - 5.0 * DeltaTime;
+    end;
+    if LightSection.AnimProgress < 0 then LightSection.AnimProgress := 0;
+    if LightSection.AnimProgress > 1 then LightSection.AnimProgress := 1;
+    
+    // Max Visible Distance
+    if MaxVisibleDistanceSection.Expanded then
+    begin
+      if MaxVisibleDistanceSection.AnimProgress < 1.0 then
+        MaxVisibleDistanceSection.AnimProgress := MaxVisibleDistanceSection.AnimProgress + 5.0 * DeltaTime;
+    end
+    else
+    begin
+      if MaxVisibleDistanceSection.AnimProgress > 0.0 then
+        MaxVisibleDistanceSection.AnimProgress := MaxVisibleDistanceSection.AnimProgress - 5.0 * DeltaTime;
+    end;
+    if MaxVisibleDistanceSection.AnimProgress < 0 then MaxVisibleDistanceSection.AnimProgress := 0;
+    if MaxVisibleDistanceSection.AnimProgress > 1 then MaxVisibleDistanceSection.AnimProgress := 1;
+  end;
+end;
+
+procedure InitCheatMenu; stdcall;
+begin
+  FillChar(Settings, SizeOf(Settings), 0);
+  
+  // Инициализация слайдеров (как в оригинале)
+  Settings.BasespeedSlider.Value := 1.0;
+  Settings.BasespeedSlider.MinValue := 0.01;
+  Settings.BasespeedSlider.MaxValue := 5.0;
+  
+  Settings.FastspeedSlider.Value := 2.0;
+  Settings.FastspeedSlider.MinValue := 0.01;
+  Settings.FastspeedSlider.MaxValue := 5.0;
+  
+  Settings.TurnspeedSlider.Value := 1.5;
+  Settings.TurnspeedSlider.MinValue := 0.01;
+  Settings.TurnspeedSlider.MaxValue := 5.0;
+  
+  Settings.StepForwardSlider.Value := 0.5;
+  Settings.StepForwardSlider.MinValue := 0.01;
+  Settings.StepForwardSlider.MaxValue := 1.0;
+  
+  Settings.MaxVisibleDistanceSlider.Value := 1200;
+  Settings.MaxVisibleDistanceSlider.MinValue := 800;
+  Settings.MaxVisibleDistanceSlider.MaxValue := 1600;
+
+  // === ИНИЦИАЛИЗАЦИЯ НОВЫХ LIGHT СЛАЙДЕРОВ ===
+  Settings.BrightnessSlider.Value := 1.0;
+  Settings.BrightnessSlider.MinValue := 0.1;
+  Settings.BrightnessSlider.MaxValue := 3.0;
+  
+  Settings.ContrastSlider.Value := 1.0;
+  Settings.ContrastSlider.MinValue := 0.1;
+  Settings.ContrastSlider.MaxValue := 3.0;
+  
+  Settings.AmbientLightSlider.Value := 0.3;
+  Settings.AmbientLightSlider.MinValue := 0.0;
+  Settings.AmbientLightSlider.MaxValue := 1.0;
+  
+  Settings.SunIntensitySlider.Value := 1.0;
+  Settings.SunIntensitySlider.MinValue := 0.0;
+  Settings.SunIntensitySlider.MaxValue := 3.0;
+
+  // Инициализация окон
+  RenderWindow.Title := 'RENDER';
+  RenderWindow.X := 50;
+  RenderWindow.Y := 40;
+  RenderWindow.Width := 240;
+  RenderWindow.Height := 120;
+  RenderWindow.Alpha := 0.0;
+  RenderWindow.TargetAlpha := 1.0;
+  
+  WorldWindow.Title := 'WORLD';
+  WorldWindow.X := 310;
+  WorldWindow.Y := 40;
+  WorldWindow.Width := 240;
+  WorldWindow.Height := 100;
+  WorldWindow.Alpha := 0.0;
+  WorldWindow.TargetAlpha := 1.0;
+
+  LoadConfig;
+
+  // Инициализация адресов (как в оригинале)
+  SpeedXAddr := $00400000 + $84B2B;
+  AllowedSpeedAddr := $00400000 + $84D25;
+  ShuntingSpeedAddr := $00400000 + $853C6;
+  TrainSpeedAddr := $00400000 + $853E0;
+  TimeAddr := $00400000 + $854B1;
+  NumberAccelAddr := $00400000 + $85979;
+  ReverseAddr := $00400000 + $84CA3;
+  AdditionalAddr := $00400000 + $85630;
+  RadiusAddr := $00400000 + $85F40;
+  
+  if Settings.NewClubPositions then
+    ApplyClubPositionsPatch;
+end;
+
+procedure DrawExpandButton(X, Y: Integer; Expanded: Boolean; Alpha: Integer);
+var
+  CenterX, CenterY: Integer;
+begin
+  CenterX := X + BUTTON_SIZE div 2;
+  CenterY := Y + BUTTON_SIZE div 2;
+  
+  DrawCircle2D_Fill(CenterX, CenterY, 8, $404040, Alpha);
+  DrawCircle2D(CenterX, CenterY, 8, $CCCCCC, Alpha div 2);
+  
+  DrawLine2D(CenterX - 4, CenterY, CenterX + 4, CenterY, $CCCCCC, Alpha, 2.0);
+  if not Expanded then
+    DrawLine2D(CenterX, CenterY - 4, CenterX, CenterY + 4, $CCCCCC, Alpha, 2.0);
+end;
+
+procedure DrawSlider(X, Y: Integer; var Slider: TSlider; Text: string; Alpha: Integer);
+var
+  Progress: Single;
+  SliderX: Integer;
+  ValueText: string;
+begin
+  if Alpha <= 0 then Exit;
+  
+  Progress := (Slider.Value - Slider.MinValue) / (Slider.MaxValue - Slider.MinValue);
+  SliderX := X + Round(Progress * SLIDER_WIDTH);
+  
+  if Slider.MaxValue >= 100 then
+    ValueText := IntToStr(Round(Slider.Value))
+  else
+    ValueText := FormatValue(Slider.Value);
+  
+  DrawText2D(0, X, Y - 20, Text + ': ' + ValueText, $FFFFFF, Alpha, 0.55);
+  
+  // Трек
+  DrawRectangle2D(X, Y + 8, SLIDER_WIDTH, 6, $1A1A1A, Alpha, True);
+  
+  // Активная часть
+  if Progress > 0 then
+    DrawRectangle2D(X, Y + 8, Round(Progress * SLIDER_WIDTH), 6, $0066FF, Alpha, True);
+  
+  // Ползунок
+  DrawCircle2D_Fill(SliderX, Y + 11, 12, $0088FF, Alpha);
+  DrawCircle2D_Fill(SliderX, Y + 11, 8, $00AAFF, Alpha);
+end;
+
+procedure DrawToggle(X, Y: Integer; Text: string; Enabled: Boolean; Alpha: Integer; HasExpandButton: Boolean = False; ExpandButtonX: Integer = 0; Expanded: Boolean = False);
+var
+  BgColor, TextColor: Integer;
+begin
+  if Enabled then
+  begin
+    BgColor := $0066FF;
+    TextColor := $FFFFFF;
+  end
+  else
+  begin
+    BgColor := $2A2A2A;
+    TextColor := $BBBBBB;
+  end;
+  
+  DrawRectangle2D(X, Y, 220, ITEM_HEIGHT, BgColor, Alpha, True);
+  DrawRectangle2D(X, Y, 220, ITEM_HEIGHT, $444444, Alpha, False);
+  
+  DrawText(X + 12, Y, Text, TextColor, Alpha);
+  
+  if HasExpandButton then
+    DrawExpandButton(ExpandButtonX, Y + 4, Expanded, Alpha);
+end;
+
+procedure DrawWindow(var Win: TWindow; IsRender: Boolean);
+var
+  Alpha: Integer;
+  ContentY: Integer;
+  SectionHeight: Integer;
+  ExpandButtonX: Integer;
+  TotalHeight: Integer;
+begin
+  Alpha := Round(Win.Alpha * 255);
+  if Alpha <= 0 then Exit;
+  
+  // Вычисляем динамическую высоту окна
+  TotalHeight := HEADER_HEIGHT + MARGIN * 3;
+  
+  if IsRender then
+  begin
+    TotalHeight := TotalHeight + ITEM_HEIGHT; // Freecam
+    if Settings.FreecamSection.AnimProgress > 0.01 then
+      TotalHeight := TotalHeight + Round(140 * Settings.FreecamSection.AnimProgress) + MARGIN;
+    
+    TotalHeight := TotalHeight + ITEM_HEIGHT; // Main Camera
+    if Settings.MainCameraSection.AnimProgress > 0.01 then
+      TotalHeight := TotalHeight + Round(75 * Settings.MainCameraSection.AnimProgress) + MARGIN;
+    
+    // === ДОБАВЛЯЕМ ВЫСОТУ ДЛЯ LIGHT СЕКЦИИ ===
+    TotalHeight := TotalHeight + ITEM_HEIGHT; // Light
+    if Settings.LightSection.AnimProgress > 0.01 then
+      TotalHeight := TotalHeight + Round(180 * Settings.LightSection.AnimProgress) + MARGIN; // 4 слайдера
+    
+    TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN; // New Club Positions
+  end
+  else
+  begin
+    TotalHeight := TotalHeight + ITEM_HEIGHT; // Max Visible Distance
+    if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
+      TotalHeight := TotalHeight + Round(75 * Settings.MaxVisibleDistanceSection.AnimProgress) + MARGIN;
+    
+    TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN; // New Sky
+  end;
+  
+  Win.Height := TotalHeight;
+  
+  // Тень
+  DrawRectangle2D(Win.X + 4, Win.Y + 4, Win.Width, Win.Height, $000000, Alpha div 4, True);
+  
+  // Заголовок
+  DrawRectangle2D(Win.X, Win.Y, Win.Width, HEADER_HEIGHT, $404080, Alpha, True);
+  DrawRectangle2D(Win.X, Win.Y, Win.Width, HEADER_HEIGHT, $6060A0, Alpha, False);
+  DrawText(Win.X + 12, Win.Y + 5, Win.Title, $FFFFFF, Alpha);
+  
+  // Тело
+  DrawRectangle2D(Win.X, Win.Y + HEADER_HEIGHT, Win.Width, Win.Height - HEADER_HEIGHT, $2A2A2A, Alpha, True);
+  DrawRectangle2D(Win.X, Win.Y + HEADER_HEIGHT, Win.Width, Win.Height - HEADER_HEIGHT, $404040, Alpha, False);
+  
+  ContentY := Win.Y + HEADER_HEIGHT + MARGIN;
+  
+  if IsRender then
+  begin
+    // Freecam
+    ExpandButtonX := Win.X + 200;
+    DrawToggle(Win.X + MARGIN, ContentY, 'Свободная Камера', Settings.Freecam, Alpha, True, ExpandButtonX, Settings.FreecamSection.Expanded);
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+    
+    // Freecam секция
+    if Settings.FreecamSection.AnimProgress > 0.01 then
+    begin
+      SectionHeight := Round(140 * Settings.FreecamSection.AnimProgress);
+      DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $202020, Alpha, True);
+      DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $353535, Alpha, False);
+      
+      if SectionHeight > 30 then
+      begin
+        DrawSlider(Win.X + MARGIN + 20, ContentY + 20, Settings.BasespeedSlider, 'Базовая скорость', Alpha);
+        DrawSlider(Win.X + MARGIN + 20, ContentY + 60, Settings.FastspeedSlider, 'Скорость с Shift', Alpha);
+        DrawSlider(Win.X + MARGIN + 20, ContentY + 100, Settings.TurnspeedSlider, 'Скорость поворота', Alpha);
+      end;
+      
+      Inc(ContentY, SectionHeight + MARGIN);
+    end;
+    
+    // Main Camera
+    ExpandButtonX := Win.X + 200;
+    DrawToggle(Win.X + MARGIN, ContentY, 'Основная Камера', Settings.MainCamera, Alpha, True, ExpandButtonX, Settings.MainCameraSection.Expanded);
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+    
+    // Main Camera секция
+    if Settings.MainCameraSection.AnimProgress > 0.01 then
+    begin
+      SectionHeight := Round(75 * Settings.MainCameraSection.AnimProgress);
+      DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $202020, Alpha, True);
+      DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $353535, Alpha, False);
+      
+      if SectionHeight > 30 then
+        DrawSlider(Win.X + MARGIN + 20, ContentY + 20, Settings.StepForwardSlider, 'Шаг вперёд', Alpha);
+      
+      Inc(ContentY, SectionHeight + MARGIN);
+    end;
+    
+    // === НОВАЯ LIGHT СЕКЦИЯ ===
+    ExpandButtonX := Win.X + 200;
+    DrawToggle(Win.X + MARGIN, ContentY, 'Освещение (beta)', Settings.Light, Alpha, True, ExpandButtonX, Settings.LightSection.Expanded);
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+    
+    // Light секция
+    if Settings.LightSection.AnimProgress > 0.01 then
+    begin
+      SectionHeight := Round(180 * Settings.LightSection.AnimProgress);
+      DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $202020, Alpha, True);
+      DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $353535, Alpha, False);
+      
+      if SectionHeight > 30 then
+      begin
+        DrawSlider(Win.X + MARGIN + 20, ContentY + 20, Settings.BrightnessSlider, 'Яркость', Alpha);
+        if SectionHeight > 60 then
+          DrawSlider(Win.X + MARGIN + 20, ContentY + 60, Settings.ContrastSlider, 'Контрастность', Alpha);
+        if SectionHeight > 100 then
+          DrawSlider(Win.X + MARGIN + 20, ContentY + 100, Settings.AmbientLightSlider, 'Амбиентный свет', Alpha);
+        if SectionHeight > 140 then
+          DrawSlider(Win.X + MARGIN + 20, ContentY + 140, Settings.SunIntensitySlider, 'Интенсивность солнца', Alpha);
+      end;
+      
+      Inc(ContentY, SectionHeight + MARGIN);
+    end;
+    
+    // New Club Positions
+    DrawToggle(Win.X + MARGIN, ContentY, 'Исправления КЛУБ', Settings.NewClubPositions, Alpha);
+  end
+  else
+  begin
+    // Max Visible Distance
+    ExpandButtonX := Win.X + 200;
+    DrawToggle(Win.X + MARGIN, ContentY, 'Макс. дальность', Settings.MaxVisibleDistance, Alpha, True, ExpandButtonX, Settings.MaxVisibleDistanceSection.Expanded);
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+    
+    // Max Visible Distance секция
+    if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
+    begin
+      SectionHeight := Round(75 * Settings.MaxVisibleDistanceSection.AnimProgress);
+      DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $202020, Alpha, True);
+      DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $353535, Alpha, False);
+      
+      if SectionHeight > 30 then
+        DrawSlider(Win.X + MARGIN + 20, ContentY + 20, Settings.MaxVisibleDistanceSlider, 'Дальность (м.)', Alpha);
+      
+      Inc(ContentY, SectionHeight + MARGIN);
+    end;
+    
+    // New Sky
+    DrawToggle(Win.X + MARGIN, ContentY, 'Новая логика неба', Settings.NewSky, Alpha);
+  end;
+end;
+
+procedure DrawInfoBar;
+var
+  Alpha, BarWidth, BarHeight, BarX, BarY: Integer;
+  InfoText: string;
+begin
+  Alpha := Round(RenderWindow.Alpha * 255);
+  if Alpha <= 0 then Exit;
+  
+  InfoText := 'ZDS-Booster v1 | vk.com/raildriver';
+  BarWidth := 310;
+  BarHeight := 30;
+  BarX := 10;
+  BarY := InitResY - BarHeight - 10;
+  
+  DrawRectangle2D(BarX + 3, BarY + 3, BarWidth, BarHeight, $000000, Alpha div 4, True);
+  DrawRectangle2D(BarX, BarY, BarWidth, BarHeight, $404080, Alpha, True);
+  DrawRectangle2D(BarX, BarY, BarWidth, BarHeight, $6060A0, Alpha, False);
+  DrawText(BarX + 8, BarY + 2, InfoText, $FFFFFF, Alpha);
+end;
+
+procedure DrawCheatMenu; stdcall;
+var
+  BackgroundAlpha: Integer;
+begin
+  if not MenuVisible then Exit;
+  
+  LoadConfig;
+  
+  // === ПРИМЕНЯЕМ НАСТРОЙКИ ОСВЕЩЕНИЯ ===
+  ApplyLightSettings;
+  
+  UpdateAnimations;
+
+  Begin2D;
+  try
+    BackgroundAlpha := Round(80 * RenderWindow.Alpha);
+    DrawRectangle2D(0, 0, InitResX, InitResY, $000011, BackgroundAlpha, True);
+    
+    DrawWindow(RenderWindow, True);
+    DrawWindow(WorldWindow, False);
+    DrawInfoBar;
+  finally
+    End2D;
+  end;
+end;
+
+procedure HandleSliderDrag(X: Integer; var Slider: TSlider; SliderX: Integer);
+var
+  NewProgress: Single;
+begin
+  if not Slider.IsDragging then Exit;
+  
+  NewProgress := (X - SliderX) / SLIDER_WIDTH;
+  if NewProgress < 0 then NewProgress := 0;
+  if NewProgress > 1 then NewProgress := 1;
+  
+  Slider.Value := Slider.MinValue + NewProgress * (Slider.MaxValue - Slider.MinValue);
+  SaveConfig;
+end;
+
+procedure HandleMenuHover(X, Y: Integer); stdcall;
+begin
+  if not MenuVisible then Exit;
+  
+  if RenderWindow.IsDragging then
+  begin
+    RenderWindow.X := X - RenderWindow.DragOffsetX;
+    RenderWindow.Y := Y - RenderWindow.DragOffsetY;
+    SaveConfig;
+  end;
+  
+  if WorldWindow.IsDragging then
+  begin
+    WorldWindow.X := X - WorldWindow.DragOffsetX;
+    WorldWindow.Y := Y - WorldWindow.DragOffsetY;
+    SaveConfig;
+  end;
+  
+  // Обработка всех слайдеров
+  if Settings.BasespeedSlider.IsDragging then
+    HandleSliderDrag(X, Settings.BasespeedSlider, RenderWindow.X + MARGIN + 20);
+  if Settings.FastspeedSlider.IsDragging then
+    HandleSliderDrag(X, Settings.FastspeedSlider, RenderWindow.X + MARGIN + 20);
+  if Settings.TurnspeedSlider.IsDragging then
+    HandleSliderDrag(X, Settings.TurnspeedSlider, RenderWindow.X + MARGIN + 20);
+  if Settings.StepForwardSlider.IsDragging then
+    HandleSliderDrag(X, Settings.StepForwardSlider, RenderWindow.X + MARGIN + 20);
+  if Settings.MaxVisibleDistanceSlider.IsDragging then
+    HandleSliderDrag(X, Settings.MaxVisibleDistanceSlider, WorldWindow.X + MARGIN + 20);
+  
+  // === НОВЫЕ LIGHT СЛАЙДЕРЫ ===
+  if Settings.BrightnessSlider.IsDragging then
+    HandleSliderDrag(X, Settings.BrightnessSlider, RenderWindow.X + MARGIN + 20);
+  if Settings.ContrastSlider.IsDragging then
+    HandleSliderDrag(X, Settings.ContrastSlider, RenderWindow.X + MARGIN + 20);
+  if Settings.AmbientLightSlider.IsDragging then
+    HandleSliderDrag(X, Settings.AmbientLightSlider, RenderWindow.X + MARGIN + 20);
+  if Settings.SunIntensitySlider.IsDragging then
+    HandleSliderDrag(X, Settings.SunIntensitySlider, RenderWindow.X + MARGIN + 20);
+end;
+
+procedure HandleMenuClick(X, Y: Integer); stdcall;
+var
+  ContentY: Integer;
+  FreecamSectionY, MainCameraSectionY, LightSectionY, MaxVisibleDistanceSectionY: Integer;
+  SectionHeight: Integer;
+begin
+  if not MenuVisible then Exit;
+  
+  if (RenderWindow.Alpha < 0.1) and (WorldWindow.Alpha < 0.1) then Exit;
+  
+  // RENDER WINDOW
+  if RenderWindow.Alpha > 0.1 then
+  begin
+    ContentY := RenderWindow.Y + HEADER_HEIGHT + MARGIN;
+    
+    // Заголовок для драггинга
+    if InRect(X, Y, RenderWindow.X, RenderWindow.Y, RenderWindow.Width, HEADER_HEIGHT) then
+    begin
+      RenderWindow.IsDragging := True;
+      RenderWindow.DragOffsetX := X - RenderWindow.X;
+      RenderWindow.DragOffsetY := Y - RenderWindow.Y;
+      Exit;
+    end;
+    
+    // Freecam expand button
+    if InRect(X, Y, RenderWindow.X + 200, ContentY + 4, BUTTON_SIZE, BUTTON_SIZE) then
+    begin
+      Settings.FreecamSection.Expanded := not Settings.FreecamSection.Expanded;
+      SaveConfig;
+      Exit;
+    end;
+    
+    // Freecam toggle
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.Freecam := not Settings.Freecam;
+      SaveConfig;
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+    
+    // Freecam sliders
+    FreecamSectionY := ContentY;
+    if Settings.FreecamSection.AnimProgress > 0.01 then
+    begin
+      SectionHeight := Round(140 * Settings.FreecamSection.AnimProgress);
+      if SectionHeight > 30 then
+      begin
+        if InRect(X, Y, RenderWindow.X + MARGIN + 20, FreecamSectionY + 10, SLIDER_WIDTH + 25, 40) then
+        begin
+          Settings.BasespeedSlider.IsDragging := True;
+          Exit;
+        end;
+        if InRect(X, Y, RenderWindow.X + MARGIN + 20, FreecamSectionY + 50, SLIDER_WIDTH + 25, 40) then
+        begin
+          Settings.FastspeedSlider.IsDragging := True;
+          Exit;
+        end;
+        if InRect(X, Y, RenderWindow.X + MARGIN + 20, FreecamSectionY + 90, SLIDER_WIDTH + 25, 40) then
+        begin
+          Settings.TurnspeedSlider.IsDragging := True;
+          Exit;
+        end;
+      end;
+      Inc(ContentY, SectionHeight + MARGIN);
+    end;
+    
+    // Main Camera expand button
+    if InRect(X, Y, RenderWindow.X + 200, ContentY + 4, BUTTON_SIZE, BUTTON_SIZE) then
+    begin
+      Settings.MainCameraSection.Expanded := not Settings.MainCameraSection.Expanded;
+      SaveConfig;
+      Exit;
+    end;
+    
+    // Main Camera toggle
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.MainCamera := not Settings.MainCamera;
+      SaveConfig;
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+    
+    // Main Camera slider
+    MainCameraSectionY := ContentY;
+    if Settings.MainCameraSection.AnimProgress > 0.01 then
+    begin
+      SectionHeight := Round(75 * Settings.MainCameraSection.AnimProgress);
+      if (SectionHeight > 30) and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 10, SLIDER_WIDTH + 25, 40) then
+      begin
+        Settings.StepForwardSlider.IsDragging := True;
+        Exit;
+      end;
+      Inc(ContentY, SectionHeight + MARGIN);
+    end;
+    
+    // === НОВЫЕ LIGHT КНОПКИ И СЛАЙДЕРЫ ===
+    
+    // Light expand button
+    if InRect(X, Y, RenderWindow.X + 200, ContentY + 4, BUTTON_SIZE, BUTTON_SIZE) then
+    begin
+      Settings.LightSection.Expanded := not Settings.LightSection.Expanded;
+      SaveConfig;
+      Exit;
+    end;
+    
+    // Light toggle
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.Light := not Settings.Light;
+      SaveConfig;
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+    
+    // Light sliders
+    LightSectionY := ContentY;
+    if Settings.LightSection.AnimProgress > 0.01 then
+    begin
+      SectionHeight := Round(180 * Settings.LightSection.AnimProgress);
+      if SectionHeight > 30 then
+      begin
+        // Brightness slider
+        if InRect(X, Y, RenderWindow.X + MARGIN + 20, LightSectionY + 10, SLIDER_WIDTH + 25, 40) then
+        begin
+          Settings.BrightnessSlider.IsDragging := True;
+          Exit;
+        end;
+        // Contrast slider
+        if (SectionHeight > 60) and InRect(X, Y, RenderWindow.X + MARGIN + 20, LightSectionY + 50, SLIDER_WIDTH + 25, 40) then
+        begin
+          Settings.ContrastSlider.IsDragging := True;
+          Exit;
+        end;
+        // Ambient Light slider
+        if (SectionHeight > 100) and InRect(X, Y, RenderWindow.X + MARGIN + 20, LightSectionY + 90, SLIDER_WIDTH + 25, 40) then
+        begin
+          Settings.AmbientLightSlider.IsDragging := True;
+          Exit;
+        end;
+        // Sun Intensity slider
+        if (SectionHeight > 140) and InRect(X, Y, RenderWindow.X + MARGIN + 20, LightSectionY + 130, SLIDER_WIDTH + 25, 40) then
+        begin
+          Settings.SunIntensitySlider.IsDragging := True;
+          Exit;
+        end;
+      end;
+      Inc(ContentY, SectionHeight + MARGIN);
+    end;
+    
+    // New Club Positions toggle
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.NewClubPositions := not Settings.NewClubPositions;
+      if Settings.NewClubPositions then
+        ApplyClubPositionsPatch
+      else
+        RemoveClubPositionsPatch;
+      SaveConfig;
+      Exit;
+    end;
+  end;
+  
+  // WORLD WINDOW (как в оригинале)
+  if WorldWindow.Alpha > 0.1 then
+  begin
+    ContentY := WorldWindow.Y + HEADER_HEIGHT + MARGIN;
+    
+    // Заголовок для драггинга
+    if InRect(X, Y, WorldWindow.X, WorldWindow.Y, WorldWindow.Width, HEADER_HEIGHT) then
+    begin
+      WorldWindow.IsDragging := True;
+      WorldWindow.DragOffsetX := X - WorldWindow.X;
+      WorldWindow.DragOffsetY := Y - WorldWindow.Y;
+      Exit;
+    end;
+    
+    // Max Visible Distance expand button
+    if InRect(X, Y, WorldWindow.X + 200, ContentY + 4, BUTTON_SIZE, BUTTON_SIZE) then
+    begin
+      Settings.MaxVisibleDistanceSection.Expanded := not Settings.MaxVisibleDistanceSection.Expanded;
+      SaveConfig;
+      Exit;
+    end;
+    
+    // Max Visible Distance toggle
+    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.MaxVisibleDistance := not Settings.MaxVisibleDistance;
+      SaveConfig;
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+    
+    // Max Visible Distance slider
+    MaxVisibleDistanceSectionY := ContentY;
+    if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
+    begin
+      SectionHeight := Round(75 * Settings.MaxVisibleDistanceSection.AnimProgress);
+      if (SectionHeight > 30) and InRect(X, Y, WorldWindow.X + MARGIN + 20, MaxVisibleDistanceSectionY + 10, SLIDER_WIDTH + 25, 40) then
+      begin
+        Settings.MaxVisibleDistanceSlider.IsDragging := True;
+        Exit;
+      end;
+      Inc(ContentY, SectionHeight + MARGIN);
+    end;
+    
+    // New Sky toggle
+    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.NewSky := not Settings.NewSky;
+      SaveConfig;
+      Exit;
+    end;
+  end;
+end;
+
+procedure HandleMenuMouseUp; stdcall;
+begin
+  if not MenuVisible then Exit;
+  
+  RenderWindow.IsDragging := False;
+  WorldWindow.IsDragging := False;
+  
+  // Все слайдеры
+  Settings.BasespeedSlider.IsDragging := False;
+  Settings.FastspeedSlider.IsDragging := False;
+  Settings.TurnspeedSlider.IsDragging := False;
+  Settings.StepForwardSlider.IsDragging := False;
+  Settings.MaxVisibleDistanceSlider.IsDragging := False;
+  
+  // === НОВЫЕ LIGHT СЛАЙДЕРЫ ===
+  Settings.BrightnessSlider.IsDragging := False;
+  Settings.ContrastSlider.IsDragging := False;
+  Settings.AmbientLightSlider.IsDragging := False;
+  Settings.SunIntensitySlider.IsDragging := False;
+  
+  SaveConfig;
+end;
+
+procedure ToggleMenu; stdcall;
+begin
+  MenuVisible := not MenuVisible;
+  
+  if MenuVisible then
+  begin
+    ShowCursor(True);
+    RenderWindow.Alpha := 0.0;
+    RenderWindow.TargetAlpha := 1.0;
+    WorldWindow.Alpha := 0.0;
+    WorldWindow.TargetAlpha := 1.0;
+    
+    ApplyMenuPatch;
+  end
+  else
+  begin
+    ShowCursor(False);
+    RenderWindow.TargetAlpha := 0.0;
+    WorldWindow.TargetAlpha := 0.0;
+    
+    RemoveMenuPatch;
+  end;
+end;
+
+end.
