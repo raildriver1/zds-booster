@@ -1,5 +1,5 @@
 ﻿//----------------------------------------------------------------------------//
-//CheatMenu.pas - Простое и рабочее чит-меню (ОПТИМИЗИРОВАНО)                //
+//CheatMenu.pas - Простое и рабочее чит-меню (ИСПРАВЛЕНО)                   //
 //----------------------------------------------------------------------------//
 unit CheatMenu;
 
@@ -123,7 +123,7 @@ var
   DistantModelAddr: Cardinal;                // 494358
   TrafficLightAddrs: array[0..2] of Cardinal; // 48DB9C, 48DC1C, 48DBA0
   
-  // Оригинальные значения дальности (НЕ ВОССТАНАВЛИВАЮТСЯ!)
+  // Оригинальные значения дальности (ТЕПЕРЬ ВОССТАНАВЛИВАЮТСЯ!)
   OrigWireValues: array[0..1] of Single;
   OrigDistantModelValue: Single;
   OrigTrafficLightValues: array[0..2] of Single;
@@ -242,7 +242,7 @@ begin
   AddToLogFile(EngineLog, 'Оригинальные значения освещения сохранены');
 end;
 
-// Чтение оригинальных значений дальности (НО НЕ ВОССТАНАВЛИВАЕМ!)
+// Чтение оригинальных значений дальности (ТЕПЕРЬ ВОССТАНАВЛИВАЮТСЯ!)
 procedure ReadOriginalDistanceValues;
 var
   i: Integer;
@@ -263,7 +263,7 @@ begin
     OrigTrafficLightValues[i] := ReadFloatFromMemory(TrafficLightAddrs[i]);
   
   DistanceValuesRead := True;
-  AddToLogFile(EngineLog, 'Оригинальные значения дальности сохранены (не восстанавливаются)');
+  AddToLogFile(EngineLog, 'Оригинальные значения дальности сохранены');
 end;
 
 // Восстановление дефолтных значений освещения
@@ -292,6 +292,29 @@ begin
   WriteFloatToMemory(SunHeightAddr, OrigSunHeightValue);
   
   AddToLogFile(EngineLog, 'Дефолтные значения освещения восстановлены');
+end;
+
+// НОВАЯ ФУНКЦИЯ: Восстановление оригинальных значений дальности
+procedure RestoreOriginalDistanceValues;
+var
+  i: Integer;
+begin
+  if not DistanceValuesRead then Exit;
+  
+  AddToLogFile(EngineLog, 'Восстанавливаем оригинальные значения дальности...');
+  
+  // Восстанавливаем провода
+  for i := 0 to 1 do
+    WriteFloatToMemory(WireAddrs[i], OrigWireValues[i]);
+  
+  // Восстанавливаем дальние модели
+  WriteFloatToMemory(DistantModelAddr, OrigDistantModelValue);
+  
+  // Восстанавливаем светофоры
+  for i := 0 to 2 do
+    WriteFloatToMemory(TrafficLightAddrs[i], OrigTrafficLightValues[i]);
+  
+  AddToLogFile(EngineLog, 'Оригинальные значения дальности восстановлены');
 end;
 
 // === ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ПРИМЕНЕНИЯ НАСТРОЕК ===
@@ -330,38 +353,57 @@ begin
   AddToLogFile(EngineLog, 'Настройки освещения применены');
 end;
 
-// Применение настроек дальности (С ДЕФОЛТНЫМИ ЗНАЧЕНИЯМИ!)
+// ИСПРАВЛЕННАЯ ФУНКЦИЯ: Применение настроек дальности с восстановлением
 procedure ApplyDistanceSettings;
 var
   WireDistance, DistantModelDistance, TrafficLightDistance: Single;
   i: Integer;
 begin
-  if not Settings.MaxVisibleDistance then Exit;
+  if not Settings.MaxVisibleDistance then 
+  begin
+    // Если MaxVisibleDistance выключен, восстанавливаем все оригинальные значения
+    RestoreOriginalDistanceValues;
+    Exit;
+  end;
   
   // Устанавливаем дефолтные значения для каждой группы
   WireDistance := 250.0;         // Провода
   DistantModelDistance := 300.0; // Дальние модели  
   TrafficLightDistance := 1000.0; // Светофоры
   
-  AddToLogFile(EngineLog, 'Применяем дефолтные значения дальности к выбранным объектам');
+  AddToLogFile(EngineLog, 'Применяем настройки дальности...');
   
-  // Провода
+  // Провода - применяем или восстанавливаем
   if Settings.ShowWires then
   begin
     for i := 0 to 1 do
       WriteFloatToMemory(WireAddrs[i], WireDistance);
+  end
+  else
+  begin
+    for i := 0 to 1 do
+      WriteFloatToMemory(WireAddrs[i], OrigWireValues[i]);
   end;
   
-  // Дальние модели
+  // Дальние модели - применяем или восстанавливаем
   if Settings.ShowDistantModels then
-    WriteFloatToMemory(DistantModelAddr, DistantModelDistance);
+    WriteFloatToMemory(DistantModelAddr, DistantModelDistance)
+  else
+    WriteFloatToMemory(DistantModelAddr, OrigDistantModelValue);
   
-  // Светофоры
+  // Светофоры - применяем или восстанавливаем
   if Settings.ShowTrafficLights then
   begin
     for i := 0 to 2 do
       WriteFloatToMemory(TrafficLightAddrs[i], TrafficLightDistance);
+  end
+  else
+  begin
+    for i := 0 to 2 do
+      WriteFloatToMemory(TrafficLightAddrs[i], OrigTrafficLightValues[i]);
   end;
+  
+  AddToLogFile(EngineLog, 'Настройки дальности применены');
 end;
 
 // === НОВАЯ ФУНКЦИЯ: Отложенное применение настроек ===
@@ -718,6 +760,7 @@ begin
   end;
 end;
 
+// ИСПРАВЛЕННАЯ ФУНКЦИЯ МЕНЮ ПАТЧА
 procedure ApplyMenuPatch;
 var
   OldProtect: Cardinal;
@@ -727,8 +770,14 @@ begin
   if MenuCallPatched then Exit;
   
   try
+    AddToLogFile(EngineLog, 'Применяем меню патч...');
+    
     // Сохраняем оригинальные байты
-    ReadProcessMemory(GetCurrentProcess, Pointer(MenuCallAddr), @OrigMenuCallBytes[0], 5, BytesWritten);
+    if not ReadProcessMemory(GetCurrentProcess, Pointer(MenuCallAddr), @OrigMenuCallBytes[0], 5, BytesWritten) then
+    begin
+      AddToLogFile(EngineLog, 'Ошибка чтения оригинальных байтов меню патча');
+      Exit;
+    end;
     
     // Подготавливаем NOP инструкции (90 90 90 90 90)
     NopBytes[0] := $90;
@@ -738,13 +787,26 @@ begin
     NopBytes[4] := $90;
     
     // Применяем патч
-    VirtualProtect(Pointer(MenuCallAddr), 5, PAGE_EXECUTE_READWRITE, OldProtect);
-    WriteProcessMemory(GetCurrentProcess, Pointer(MenuCallAddr), @NopBytes[0], 5, BytesWritten);
-    VirtualProtect(Pointer(MenuCallAddr), 5, OldProtect, OldProtect);
+    if VirtualProtect(Pointer(MenuCallAddr), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+    begin
+      if WriteProcessMemory(GetCurrentProcess, Pointer(MenuCallAddr), @NopBytes[0], 5, BytesWritten) then
+      begin
+        MenuCallPatched := True;
+        AddToLogFile(EngineLog, 'Меню патч успешно применен');
+      end
+      else
+        AddToLogFile(EngineLog, 'Ошибка записи меню патча');
+      VirtualProtect(Pointer(MenuCallAddr), 5, OldProtect, OldProtect);
+    end
+    else
+      AddToLogFile(EngineLog, 'Ошибка получения прав на запись меню патча');
     
-    MenuCallPatched := True;
   except
-    // Игнорируем ошибки патчинга
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'Исключение при применении меню патча: ' + E.Message);
+      MenuCallPatched := False;
+    end;
   end;
 end;
 
@@ -756,14 +818,28 @@ begin
   if not MenuCallPatched then Exit;
   
   try
-    // Восстанавливаем оригинальные байты
-    VirtualProtect(Pointer(MenuCallAddr), 5, PAGE_EXECUTE_READWRITE, OldProtect);
-    WriteProcessMemory(GetCurrentProcess, Pointer(MenuCallAddr), @OrigMenuCallBytes[0], 5, BytesWritten);
-    VirtualProtect(Pointer(MenuCallAddr), 5, OldProtect, OldProtect);
+    AddToLogFile(EngineLog, 'Восстанавливаем меню патч...');
     
-    MenuCallPatched := False;
+    // Восстанавливаем оригинальные байты
+    if VirtualProtect(Pointer(MenuCallAddr), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+    begin
+      if WriteProcessMemory(GetCurrentProcess, Pointer(MenuCallAddr), @OrigMenuCallBytes[0], 5, BytesWritten) then
+      begin
+        MenuCallPatched := False;
+        AddToLogFile(EngineLog, 'Меню патч успешно восстановлен');
+      end
+      else
+        AddToLogFile(EngineLog, 'Ошибка восстановления меню патча');
+      VirtualProtect(Pointer(MenuCallAddr), 5, OldProtect, OldProtect);
+    end
+    else
+      AddToLogFile(EngineLog, 'Ошибка получения прав на запись при восстановлении меню патча');
+    
   except
-    // Игнорируем ошибки патчинга
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'Исключение при восстановлении меню патча: ' + E.Message);
+    end;
   end;
 end;
 
@@ -861,21 +937,21 @@ begin
   Settings.BrightnessSlider.MinValue := 0.0;
   Settings.BrightnessSlider.MaxValue := 255.0;
   
-  // Инициализация слайдеров
+  // ИСПРАВЛЕННАЯ ИНИЦИАЛИЗАЦИЯ СЛАЙДЕРОВ FREECAM (шаг 0.01, максимум 2)
   Settings.BasespeedSlider.Value := 1.0;
-  Settings.BasespeedSlider.MinValue := 0.1;
-  Settings.BasespeedSlider.MaxValue := 5.0;
+  Settings.BasespeedSlider.MinValue := 0.01;
+  Settings.BasespeedSlider.MaxValue := 2.0;
   
-  Settings.FastspeedSlider.Value := 2.0;
-  Settings.FastspeedSlider.MinValue := 0.1;
-  Settings.FastspeedSlider.MaxValue := 5.0;
+  Settings.FastspeedSlider.Value := 1.5;
+  Settings.FastspeedSlider.MinValue := 0.01;
+  Settings.FastspeedSlider.MaxValue := 2.0;
   
   Settings.TurnspeedSlider.Value := 1.5;
-  Settings.TurnspeedSlider.MinValue := 0.1;
-  Settings.TurnspeedSlider.MaxValue := 5.0;
+  Settings.TurnspeedSlider.MinValue := 0.01;
+  Settings.TurnspeedSlider.MaxValue := 2.0;
   
   Settings.StepForwardSlider.Value := 0.5;
-  Settings.StepForwardSlider.MinValue := 0.1;
+  Settings.StepForwardSlider.MinValue := 0.01;
   Settings.StepForwardSlider.MaxValue := 1.0;
   
   Settings.MaxVisibleDistanceSlider.Value := 1200;
@@ -920,6 +996,9 @@ begin
   AdditionalAddr := $00400000 + $85630;
   RadiusAddr := $00400000 + $85F40;
   
+  // ИНИЦИАЛИЗАЦИЯ АДРЕСА МЕНЮ ПАТЧА
+  MenuCallAddr := $00400000 + $1234AB; // ЗАМЕНИТЕ НА ПРАВИЛЬНЫЙ АДРЕС!
+  
   // Адреса освещения (БЕЗ +400000!)
   MainLightAddr := $4942AC;
   AdditionalLightAddr := $4942B4;
@@ -937,7 +1016,7 @@ begin
   // Читаем оригинальные значения освещения
   ReadOriginalLightingValues;
   
-  // Читаем оригинальные значения дальности (НЕ ВОССТАНАВЛИВАЕМ!)
+  // Читаем оригинальные значения дальности
   ReadOriginalDistanceValues;
   
   // Применяем патч если он был включен в конфиге
@@ -947,6 +1026,10 @@ begin
   // Применяем освещение если оно было включено в конфиге
   if Settings.Lighting then
     ApplyLightingSettings;
+    
+  // Применяем дальность если она была включена в конфиге
+  if Settings.MaxVisibleDistance then
+    ApplyDistanceSettings;
 
   // Остальная инициализация окон...
   RenderWindow.Title := 'RENDER';
@@ -1576,6 +1659,11 @@ begin
       begin
         Settings.MaxVisibleDistanceSection.Expanded := True;
         ApplyDistanceSettings;
+      end
+      else
+      begin
+        // При выключении восстанавливаем оригинальные значения
+        RestoreOriginalDistanceValues;
       end;
       
       // Сначала сохраняем, потом синхронизируем
@@ -1604,25 +1692,31 @@ begin
           Exit;
         end;
         
-        // Чекбоксы
+        // Чекбоксы с исправленной логикой
         if (SectionHeight > 60) and InRect(X, Y, WorldWindow.X + MARGIN + 20, MaxVisibleDistanceSectionY + 50, 180, CHECKBOX_SIZE) then
         begin
           Settings.ShowWires := not Settings.ShowWires;
-          if Settings.MaxVisibleDistance then ApplyDistanceSettings;
+          // Применяем настройки только если главный переключатель включен
+          if Settings.MaxVisibleDistance then 
+            ApplyDistanceSettings;
           SaveConfig;
           Exit;
         end;
         if (SectionHeight > 85) and InRect(X, Y, WorldWindow.X + MARGIN + 20, MaxVisibleDistanceSectionY + 75, 180, CHECKBOX_SIZE) then
         begin
           Settings.ShowDistantModels := not Settings.ShowDistantModels;
-          if Settings.MaxVisibleDistance then ApplyDistanceSettings;
+          // Применяем настройки только если главный переключатель включен
+          if Settings.MaxVisibleDistance then 
+            ApplyDistanceSettings;
           SaveConfig;
           Exit;
         end;
         if (SectionHeight > 110) and InRect(X, Y, WorldWindow.X + MARGIN + 20, MaxVisibleDistanceSectionY + 100, 180, CHECKBOX_SIZE) then
         begin
           Settings.ShowTrafficLights := not Settings.ShowTrafficLights;
-          if Settings.MaxVisibleDistance then ApplyDistanceSettings;
+          // Применяем настройки только если главный переключатель включен
+          if Settings.MaxVisibleDistance then 
+            ApplyDistanceSettings;
           SaveConfig;
           Exit;
         end;

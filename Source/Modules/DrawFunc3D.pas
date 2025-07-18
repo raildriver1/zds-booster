@@ -764,15 +764,19 @@ end;
 
 procedure DrawSkyLayer(textureID: Cardinal; alpha: Byte; modelID: Word);
 begin
-  if textureID > 0 then
-  begin
-    Color3D($FFFFFF, alpha, False, 0.0);
-    SetTexture(textureID);
-    DrawModel(modelID, 0, True);
+  try
+    if (textureID > 0) and (modelID > 0) and (alpha > 0) then
+    begin
+      Color3D($FFFFFF, alpha, False, 0.0);
+      SetTexture(textureID);
+      DrawModel(modelID, 0, True);
+    end;
+  except
+    // Безопасный fallback - пропускаем проблемную текстуру
   end;
 end;
 
-procedure DrawSky(x, y, z: Single); 
+procedure DrawSky(x, y, z: Single);
 var
   v5: Single;
   alpha: Byte;
@@ -808,7 +812,11 @@ begin
     end;
     
     // Читаем указатель на структуру времени
-    v7 := PPointer(Pointer($00400000 + $34B5F0))^;
+    try
+      v7 := PPointer(Pointer($00400000 + $34B5F0))^;
+    except
+      v7 := nil;
+    end;
     
     BeginObj3D;
     
@@ -856,28 +864,33 @@ begin
     try
       modelAddr := Pointer(PCardinal(Pointer($09110D70))^ + $02);
       modelID := PWord(modelAddr)^;
+      if modelID = 0 then modelID := 1; // Fallback
     except
-      modelID := 0;
+      modelID := 1;
     end;
     
-    // Читаем стандартные игровые текстуры
+    // Читаем стандартные игровые текстуры с проверками
     try
       textureAddr := Pointer(PCardinal(Pointer($09110D60))^ + $42);
-      dayTextureID := PWord(textureAddr)^; // День
+      dayTextureID := PWord(textureAddr)^;
+      if dayTextureID = 0 then dayTextureID := 1;
       
       textureAddr := Pointer(PCardinal(Pointer($09110D60))^ + $44);
-      sunsetTextureID := PWord(textureAddr)^; // Закат
+      sunsetTextureID := PWord(textureAddr)^;
+      if sunsetTextureID = 0 then sunsetTextureID := 1;
       
       textureAddr := Pointer(PCardinal(Pointer($09110D60))^ + $02);
-      nightTextureID := PWord(textureAddr)^; // Ночь
+      nightTextureID := PWord(textureAddr)^;
+      if nightTextureID = 0 then nightTextureID := 1;
       
       textureAddr := Pointer(PCardinal(Pointer($09110D60))^ + $40);
-      sunriseTextureID := PWord(textureAddr)^; // Рассвет
+      sunriseTextureID := PWord(textureAddr)^;
+      if sunriseTextureID = 0 then sunriseTextureID := 1;
     except
-      dayTextureID := 0;
-      sunsetTextureID := 0;
-      nightTextureID := 0;
-      sunriseTextureID := 0;
+      dayTextureID := 1;
+      sunsetTextureID := 1;
+      nightTextureID := 1;
+      sunriseTextureID := 1;
     end;
     
     a1 := False;
@@ -887,95 +900,123 @@ begin
     begin
       // ===== ЗИМНЕЕ ВРЕМЯ С ПЛАВНЫМИ ПЕРЕХОДАМИ =====
       
-      // 8:00-9:00: Переход предрассветные сумерки → рассвет
-      if (totalMinutes >= 480) and (totalMinutes < 540) then // 8:00-9:00
+      // 7:00-8:30: Чистые предрассветные сумерки
+      if (totalMinutes >= 420) and (totalMinutes < 510) then // 7:00-8:30
       begin
-        alpha := Round((totalMinutes - 480) * 255 / 60); // рассвет нарастает
-        DrawSkyLayer(BoosterSunriseSnowTextureID, alpha, modelID);
-        
-        alpha := Round(255 - (totalMinutes - 480) * 255 / 60); // предрассветные сумерки убывают
+        alpha := 255;
+        if a1 then alpha := 255;
         DrawSkyLayer(BoosterSunriseDawnSnowTextureID, alpha, modelID);
       end
       
-      // 9:00-10:00: Переход рассвет → день
-      else if (totalMinutes >= 540) and (totalMinutes < 600) then // 9:00-10:00
+      // 8:30-9:00: ПЛАВНЫЙ переход предрассветные сумерки → рассвет
+      else if (totalMinutes >= 510) and (totalMinutes < 540) then // 8:30-9:00
       begin
-        alpha := Round((totalMinutes - 540) * 255 / 60); // день нарастает
-        DrawSkyLayer(BoosterDaySnowTextureID, alpha, modelID);
+        // Новая текстура (рассвет) плавно появляется
+        alpha := Round((totalMinutes - 510) * 255 / 30);
+        DrawSkyLayer(BoosterSunriseSnowTextureID, alpha, modelID);
         
-        alpha := Round(255 - (totalMinutes - 540) * 255 / 60); // рассвет убывает
+        // Старая текстура (предрассветные сумерки) плавно исчезает
+        alpha := Round(255 - (totalMinutes - 510) * 255 / 30);
+        DrawSkyLayer(BoosterSunriseDawnSnowTextureID, alpha, modelID);
+      end
+      
+      // 9:00-10:30: Чистый рассвет
+      else if (totalMinutes >= 540) and (totalMinutes < 630) then // 9:00-10:30
+      begin
+        alpha := 255;
+        if a1 then alpha := 255;
         DrawSkyLayer(BoosterSunriseSnowTextureID, alpha, modelID);
       end
       
-      // 10:00-14:00: Чистый день
-      else if (totalMinutes >= 600) and (totalMinutes < 840) then // 10:00-14:00
+      // 10:30-11:00: ПЛАВНЫЙ переход рассвет → день
+      else if (totalMinutes >= 630) and (totalMinutes < 660) then // 10:30-11:00
+      begin
+        // Новая текстура (день) плавно появляется
+        alpha := Round((totalMinutes - 630) * 255 / 30);
+        DrawSkyLayer(BoosterDaySnowTextureID, alpha, modelID);
+        
+        // Старая текстура (рассвет) плавно исчезает
+        alpha := Round(255 - (totalMinutes - 630) * 255 / 30);
+        DrawSkyLayer(BoosterSunriseSnowTextureID, alpha, modelID);
+      end
+      
+      // 11:00-14:30: Чистый день
+      else if (totalMinutes >= 660) and (totalMinutes < 870) then // 11:00-14:30
       begin
         alpha := 255;
         if a1 then alpha := 255;
         DrawSkyLayer(BoosterDaySnowTextureID, alpha, modelID);
       end
       
-      // 14:00-15:00: Переход день → закат
-      else if (totalMinutes >= 840) and (totalMinutes < 900) then // 14:00-15:00
+      // 14:30-15:00: ПЛАВНЫЙ переход день → закат
+      else if (totalMinutes >= 870) and (totalMinutes < 900) then // 14:30-15:00
       begin
-        alpha := Round((totalMinutes - 840) * 255 / 60); // закат нарастает
+        // Новая текстура (закат) плавно появляется
+        alpha := Round((totalMinutes - 870) * 255 / 30);
         DrawSkyLayer(BoosterSunsetSnowTextureID, alpha, modelID);
         
-        alpha := Round(255 - (totalMinutes - 840) * 255 / 60); // день убывает
+        // Старая текстура (день) плавно исчезает
+        alpha := Round(255 - (totalMinutes - 870) * 255 / 30);
         DrawSkyLayer(BoosterDaySnowTextureID, alpha, modelID);
       end
       
-      // 15:00-17:00: Чистый закат
-      else if (totalMinutes >= 900) and (totalMinutes < 1020) then // 15:00-17:00
+      // 15:00-17:30: Чистый закат
+      else if (totalMinutes >= 900) and (totalMinutes < 1050) then // 15:00-17:30
       begin
         alpha := 255;
         if a1 then alpha := 255;
         DrawSkyLayer(BoosterSunsetSnowTextureID, alpha, modelID);
       end
       
-      // 17:00-18:00: Переход закат → сумерки заката
-      else if (totalMinutes >= 1020) and (totalMinutes < 1080) then // 17:00-18:00
+      // 17:30-18:00: ПЛАВНЫЙ переход закат → сумерки заката
+      else if (totalMinutes >= 1050) and (totalMinutes < 1080) then // 17:30-18:00
       begin
-        alpha := Round((totalMinutes - 1020) * 255 / 60); // сумерки заката нарастают
+        // Новая текстура (сумерки заката) плавно появляется
+        alpha := Round((totalMinutes - 1050) * 255 / 30);
         DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, alpha, modelID);
         
-        alpha := Round(255 - (totalMinutes - 1020) * 255 / 60); // закат убывает
+        // Старая текстура (закат) плавно исчезает
+        alpha := Round(255 - (totalMinutes - 1050) * 255 / 30);
         DrawSkyLayer(BoosterSunsetSnowTextureID, alpha, modelID);
       end
       
-      // 18:00-19:00: Чистые сумерки заката
-      else if (totalMinutes >= 1080) and (totalMinutes < 1140) then // 18:00-19:00
+      // 18:00-19:30: Чистые сумерки заката
+      else if (totalMinutes >= 1080) and (totalMinutes < 1170) then // 18:00-19:30
       begin
         alpha := 255;
         if a1 then alpha := 255;
         DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, alpha, modelID);
       end
       
-      // 19:00-20:00: Переход сумерки заката → ночь
-      else if (totalMinutes >= 1140) and (totalMinutes < 1200) then // 19:00-20:00
+      // 19:30-20:00: ПЛАВНЫЙ переход сумерки заката → ночь
+      else if (totalMinutes >= 1170) and (totalMinutes < 1200) then // 19:30-20:00
       begin
-        alpha := Round((totalMinutes - 1140) * 255 / 60); // ночь нарастает
+        // Новая текстура (ночь) плавно появляется
+        alpha := Round((totalMinutes - 1170) * 240 / 30); // До 240, не до 255
         DrawSkyLayer(BoosterNightSnowTextureID, alpha, modelID);
         
-        alpha := Round(255 - (totalMinutes - 1140) * 255 / 60); // сумерки заката убывают
+        // Старая текстура (сумерки заката) плавно исчезает
+        alpha := Round(255 - (totalMinutes - 1170) * 255 / 30);
         DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, alpha, modelID);
       end
       
-      // 20:00-7:00: Чистая ночь
-      else if (totalMinutes >= 1200) or (totalMinutes < 420) then // 20:00-7:00
+      // 20:00-6:30: Чистая ночь
+      else if (totalMinutes >= 1200) or (totalMinutes < 390) then // 20:00-6:30
       begin
         alpha := 240; // стандартная ночная яркость
         if a1 then alpha := 255;
         DrawSkyLayer(BoosterNightSnowTextureID, alpha, modelID);
       end
       
-      // 7:00-8:00: Переход ночь → предрассветные сумерки
-      else if (totalMinutes >= 420) and (totalMinutes < 480) then // 7:00-8:00
+      // 6:30-7:00: ПЛАВНЫЙ переход ночь → предрассветные сумерки
+      else if (totalMinutes >= 390) and (totalMinutes < 420) then // 6:30-7:00
       begin
-        alpha := Round((totalMinutes - 420) * 255 / 60); // предрассветные сумерки нарастают
+        // Новая текстура (предрассветные сумерки) плавно появляется
+        alpha := Round((totalMinutes - 390) * 255 / 30);
         DrawSkyLayer(BoosterSunriseDawnSnowTextureID, alpha, modelID);
         
-        alpha := Round(255 - (totalMinutes - 420) * 240 / 60); // ночь убывает (до 240, не до 0)
+        // Старая текстура (ночь) плавно исчезает
+        alpha := Round(240 - (totalMinutes - 390) * 240 / 30);
         DrawSkyLayer(BoosterNightSnowTextureID, alpha, modelID);
       end
       
@@ -989,15 +1030,17 @@ begin
     end
     else
     begin
-      // ===== ЛЕТНЕЕ ВРЕМЯ (ОРИГИНАЛЬНАЯ ЛОГИКА С ПЕРЕХОДАМИ) =====
+      // ===== ЛЕТНЕЕ ВРЕМЯ С ПЛАВНЫМИ ПЕРЕХОДАМИ =====
       
-      // 5:00-6:00: Переход предрассветные сумерки → рассвет
+      // 5:00-6:00: ПЛАВНЫЙ переход предрассветные сумерки → рассвет
       if (totalMinutes >= 300) and (totalMinutes < 360) then // 5:00-6:00
       begin
-        alpha := Round((totalMinutes - 300) * 255 / 60); // рассвет нарастает
+        // Новая текстура (рассвет) плавно появляется
+        alpha := Round((totalMinutes - 300) * 255 / 60);
         DrawSkyLayer(sunriseTextureID, alpha, modelID);
         
-        alpha := Round(255 - (totalMinutes - 300) * 255 / 60); // предрассветные сумерки убывают
+        // Старая текстура (предрассветные сумерки) плавно исчезает
+        alpha := Round(255 - (totalMinutes - 300) * 255 / 60);
         DrawSkyLayer(BoosterSunriseDawnTextureID, alpha, modelID);
       end
       
@@ -1009,13 +1052,15 @@ begin
         DrawSkyLayer(sunriseTextureID, alpha, modelID);
       end
       
-      // 7:00-8:00: Переход рассвет → день
+      // 7:00-8:00: ПЛАВНЫЙ переход рассвет → день
       else if (totalMinutes >= 420) and (totalMinutes < 480) then // 7:00-8:00
       begin
-        alpha := Round((totalMinutes - 420) * 255 / 60); // день нарастает
+        // Новая текстура (день) плавно появляется
+        alpha := Round((totalMinutes - 420) * 255 / 60);
         DrawSkyLayer(dayTextureID, alpha, modelID);
         
-        alpha := Round(255 - (totalMinutes - 420) * 255 / 60); // рассвет убывает
+        // Старая текстура (рассвет) плавно исчезает
+        alpha := Round(255 - (totalMinutes - 420) * 255 / 60);
         DrawSkyLayer(sunriseTextureID, alpha, modelID);
       end
       
@@ -1027,13 +1072,15 @@ begin
         DrawSkyLayer(dayTextureID, alpha, modelID);
       end
       
-      // 17:00-18:00: Переход день → закат
+      // 17:00-18:00: ПЛАВНЫЙ переход день → закат
       else if (totalMinutes >= 1020) and (totalMinutes < 1080) then // 17:00-18:00
       begin
-        alpha := Round((totalMinutes - 1020) * 255 / 60); // закат нарастает
+        // Новая текстура (закат) плавно появляется
+        alpha := Round((totalMinutes - 1020) * 255 / 60);
         DrawSkyLayer(sunsetTextureID, alpha, modelID);
         
-        alpha := Round(255 - (totalMinutes - 1020) * 255 / 60); // день убывает
+        // Старая текстура (день) плавно исчезает
+        alpha := Round(255 - (totalMinutes - 1020) * 255 / 60);
         DrawSkyLayer(dayTextureID, alpha, modelID);
       end
       
@@ -1045,13 +1092,15 @@ begin
         DrawSkyLayer(sunsetTextureID, alpha, modelID);
       end
       
-      // 19:00-20:00: Переход закат → сумерки заката
+      // 19:00-20:00: ПЛАВНЫЙ переход закат → сумерки заката
       else if (totalMinutes >= 1140) and (totalMinutes < 1200) then // 19:00-20:00
       begin
-        alpha := Round((totalMinutes - 1140) * 255 / 60); // сумерки заката нарастают
+        // Новая текстура (сумерки заката) плавно появляется
+        alpha := Round((totalMinutes - 1140) * 255 / 60);
         DrawSkyLayer(BoosterSunsetTwilightTextureID, alpha, modelID);
         
-        alpha := Round(255 - (totalMinutes - 1140) * 255 / 60); // закат убывает
+        // Старая текстура (закат) плавно исчезает
+        alpha := Round(255 - (totalMinutes - 1140) * 255 / 60);
         DrawSkyLayer(sunsetTextureID, alpha, modelID);
       end
       
@@ -1063,13 +1112,15 @@ begin
         DrawSkyLayer(BoosterSunsetTwilightTextureID, alpha, modelID);
       end
       
-      // 21:00-22:00: Переход сумерки заката → ночь
+      // 21:00-22:00: ПЛАВНЫЙ переход сумерки заката → ночь
       else if (totalMinutes >= 1260) and (totalMinutes < 1320) then // 21:00-22:00
       begin
-        alpha := Round((totalMinutes - 1260) * 255 / 60); // ночь нарастает
+        // Новая текстура (ночь) плавно появляется
+        alpha := Round((totalMinutes - 1260) * 240 / 60); // До 240, не до 255
         DrawSkyLayer(nightTextureID, alpha, modelID);
         
-        alpha := Round(255 - (totalMinutes - 1260) * 255 / 60); // сумерки заката убывают
+        // Старая текстура (сумерки заката) плавно исчезает
+        alpha := Round(255 - (totalMinutes - 1260) * 255 / 60);
         DrawSkyLayer(BoosterSunsetTwilightTextureID, alpha, modelID);
       end
       
@@ -1081,13 +1132,15 @@ begin
         DrawSkyLayer(nightTextureID, alpha, modelID);
       end
       
-      // 3:00-4:00: Переход ночь → предрассветные сумерки
+      // 3:00-4:00: ПЛАВНЫЙ переход ночь → предрассветные сумерки
       else if (totalMinutes >= 180) and (totalMinutes < 240) then // 3:00-4:00
       begin
-        alpha := Round((totalMinutes - 180) * 255 / 60); // предрассветные сумерки нарастают
+        // Новая текстура (предрассветные сумерки) плавно появляется
+        alpha := Round((totalMinutes - 180) * 255 / 60);
         DrawSkyLayer(BoosterSunriseDawnTextureID, alpha, modelID);
         
-        alpha := Round(255 - (totalMinutes - 180) * 240 / 60); // ночь убывает (до 240, не до 0)
+        // Старая текстура (ночь) плавно исчезает до 240, не до 0
+        alpha := Round(240 - (totalMinutes - 180) * 240 / 60);
         DrawSkyLayer(nightTextureID, alpha, modelID);
       end
       
@@ -1611,7 +1664,7 @@ end;
     except
       on E: Exception do
       begin
-        AddToLogFile(EngineLog, 'Ошибка чтения settings.ini: ' + E.Message);
+        
         try
           CloseFile(f);
         except
@@ -8474,6 +8527,8 @@ end;
     end;
   end;
 end;
+
+
 
 
 {------------------------------------------------------------------}

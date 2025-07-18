@@ -16,6 +16,7 @@ function GetCoordinatesFormatted: string;   // Координаты
 function GetAcceleration: string;  // Ускорение
 function GetTrafficLightsSequence: string;  // Последовательность светофоров
 function GetLimitSpeedValue: integer;  // Последовательность светофоров
+function GetSpeedValue2 : Single;
 
 function GetSpeedValue: Integer;     // Скорость как число
 function GetDistanceValue: Integer; // Расстояние как число
@@ -112,6 +113,15 @@ function GetSpeedValue: Integer;
 begin
   try
     Result := Round(Abs(PSingle(BaseAddress + $04F8C28C)^));
+  except
+    Result := 0;
+  end;
+end;
+
+function GetSpeedValue2: Single;
+begin
+  try
+    Result := PSingle(BaseAddress + $04F8C28C)^;
   except
     Result := 0;
   end;
