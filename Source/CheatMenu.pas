@@ -162,7 +162,7 @@ const
   ITEM_HEIGHT = 28;
   MARGIN = 12;
   HEADER_HEIGHT = 35;
-  SLIDER_WIDTH = 120;
+  SLIDER_WIDTH = 190;
   BUTTON_SIZE = 20;
   CHECKBOX_SIZE = 16;
 
@@ -997,7 +997,7 @@ begin
   RadiusAddr := $00400000 + $85F40;
   
   // ИНИЦИАЛИЗАЦИЯ АДРЕСА МЕНЮ ПАТЧА
-  MenuCallAddr := $00400000 + $1234AB; // ЗАМЕНИТЕ НА ПРАВИЛЬНЫЙ АДРЕС!
+  MenuCallAddr := $743B9E; // ЗАМЕНИТЕ НА ПРАВИЛЬНЫЙ АДРЕС!
   
   // Адреса освещения (БЕЗ +400000!)
   MainLightAddr := $4942AC;
