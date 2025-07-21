@@ -455,7 +455,7 @@ var
   // Переменные для обработки клавиш
   LastFreecamToggle: Cardinal = 0;
   LastFreecamDisable: Cardinal = 0;
-  FreecamKeyDelay: Cardinal = 1; // 200мс задержка между нажатиями
+  FreecamKeyDelay: Cardinal = 100; // 200мс задержка между нажатиями
   MaxDistanceWritten: Boolean = False;  // ← ДОБАВИТЬ ЭТУ СТРОКУ
   
   // NOP патч
@@ -615,7 +615,7 @@ begin
     nightSnowPath := skyTexturesPath + 'sky_night_snow.bmp';
     sunriseDawnSnowPath := skyTexturesPath + 'sky_sunriseDawn_snow.bmp';
     sunriseSnowPath := skyTexturesPath + 'sky_sunrise_snow.bmp';
-    
+
     AddToLogFile(EngineLog, '=== ЗАГРУЗКА ТЕКСТУР НЕБА (ЛЕТО + ЗИМА) ===');
     AddToLogFile(EngineLog, 'Route: ' + routeName);
     
@@ -644,7 +644,7 @@ begin
       AddToLogFile(EngineLog, 'Failed to load summer sky_sunriseDawn.bmp');
       Exit;
     end;
-    
+
     BoosterSunsetTwilightTextureID := LoadTextureFromFile(sunsetTwilightPath, 0, -1);
     if BoosterSunsetTwilightTextureID > 0 then
       AddToLogFile(EngineLog, 'Loaded summer sky_sunsetTwilight.bmp, ID: ' + IntToStr(BoosterSunsetTwilightTextureID))
@@ -653,7 +653,7 @@ begin
       AddToLogFile(EngineLog, 'Failed to load summer sky_sunsetTwilight.bmp');
       Exit;
     end;
-    
+
     // Загружаем все зимние текстуры
     BoosterDaySnowTextureID := LoadTextureFromFile(daySnowPath, 0, -1);
     if BoosterDaySnowTextureID > 0 then
@@ -663,7 +663,7 @@ begin
       AddToLogFile(EngineLog, 'Failed to load winter sky_day_snow.bmp');
       Exit;
     end;
-    
+
     BoosterSunsetSnowTextureID := LoadTextureFromFile(sunsetSnowPath, 0, -1);
     if BoosterSunsetSnowTextureID > 0 then
       AddToLogFile(EngineLog, 'Loaded winter sky_sunset_snow.bmp, ID: ' + IntToStr(BoosterSunsetSnowTextureID))
@@ -672,7 +672,7 @@ begin
       AddToLogFile(EngineLog, 'Failed to load winter sky_sunset_snow.bmp');
       Exit;
     end;
-    
+
     BoosterSunsetTwilightSnowTextureID := LoadTextureFromFile(sunsetTwilightSnowPath, 0, -1);
     if BoosterSunsetTwilightSnowTextureID > 0 then
       AddToLogFile(EngineLog, 'Loaded winter sky_sunsetTwilight_snow.bmp, ID: ' + IntToStr(BoosterSunsetTwilightSnowTextureID))
@@ -681,7 +681,7 @@ begin
       AddToLogFile(EngineLog, 'Failed to load winter sky_sunsetTwilight_snow.bmp');
       Exit;
     end;
-    
+
     BoosterNightSnowTextureID := LoadTextureFromFile(nightSnowPath, 0, -1);
     if BoosterNightSnowTextureID > 0 then
       AddToLogFile(EngineLog, 'Loaded winter sky_night_snow.bmp, ID: ' + IntToStr(BoosterNightSnowTextureID))
@@ -690,7 +690,7 @@ begin
       AddToLogFile(EngineLog, 'Failed to load winter sky_night_snow.bmp');
       Exit;
     end;
-    
+
     BoosterSunriseDawnSnowTextureID := LoadTextureFromFile(sunriseDawnSnowPath, 0, -1);
     if BoosterSunriseDawnSnowTextureID > 0 then
       AddToLogFile(EngineLog, 'Loaded winter sky_sunriseDawn_snow.bmp, ID: ' + IntToStr(BoosterSunriseDawnSnowTextureID))
@@ -699,7 +699,7 @@ begin
       AddToLogFile(EngineLog, 'Failed to load winter sky_sunriseDawn_snow.bmp');
       Exit;
     end;
-    
+
     BoosterSunriseSnowTextureID := LoadTextureFromFile(sunriseSnowPath, 0, -1);
     if BoosterSunriseSnowTextureID > 0 then
       AddToLogFile(EngineLog, 'Loaded winter sky_sunrise_snow.bmp, ID: ' + IntToStr(BoosterSunriseSnowTextureID))
@@ -708,10 +708,10 @@ begin
       AddToLogFile(EngineLog, 'Failed to load winter sky_sunrise_snow.bmp');
       Exit;
     end;
-    
+
     BoosterTexturesLoaded := True;
     AddToLogFile(EngineLog, 'Route sky textures (summer + winter) loaded successfully');
-    
+
   except
     on E: Exception do
     begin
@@ -775,7 +775,6 @@ begin
     // Безопасный fallback - пропускаем проблемную текстуру
   end;
 end;
-
 
 procedure DrawSky(x, y, z: Single);
 var
@@ -1167,7 +1166,6 @@ begin
   end;
 end;
 
-
 procedure PatchDrawSkyCall;
 var
   CallAddress: Cardinal;
@@ -1210,7 +1208,7 @@ begin
     // Летние дополнительные пути
     sunriseDawnPath := skyTexturesPath + 'sky_sunriseDawn.bmp';
     sunsetTwilightPath := skyTexturesPath + 'sky_sunsetTwilight.bmp';
-    
+
     // Зимние пути (все)
     daySnowPath := skyTexturesPath + 'sky_day_snow.bmp';
     sunsetSnowPath := skyTexturesPath + 'sky_sunset_snow.bmp';
@@ -1218,7 +1216,7 @@ begin
     nightSnowPath := skyTexturesPath + 'sky_night_snow.bmp';
     sunriseDawnSnowPath := skyTexturesPath + 'sky_sunriseDawn_snow.bmp';
     sunriseSnowPath := skyTexturesPath + 'sky_sunrise_snow.bmp';
-    
+
     // Проверяем наличие всех необходимых файлов
     if not (FileExists(sunriseDawnPath) and FileExists(sunsetTwilightPath) and
             FileExists(daySnowPath) and FileExists(sunsetSnowPath) and
@@ -1228,12 +1226,12 @@ begin
       AddToLogFile(EngineLog, 'Sky textures (summer/winter) not found in route, skipping patch');
       Exit;
     end;
-    
+
     // Остальная логика патчинга...
     CallAddress := $00400000 + $335FFF;
     DrawSkyAddress := Cardinal(@DrawSky);
     NewOffset := Integer(DrawSkyAddress) - Integer(CallAddress + 5);
-    
+
     if VirtualProtect(Pointer(CallAddress + 1), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
     begin
       PInteger(CallAddress + 1)^ := NewOffset;
@@ -1573,93 +1571,91 @@ end;
 procedure LoadSettingsAndCustomModels;
 var
   f: TextFile;
-  line: string;
-  paramName, paramValue: string;
+  line, paramName, paramValue: string;
   equalPos: Integer;
+  directoryPath, locFolder: string;
+  klubFlag: Byte;
+  currentLocType: Integer;
+  
+  // Пути к файлам
   kolparaModelPath, kolparaTexturePath: string;
-  klubModelPath, klubTexturePath: string;
-  klubLsPath: string;
-  klubLsZPath, klubLsZhPath, klubLsKzhPath, klubLsKPath, klubLsBPath: string;
-  // ===== НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ LS ФАЙЛОВ =====
-  lsZPath, lsZhPath, lsKzhPath, lsKPath, lsBPath: string;
-  useKlubLs: Boolean; // Флаг для определения какие файлы использовать
+  klubModelPath, klubTexturePath, klubTexture2Path: string;
+  pantoPodstavkaPath, pantoSkiPath, pantoLever2BotPath, pantoLever2TopPath: string;
+  pantoLever1BotPath, pantoLever1TopPath, pantoTexturePath: string;
   
+  // Пути к новым моделям
   skorPrivod1Path, skorPrivod2Path: string;
-  // Пути к файлам пантографов
-  pantoPodstavkaPath, pantoSkiPath, pantoLever2BotPath, pantoLever2TopPath, pantoLever1BotPath, pantoLever1TopPath: string;
-  pantoTexturePath: string;  // Текстура пантографа
+  pisec1Path, pisec2Path: string;
+  strelkaSkorPath, strelkaSkorTimePath: string;
   
-  // ===== ПЕРЕМЕННЫЕ ДЛЯ АЛЬТЕРНАТИВНЫХ МОДЕЛЕЙ =====
-  strelkaSkorPath, strelkaSkorTimePath, pisec1Path, pisec2Path: string;
-  lsModelPath, lsTexturePath: string; // Для fallback ls.dmd/ls.bmp
+  // Пути к LS моделям
+  lsPath, lsBPath, lsKPath, lsKzhPath, lsZPath, lsZhPath: string;
+  lsTexturePath: string;
   
-  directoryPath: string;
+  // Пути к KLUB_LS моделям
+  klubLsPath, klubLsBPath, klubLsKPath, klubLsKzhPath, klubLsZPath, klubLsZhPath: string;
+  
+  // ID загруженных ресурсов
+  KolparaModelID, KolparaTextureID: Integer;
+  KlubModelID, KlubTextureID, KlubTexture2ID: Cardinal;
+  PantoPodstavkaID, PantoSkiID, PantoLever2BotID, PantoLever2TopID: Integer;
+  PantoLever1BotID, PantoLever1TopID, PantoTextureID: Integer;
+  
+  // ID новых моделей
+  SkorPrivod1ID, SkorPrivod2ID: Integer;
+  Pisec1ID, Pisec2ID: Integer;
+  StrelkaSkorID, StrelkaSkorTimeID: Integer;
+  
+  // ID для LS моделей
+  LsID, LsBID, LsKID, LsKzhID, LsZID, LsZhID: Integer;
+  LsTextureID: Integer;
+  
+  // ID для KLUB_LS моделей
+  KlubLsID, KlubLsBID, KlubLsKID, KlubLsKzhID, KlubLsZID, KlubLsZhID: Integer;
+  
+  // Адреса памяти
+  baseStructAddr: Cardinal;
   modelAddr, textureAddr: Pointer;
   OldProtect: DWORD;
-  locFolder: string;
-  KolparaModelID, KolparaTextureID: Integer;
-  SkorPrivod1ID, SkorPrivod2ID: Integer;
-  KlubModelID, KlubTextureID: Cardinal;
-  KlubLsID: Integer;
-  KlubLsZID, KlubLsZhID, KlubLsKzhID, KlubLsKID, KlubLsBID: Integer;
-  // ID для моделей пантографов
-  PantoPodstavkaID, PantoSkiID, PantoLever2BotID, PantoLever2TopID, PantoLever1BotID, PantoLever1TopID: Integer;
-  PantoTextureID: Integer;  // ID текстуры пантографа
   
-  // ===== ID ДЛЯ АЛЬТЕРНАТИВНЫХ МОДЕЛЕЙ =====
-  StrelkaSkorID, StrelkaSkorTimeID, Pisec1ID, Pisec2ID: Integer;
-  LsModelID: Integer;
-  LsTextureID: Cardinal;
+  // Оффсеты для разных локомотивов
+  klubBilOffset: Cardinal;
+  pantoPodstavkaOffset, pantoSkiOffset, pantoLever2BotOffset: Cardinal;
+  pantoLever2TopOffset, pantoLever1BotOffset, pantoLever1TopOffset: Cardinal;
+  
+  // Оффсеты для новых моделей
+  skorPrivod1Offset, skorPrivod2Offset: Cardinal;
+  pisec1Offset, pisec2Offset: Cardinal;
+  strelkaSkorOffset, strelkaSkorTimeOffset: Cardinal;
+  
+  // Оффсеты для LS моделей
+  lsOffset, lsBOffset, lsKOffset, lsKzhOffset, lsZOffset, lsZhOffset: Cardinal;
+  
+  // KLUB_LS оффсеты
+  klubLsOffset, klubLsBOffset, klubLsKOffset, klubLsKzhOffset, klubLsZOffset, klubLsZhOffset: Cardinal;
+  
+  // Оффсеты для текстур
+  kolparaTextureOffset, klubBilTextureOffset, klubBil2TextureOffset: Cardinal;
+  pantoTextureOffset, lsTextureOffset: Cardinal;
   
   hasCustomLoc: Boolean;
-  baseStructAddr: Cardinal;
   
-  // ===== НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ЧТЕНИЯ ИЗ ПАМЯТИ =====
-  klubFlag: Byte;  // Читаем из $7498A8
-  
-  // ===== ПЕРЕМЕННЫЕ ДЛЯ ПАНТОГРАФОВ =====
-  currentLocType: Integer;
-  pantoBaseOffset: Cardinal;  // Базовое смещение для пантографов
-  isVLLocomotive: Boolean;    // Флаг ВЛ локомотива
 begin
   if SettingsLoaded then Exit;
   
-  // Значения по умолчанию
+  // Читаем настройки
   LocNum := '068';
   LocomotiveType := 822;
-
-  // Добавьте в блок где загружается MyModelID
-  if KlubBilIndPModelID = 0 then
-  begin
-    KlubBilIndPModelID := LoadModel('booster\klub-bil-ind_p.dmd', 0, False);
-    if KlubBilIndPModelID = 0 then
-      AddToLogFile(EngineLog, 'Ошибка загрузки booster\klub-bil-ind_p.dmd')
-    else
-      AddToLogFile(EngineLog, 'Модель klub-bil-ind_p.dmd загружена, ID: ' + IntToStr(KlubBilIndPModelID));
-  end;
-
-  if KlubBilIndBModelID = 0 then
-  begin
-    KlubBilIndBModelID := LoadModel('booster\klub-bil-ind_b.dmd', 0, False);
-    if KlubBilIndBModelID = 0 then
-      AddToLogFile(EngineLog, 'Ошибка загрузки booster\klub-bil-ind_b.dmd')
-    else
-      AddToLogFile(EngineLog, 'Модель klub-bil-ind_b.dmd загружена, ID: ' + IntToStr(KlubBilIndBModelID));
-  end;
-
-  // Читаем settings.ini
+  
   if FileExists('settings.ini') then
   begin
     try
       AssignFile(f, 'settings.ini');
       Reset(f);
-      
       while not Eof(f) do
       begin
         ReadLn(f, line);
         line := Trim(line);
-        
-        // Пропускаем пустые строки и комментарии
         if (line = '') or (line[1] = '#') or (line[1] = ';') then Continue;
         
         equalPos := Pos('=', line);
@@ -1668,440 +1664,861 @@ begin
           paramName := LowerCase(Trim(Copy(line, 1, equalPos - 1)));
           paramValue := Trim(Copy(line, equalPos + 1, Length(line)));
           
-          try
-            if paramName = 'locnum' then
-              LocNum := paramValue
-            else if paramName = 'locomotivetype' then
-              LocomotiveType := StrToInt(paramValue);
-          except
-            // Игнорируем ошибки преобразования
-          end;
+          if paramName = 'locnum' then
+            LocNum := paramValue
+          else if paramName = 'locomotivetype' then
+            LocomotiveType := StrToInt(paramValue);
         end;
       end;
-
       CloseFile(f);
-      AddToLogFile(EngineLog, 'settings.ini загружен - LocNum: ' + LocNum + ', LocomotiveType: ' + IntToStr(LocomotiveType));
-      
     except
-      on E: Exception do
-      begin
-        try
-          CloseFile(f);
-        except
-        end;
-      end;
+      try CloseFile(f); except end;
     end;
-  end
-  else
-  begin
-    AddToLogFile(EngineLog, 'settings.ini не найден, используются значения по умолчанию - LocNum: ' + LocNum + ', LocomotiveType: ' + IntToStr(LocomotiveType));
   end;
-
-  // ===== ОПРЕДЕЛЯЕМ ТИП ЛОКОМОТИВА И СМЕЩЕНИЯ ДЛЯ ПАНТОГРАФОВ =====
+  
+  // Загружаем индикаторы
+  if KlubBilIndPModelID = 0 then
+    KlubBilIndPModelID := LoadModel('booster\klub-bil-ind_p.dmd', 0, False);
+  if KlubBilIndBModelID = 0 then
+    KlubBilIndBModelID := LoadModel('booster\klub-bil-ind_b.dmd', 0, False);
+  
+  // Определяем тип локомотива и оффсеты
   currentLocType := GetLocomotiveTypeFromMemory;
+  locFolder := GetLocomotiveFolder(LocomotiveType);
+  directoryPath := 'data\' + locFolder + '\' + LocNum + '\';
+
+  // Проверяем существование кастомной папки
+  hasCustomLoc := DirectoryExists(directoryPath + 'loc');
+  if not hasCustomLoc then
+  begin
+    SettingsLoaded := True;
+    Exit;
+  end;
   
-  // Проверяем, является ли локомотив типа ВЛ
+  // Вычисляем оффсеты в зависимости от типа локомотива
   case currentLocType of
-    882,  // ВЛ82М
-    880,  // ВЛ80Т  
-    811,  // ВЛ11М
-    885:  // ВЛ85
-      begin
-        isVLLocomotive := True;
-        pantoBaseOffset := $38; // Смещение для ВЛ локомотивов
-        AddToLogFile(EngineLog, 'Обнаружен ВЛ локомотив типа: ' + IntToStr(currentLocType) + ', используем смещение +$38');
-      end;
-  else
-    begin
-      isVLLocomotive := False;
-      pantoBaseOffset := $28; // Стандартное смещение для других локомотивов
-      AddToLogFile(EngineLog, 'Обнаружен не-ВЛ локомотив типа: ' + IntToStr(currentLocType) + ', используем смещение +$28');
+    23152, 31714, 201318: begin // 2ЭС5К, ЭП1М - специальные оффсеты
+      klubBilOffset := $5A;        // 0BA246F2-0BA24698 = $5A
+      
+      // Пантографы для 2ЭС5К/ЭП1М
+      pantoPodstavkaOffset := $38;
+      pantoSkiOffset := $3A;
+      pantoLever2BotOffset := $3C;
+      pantoLever2TopOffset := $3E;
+      pantoLever1BotOffset := $40;
+      pantoLever1TopOffset := $42;
+      
+      // Новые модели для 2ЭС5К/ЭП1М
+      skorPrivod1Offset := $0E;
+      skorPrivod2Offset := $10;
+      pisec1Offset := $0A;
+      pisec2Offset := $0C;
+      strelkaSkorOffset := $06;
+      strelkaSkorTimeOffset := $08;
+      
+      // LS оффсеты для 2ЭС5К/ЭП1М
+      lsOffset := $44;
+      lsBOffset := $1A-6;
+      lsKOffset := $1A-$4;
+      lsKzhOffset := $1A-$2;
+      lsZOffset := $1A+$2;
+      lsZhOffset := $1A;
+      
+      // KLUB_LS оффсеты для 2ЭС5К/ЭП1М
+      klubLsOffset := $44;
+      klubLsBOffset := $1A-6;
+      klubLsKOffset := $1A-$4;
+      klubLsKzhOffset := $1A-$2;
+      klubLsZOffset := $1A+$2;
+      klubLsZhOffset := $1A;
+      
+      // Оффсеты текстур для 2ЭС5К/ЭП1М
+      kolparaTextureOffset := $3E;
+      klubBilTextureOffset := $34;
+      klubBil2TextureOffset := $36; // TODO: уточнить
+      pantoTextureOffset := $3C;
+      lsTextureOffset := $38; // TODO: уточнить
+    end;
+
+811, 882: begin
+      klubBilOffset := $04;        // оригинальный
+      
+      // Пантографы для ВЛ11М: 0BA046C0-0BA04698 = $28
+      pantoPodstavkaOffset := $28;   // tp_podstavka.dmd
+      pantoSkiOffset := $2A;         // tp_ski.dmd (+$2)
+      pantoLever2BotOffset := $2C;   // l13u_lever1bot.dmd
+      pantoLever2TopOffset := $2E;   // l13u_lever1top.dmd
+      pantoLever1BotOffset := $30;   // l13u_lever2bot.dmd
+      pantoLever1TopOffset := $32;   // l13u_lever2top.dmd
+      
+      // Новые модели - оффсеты для ВЛ11М (пропишете сами)
+      skorPrivod1Offset := $0E;
+      skorPrivod2Offset := $10;
+      pisec1Offset := $0A;
+      pisec2Offset := $0C;
+      strelkaSkorOffset := $06;
+      strelkaSkorTimeOffset := $08;
+      
+      // LS оффсеты для остальных
+      lsOffset := $12;
+      lsBOffset := $1C-8;
+      lsKOffset := $1C-6;
+      lsKzhOffset := $1C-4;
+      lsZOffset := $1C;
+      lsZhOffset := $1C-2;
+      
+      // KLUB_LS оффсеты для остальных
+      klubLsOffset := $12;
+      klubLsBOffset := $1C-8;
+      klubLsKOffset := $1C-6;
+      klubLsKzhOffset := $1C-4;
+      klubLsZOffset := $1C;
+      klubLsZhOffset := $1C-2;
+
+      kolparaTextureOffset := $3E;
+      klubBilTextureOffset := $34;
+      klubBil2TextureOffset := $00; // TODO: уточнить
+      pantoTextureOffset := $3C;
+
+      // Специальное значение для 811
+//      if currentLocType = 882 then
+//        lsTextureOffset := $36
+//      else
+//        lsTextureOffset := $38; // TODO: уточнить
+
+      lsTextureOffset := $36;
+
+    end;
+    880, 885: begin // Остальные ВЛ локомотивы
+      klubBilOffset := $04;        // оригинальный
+      
+      // Пантографы для остальных ВЛ
+      pantoPodstavkaOffset := $38;
+      pantoSkiOffset := $3A;
+      pantoLever2BotOffset := $3C;
+      pantoLever2TopOffset := $3E;
+      pantoLever1BotOffset := $40;
+      pantoLever1TopOffset := $42;
+      
+      // Новые модели - оффсеты для остальных ВЛ (пропишете сами)
+      skorPrivod1Offset := $0E;
+      skorPrivod2Offset := $10;
+      pisec1Offset := $0A;
+      pisec2Offset := $0C;
+      strelkaSkorOffset := $06;
+      strelkaSkorTimeOffset := $08;
+
+      // LS оффсеты для остальных
+      lsOffset := $12;
+      lsBOffset := $1C-8;
+      lsKOffset := $1C-6;
+      lsKzhOffset := $1C-4;
+      lsZOffset := $1C;
+      lsZhOffset := $1C-2;
+      
+      // KLUB_LS оффсеты для остальных
+      klubLsOffset := $12;
+      klubLsBOffset := $1C-8;
+      klubLsKOffset := $1C-6;
+      klubLsKzhOffset := $1C-4;
+      klubLsZOffset := $1C;
+      klubLsZhOffset := $1C-2;
+
+      kolparaTextureOffset := $3E;
+      klubBilTextureOffset := $34;
+      klubBil2TextureOffset := $00; // TODO: уточнить
+      pantoTextureOffset := $3C;
+      lsTextureOffset := $38; // TODO: уточнить
+
+      if currentLocType = 880 then
+        lsTextureOffset := $36;
+      
+
+
+    end;
+
+    else begin // Остальные локомотивы (ЧС2К и др)
+      klubBilOffset := $04;        // оригинальный
+      
+      // Пантографы для остальных
+      pantoPodstavkaOffset := $28;
+      pantoSkiOffset := $2A;
+      pantoLever2BotOffset := $2C;
+      pantoLever2TopOffset := $2E;
+      pantoLever1BotOffset := $30;
+      pantoLever1TopOffset := $32;
+      
+      // Новые модели для остальных
+      skorPrivod1Offset := $0E;
+      skorPrivod2Offset := $10;
+      pisec1Offset := $0A;
+      pisec2Offset := $0C;
+      strelkaSkorOffset := $06;
+      strelkaSkorTimeOffset := $08;
+      
+      // LS оффсеты для остальных
+      lsOffset := $12;
+      lsBOffset := $1C-8;
+      lsKOffset := $1C-6;
+      lsKzhOffset := $1C-4;
+      lsZOffset := $1C;
+      lsZhOffset := $1C-2;
+      
+      // KLUB_LS оффсеты для остальных
+      klubLsOffset := $12;
+      klubLsBOffset := $1C-8;
+      klubLsKOffset := $1C-6;
+      klubLsKzhOffset := $1C-4;
+      klubLsZOffset := $1C;
+      klubLsZhOffset := $1C-2;
+
+      // Оффсеты текстур для остальных
+      kolparaTextureOffset := $3E;
+      klubBilTextureOffset := $34;
+      klubBil2TextureOffset := $00; // TODO: уточнить
+      pantoTextureOffset := $3C;
+      lsTextureOffset := $36; // TODO: уточнить
     end;
   end;
-
-  // Определяем папку локомотива по типу
-  locFolder := GetLocomotiveFolder(LocomotiveType);
-  AddToLogFile(EngineLog, 'Определена папка локомотива: ' + locFolder + ' для типа: ' + IntToStr(LocomotiveType));
-
-  // Формируем путь к директории
-  directoryPath := 'data\' + locFolder + '\' + LocNum + '\';
-  AddToLogFile(EngineLog, 'Проверяем директорию: ' + directoryPath);
   
-  // Проверяем существование директории loc
-  hasCustomLoc := DirectoryExists(directoryPath + 'loc');
+  try
+    klubFlag := PByte(Pointer($7498A8))^;
+  except
+    klubFlag := 1;
+  end;
   
-  if hasCustomLoc then
+  baseStructAddr := PCardinal(Pointer($00400000 + $8D10D70))^;
+  
+  // ===== ЗАГРУЖАЕМ КОЛПАРА =====
+  kolparaModelPath := directoryPath + 'loc\kolpara_el.dmd';
+  kolparaTexturePath := directoryPath + 'loc\kolpara_el.bmp';
+  
+  if not (FileExists(kolparaModelPath) and FileExists(kolparaTexturePath)) then
   begin
-    AddToLogFile(EngineLog, 'Найдена папка loc в: ' + directoryPath);
-    
-    // ===== ЧИТАЕМ ФЛАГ ИЗ ПАМЯТИ =====
+    kolparaModelPath := directoryPath + 'loc\kolpara_tepl.dmd';
+    kolparaTexturePath := directoryPath + 'loc\kolpara_tepl.bmp';
+  end;
+  
+  if FileExists(kolparaModelPath) and FileExists(kolparaTexturePath) then
+  begin
     try
-      klubFlag := PByte(Pointer($7498A8))^;
-      AddToLogFile(EngineLog, 'Флаг klub из памяти $7498A8: ' + IntToStr(klubFlag));
-    except
-      klubFlag := 1; // По умолчанию загружаем клуб
-      AddToLogFile(EngineLog, 'Ошибка чтения флага klub, используется значение по умолчанию: 1');
-    end;
-    
-    // ===== ЗАГРУЖАЕМ КОЛПАРА ИЗ КАСТОМНОЙ ПАПКИ =====
-    // Пытаемся найти kolpara_el, если нет - ищем kolpara_tepl
-    kolparaModelPath := directoryPath + 'loc\kolpara_el.dmd';
-    kolparaTexturePath := directoryPath + 'loc\kolpara_el.bmp';
-    
-    if not (FileExists(kolparaModelPath) and FileExists(kolparaTexturePath)) then
-    begin
-      kolparaModelPath := directoryPath + 'loc\kolpara_tepl.dmd';
-      kolparaTexturePath := directoryPath + 'loc\kolpara_tepl.bmp';
-    end;
-    
-    // ===== ПРОВЕРЯЕМ ФЛАГ KLUB =====
-    if klubFlag = 1 then
-    begin
-      AddToLogFile(EngineLog, 'Флаг klub=1: Загружаем модели клуба');
+      KolparaModelID := LoadModel(kolparaModelPath, 0, False);
+      KolparaTextureID := LoadTextureFromFile(kolparaTexturePath, 0, -1);
       
-      // ===== ЗАГРУЖАЕМ КЛУБ ИЗ КАСТОМНОЙ ПАПКИ =====
-      klubModelPath := directoryPath + 'loc\klub_bil_v.dmd';
-      klubTexturePath := directoryPath + 'loc\klub_bil.bmp';
-      
-      AddToLogFile(EngineLog, 'Проверяем клуб модель: ' + klubModelPath);
-      AddToLogFile(EngineLog, 'Проверяем клуб текстуру: ' + klubTexturePath);
-      
-      if FileExists(klubModelPath) and FileExists(klubTexturePath) then
+      if (KolparaModelID > 0) and (KolparaTextureID > 0) then
       begin
-        try
-          // Загружаем модель и текстуру клуб
-          AddToLogFile(EngineLog, 'Загружаем клуб модель: ' + klubModelPath);
-          KlubModelID := LoadModel(klubModelPath, 0, False);
-          AddToLogFile(EngineLog, 'Загружаем клуб текстуру: ' + klubTexturePath);
-          KlubTextureID := LoadTextureFromFile(klubTexturePath, 0, -1);
-
-          AddToLogFile(EngineLog, 'Клуб модель загружена, ID: ' + IntToStr(KlubModelID));
-          AddToLogFile(EngineLog, 'Клуб текстура загружена, ID: ' + IntToStr(KlubTextureID));
+        // Колпара модель
+        if (currentLocType = 23152) or (currentLocType = 31714) then
+          modelAddr := Pointer(baseStructAddr + $68) // $34 * 2 для 2ЭС5К/ЭП1М
+        else
+          modelAddr := Pointer(baseStructAddr + $34); // оригинальный
           
-          if (KlubModelID > 0) and (KlubTextureID > 0) then
-          begin
-            try
-              // ===== ЗАПИСЫВАЕМ КЛУБ В ПАМЯТЬ =====
-              // Записываем ID модели клуб по адресу Launcher.exe+8D10D70 [0x04]
-              modelAddr := Pointer(PCardinal(Pointer($00400000 + $8D10D70))^ + $04);
-              if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
-              begin
-                PWord(modelAddr)^ := Word(KlubModelID);
-                VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
-                AddToLogFile(EngineLog, 'ID клуб модели записан по адресу: ' + IntToHex(Cardinal(modelAddr), 8));
-              end;
-              
-              // Записываем ID текстуры клуб по адресу 9110D60 [0x34]
-              textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + $34);
-              if VirtualProtect(textureAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
-              begin
-                PWord(textureAddr)^ := Word(KlubTextureID);
-                VirtualProtect(textureAddr, SizeOf(Word), OldProtect, OldProtect);
-                AddToLogFile(EngineLog, 'ID клуб текстуры записан по адресу: ' + IntToHex(Cardinal(textureAddr), 8));
-              end;
-              
-              CustomModelLoaded := True;
-              AddToLogFile(EngineLog, 'Клуб модель и текстура успешно применены');
-              
-            except
-              on E: Exception do
-              begin
-                AddToLogFile(EngineLog, 'Ошибка записи клуб в память: ' + E.Message);
-              end;
-            end;
-          end;
-          
-        except
-          on E: Exception do
-          begin
-            AddToLogFile(EngineLog, 'Ошибка загрузки клуб файлов: ' + E.Message);
-          end;
-        end;
-      end;
-    end
-    else
-    begin
-      AddToLogFile(EngineLog, 'Флаг klub=0: Загружаем альтернативные модели');
-      
-      // ===== ЗАГРУЖАЕМ АЛЬТЕРНАТИВНЫЕ МОДЕЛИ =====
-      strelkaSkorPath := directoryPath + 'loc\strelka_skor.dmd';
-      strelkaSkorTimePath := directoryPath + 'loc\strelka_skor_time.dmd';
-      pisec1Path := directoryPath + 'loc\pisec1.dmd';
-      pisec2Path := directoryPath + 'loc\pisec2.dmd';
-      lsModelPath := directoryPath + 'loc\ls.dmd';
-      lsTexturePath := directoryPath + 'loc\ls.bmp';
-      
-      skorPrivod1Path := directoryPath + 'loc\skor_privod1.dmd';
-      skorPrivod2Path := directoryPath + 'loc\skor_privod2.dmd';
-
-      // Здесь код загрузки альтернативных моделей (сокращен для краткости)
-      // ... весь код загрузки strelka_skor, pisec1, pisec2, skor_privod1, skor_privod2, ls ...
-    end;
-    
-    // ===== ЗАГРУЖАЕМ КОЛПАРА =====
-    if FileExists(kolparaModelPath) and FileExists(kolparaTexturePath) then
-    begin
-      try
-        KolparaModelID := LoadModel(kolparaModelPath, 0, False);
-        KolparaTextureID := LoadTextureFromFile(kolparaTexturePath, 0, -1);
-
-        if (KolparaModelID > 0) and (KolparaTextureID > 0) then
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
         begin
-          baseStructAddr := PCardinal(Pointer($00400000 + $8D10D70))^;
-
-          modelAddr := Pointer(baseStructAddr + $34);
-          if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
-          begin
-            PWord(modelAddr)^ := Word(KolparaModelID);
-            VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
-          end;
-
-          textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + $3E);
-          if VirtualProtect(textureAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
-          begin
-            PWord(textureAddr)^ := Word(KolparaTextureID);
-            VirtualProtect(textureAddr, SizeOf(Word), OldProtect, OldProtect);
-          end;
-
-          CustomModelLoaded := True;
+          PWord(modelAddr)^ := Word(KolparaModelID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
         end;
-
-      except
-        on E: Exception do
-        begin
-          AddToLogFile(EngineLog, 'Ошибка загрузки колпара: ' + E.Message);
-        end;
-      end;
-    end;
-    
-    // ===== ЗАГРУЖАЕМ ПАНТОГРАФЫ С ПРАВИЛЬНЫМИ СМЕЩЕНИЯМИ =====
-    AddToLogFile(EngineLog, 'Загружаем пантографы...');
-    
-    // Формируем пути к файлам пантографов
-    pantoPodstavkaPath := directoryPath + 'loc\tp_podstavka.dmd';
-    pantoSkiPath := directoryPath + 'loc\tp_ski.dmd';
-    pantoLever2BotPath := directoryPath + 'loc\l13u_lever1bot.dmd';
-    pantoLever2TopPath := directoryPath + 'loc\l13u_lever1top.dmd';
-    pantoLever1BotPath := directoryPath + 'loc\l13u_lever2bot.dmd';
-    pantoLever1TopPath := directoryPath + 'loc\l13u_lever2top.dmd';
-    pantoTexturePath := directoryPath + 'loc\2sls1.bmp';
-    
-    // Если l13u файлы не найдены, ищем tp альтернативы
-    if not FileExists(pantoLever2BotPath) then
-      pantoLever2BotPath := directoryPath + 'loc\tp_lever1bot.dmd';
-    if not FileExists(pantoLever2TopPath) then
-      pantoLever2TopPath := directoryPath + 'loc\tp_lever1top.dmd';
-    if not FileExists(pantoLever1BotPath) then
-      pantoLever1BotPath := directoryPath + 'loc\tp_lever2bot.dmd';
-    if not FileExists(pantoLever1TopPath) then
-      pantoLever1TopPath := directoryPath + 'loc\tp_lever2top.dmd';
-    
-    AddToLogFile(EngineLog, Format('Смещения для пантографов (ВЛ=%s): подставка=+$%s, лыжи=+$%s', 
-      [BoolToStr(isVLLocomotive, True), IntToHex(pantoBaseOffset, 2), IntToHex(pantoBaseOffset + $02, 2)]));
-    
-    // Загружаем текстуру пантографа если есть
-    if FileExists(pantoTexturePath) then
-    begin
-      try
-        AddToLogFile(EngineLog, 'Загружаем текстуру пантографа: ' + pantoTexturePath);
-        PantoTextureID := LoadTextureFromFile(pantoTexturePath, 0, -1);
-        AddToLogFile(EngineLog, 'Текстура пантографа загружена, ID: ' + IntToStr(PantoTextureID));
         
-        if PantoTextureID > 0 then
+        // Колпара текстура
+        textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + kolparaTextureOffset);
+        if VirtualProtect(textureAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
         begin
-          textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + $3C);
-          if VirtualProtect(textureAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
-          begin
-            PWord(textureAddr)^ := Word(PantoTextureID);
-            VirtualProtect(textureAddr, SizeOf(Word), OldProtect, OldProtect);
-            AddToLogFile(EngineLog, 'Текстура пантографа записана по адресу: ' + IntToHex(Cardinal(textureAddr), 8));
-          end;
-        end;
-      except
-        on E: Exception do
-          AddToLogFile(EngineLog, 'Ошибка загрузки текстуры пантографа: ' + E.Message);
-      end;
-    end;
-
-    try
-      // Получаем базовый адрес структуры
-      baseStructAddr := PCardinal(Pointer($00400000 + $8D10D70))^;
-
-      // ===== ПОДСТАВКА ПАНТОГРАФА =====
-      if FileExists(pantoPodstavkaPath) then
-      begin
-        try
-          AddToLogFile(EngineLog, 'Загружаем подставку пантографа: ' + pantoPodstavkaPath);
-          PantoPodstavkaID := LoadModel(pantoPodstavkaPath, 0, False);
-          AddToLogFile(EngineLog, 'Подставка пантографа загружена, ID: ' + IntToStr(PantoPodstavkaID));
-
-          if PantoPodstavkaID > 0 then
-          begin
-            modelAddr := Pointer(baseStructAddr + pantoBaseOffset); // Используем вычисленное смещение
-            if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
-            begin
-              PWord(modelAddr)^ := Word(PantoPodstavkaID);
-              VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
-              AddToLogFile(EngineLog, Format('Подставка пантографа записана по адресу: %s (смещение +$%s)', 
-                [IntToHex(Cardinal(modelAddr), 8), IntToHex(pantoBaseOffset, 2)]));
-            end;
-          end;
-        except
-          on E: Exception do
-            AddToLogFile(EngineLog, 'Ошибка загрузки подставки пантографа: ' + E.Message);
+          PWord(textureAddr)^ := Word(KolparaTextureID);
+          VirtualProtect(textureAddr, SizeOf(Word), OldProtect, OldProtect);
         end;
       end;
-      
-      // ===== ЛЫЖИ ПАНТОГРАФА =====
-      if FileExists(pantoSkiPath) then
-      begin
-        try
-          AddToLogFile(EngineLog, 'Загружаем лыжи пантографа: ' + pantoSkiPath);
-          PantoSkiID := LoadModel(pantoSkiPath, 0, False);
-          AddToLogFile(EngineLog, 'Лыжи пантографа загружены, ID: ' + IntToStr(PantoSkiID));
-          
-          if PantoSkiID > 0 then
-          begin
-            modelAddr := Pointer(baseStructAddr + pantoBaseOffset + $02); // +$2A или +$3A
-            if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
-            begin
-              PWord(modelAddr)^ := Word(PantoSkiID);
-              VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
-              AddToLogFile(EngineLog, Format('Лыжи пантографа записаны по адресу: %s (смещение +$%s)', 
-                [IntToHex(Cardinal(modelAddr), 8), IntToHex(pantoBaseOffset + $02, 2)]));
-            end;
-          end;
-        except
-          on E: Exception do
-            AddToLogFile(EngineLog, 'Ошибка загрузки лыж пантографа: ' + E.Message);
-        end;
-      end;
-
-      // ===== НИЖНИЙ РЫЧАГ 2 ПАНТОГРАФА =====
-      if FileExists(pantoLever2BotPath) then
-      begin
-        try
-          AddToLogFile(EngineLog, 'Загружаем нижний рычаг 2 пантографа: ' + pantoLever2BotPath);
-          PantoLever2BotID := LoadModel(pantoLever2BotPath, 0, False);
-          AddToLogFile(EngineLog, 'Нижний рычаг 2 пантографа загружен, ID: ' + IntToStr(PantoLever2BotID));
-          
-          if PantoLever2BotID > 0 then
-          begin
-            modelAddr := Pointer(baseStructAddr + pantoBaseOffset + $04); // +$2C или +$3C
-            if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
-            begin
-              PWord(modelAddr)^ := Word(PantoLever2BotID);
-              VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
-              AddToLogFile(EngineLog, Format('Нижний рычаг 2 пантографа записан по адресу: %s (смещение +$%s)', 
-                [IntToHex(Cardinal(modelAddr), 8), IntToHex(pantoBaseOffset + $04, 2)]));
-            end;
-          end;
-        except
-          on E: Exception do
-            AddToLogFile(EngineLog, 'Ошибка загрузки нижнего рычага 2 пантографа: ' + E.Message);
-        end;
-      end;
-      
-      // ===== ВЕРХНИЙ РЫЧАГ 2 ПАНТОГРАФА =====
-      if FileExists(pantoLever2TopPath) then
-      begin
-        try
-          AddToLogFile(EngineLog, 'Загружаем верхний рычаг 2 пантографа: ' + pantoLever2TopPath);
-          PantoLever2TopID := LoadModel(pantoLever2TopPath, 0, False);
-          AddToLogFile(EngineLog, 'Верхний рычаг 2 пантографа загружен, ID: ' + IntToStr(PantoLever2TopID));
-          
-          if PantoLever2TopID > 0 then
-          begin
-            modelAddr := Pointer(baseStructAddr + pantoBaseOffset + $06); // +$2E или +$3E
-            if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
-            begin
-              PWord(modelAddr)^ := Word(PantoLever2TopID);
-              VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
-              AddToLogFile(EngineLog, Format('Верхний рычаг 2 пантографа записан по адресу: %s (смещение +$%s)', 
-                [IntToHex(Cardinal(modelAddr), 8), IntToHex(pantoBaseOffset + $06, 2)]));
-            end;
-          end;
-        except
-          on E: Exception do
-            AddToLogFile(EngineLog, 'Ошибка загрузки верхнего рычага 2 пантографа: ' + E.Message);
-        end;
-      end;
-      
-      // ===== НИЖНИЙ РЫЧАГ 1 ПАНТОГРАФА =====
-      if FileExists(pantoLever1BotPath) then
-      begin
-        try
-          AddToLogFile(EngineLog, 'Загружаем нижний рычаг 1 пантографа: ' + pantoLever1BotPath);
-          PantoLever1BotID := LoadModel(pantoLever1BotPath, 0, False);
-          AddToLogFile(EngineLog, 'Нижний рычаг 1 пантографа загружен, ID: ' + IntToStr(PantoLever1BotID));
-          
-          if PantoLever1BotID > 0 then
-          begin
-            modelAddr := Pointer(baseStructAddr + pantoBaseOffset + $08); // +$30 или +$40
-            if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
-            begin
-              PWord(modelAddr)^ := Word(PantoLever1BotID);
-              VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
-              AddToLogFile(EngineLog, Format('Нижний рычаг 1 пантографа записан по адресу: %s (смещение +$%s)', 
-                [IntToHex(Cardinal(modelAddr), 8), IntToHex(pantoBaseOffset + $08, 2)]));
-            end;
-          end;
-        except
-          on E: Exception do
-            AddToLogFile(EngineLog, 'Ошибка загрузки нижнего рычага 1 пантографа: ' + E.Message);
-        end;
-      end;
-
-      // ===== ВЕРХНИЙ РЫЧАГ 1 ПАНТОГРАФА =====
-      if FileExists(pantoLever1TopPath) then
-      begin
-        try
-          AddToLogFile(EngineLog, 'Загружаем верхний рычаг 1 пантографа: ' + pantoLever1TopPath);
-          PantoLever1TopID := LoadModel(pantoLever1TopPath, 0, False);
-          AddToLogFile(EngineLog, 'Верхний рычаг 1 пантографа загружен, ID: ' + IntToStr(PantoLever1TopID));
-
-          if PantoLever1TopID > 0 then
-          begin
-            modelAddr := Pointer(baseStructAddr + pantoBaseOffset + $0A); // +$32 или +$42
-            if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
-            begin
-              PWord(modelAddr)^ := Word(PantoLever1TopID);
-              VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
-              AddToLogFile(EngineLog, Format('Верхний рычаг 1 пантографа записан по адресу: %s (смещение +$%s)', 
-                [IntToHex(Cardinal(modelAddr), 8), IntToHex(pantoBaseOffset + $0A, 2)]));
-            end;
-          end;
-        except
-          on E: Exception do
-            AddToLogFile(EngineLog, 'Ошибка загрузки верхнего рычага 1 пантографа: ' + E.Message);
-        end;
-      end;
-      
     except
-      on E: Exception do
-        AddToLogFile(EngineLog, 'Критическая ошибка при загрузке пантографов: ' + E.Message);
+      // Игнорируем ошибки загрузки колпара
     end;
-
-    // ОТЛАДОЧНОЕ ЧТЕНИЕ - проверяем что записалось
-    AddToLogFile(EngineLog, '=== ПРОВЕРКА ЗАПИСАННЫХ ЗНАЧЕНИЙ ===');
-    AddToLogFile(EngineLog, 'Проверка всех загруженных моделей:');
-    try
-      AddToLogFile(EngineLog, Format('Тип локомотива: %d (ВЛ=%s)', [currentLocType, BoolToStr(isVLLocomotive, True)]));
-      AddToLogFile(EngineLog, Format('Базовое смещение пантографов: +$%s', [IntToHex(pantoBaseOffset, 2)]));
-      AddToLogFile(EngineLog, Format('Подставка пантографа (+$%s): %d', [IntToHex(pantoBaseOffset, 2), PWord(Pointer(baseStructAddr + pantoBaseOffset))^]));
-      AddToLogFile(EngineLog, Format('Лыжи пантографа (+$%s): %d', [IntToHex(pantoBaseOffset + $02, 2), PWord(Pointer(baseStructAddr + pantoBaseOffset + $02))^]));
-      AddToLogFile(EngineLog, Format('Нижний рычаг 2 (+$%s): %d', [IntToHex(pantoBaseOffset + $04, 2), PWord(Pointer(baseStructAddr + pantoBaseOffset + $04))^]));
-      AddToLogFile(EngineLog, Format('Верхний рычаг 2 (+$%s): %d', [IntToHex(pantoBaseOffset + $06, 2), PWord(Pointer(baseStructAddr + pantoBaseOffset + $06))^]));
-      AddToLogFile(EngineLog, Format('Нижний рычаг 1 (+$%s): %d', [IntToHex(pantoBaseOffset + $08, 2), PWord(Pointer(baseStructAddr + pantoBaseOffset + $08))^]));
-      AddToLogFile(EngineLog, Format('Верхний рычаг 1 (+$%s): %d', [IntToHex(pantoBaseOffset + $0A, 2), PWord(Pointer(baseStructAddr + pantoBaseOffset + $0A))^]));
-    except
-      AddToLogFile(EngineLog, 'Ошибка чтения записанных значений');
-    end;
-      
-  end
-  else
+  end;
+  
+// ===== ЗАГРУЖАЕМ КЛУБ =====
+if klubFlag = 1 then
+begin
+  // Основной клуб - сначала пробуем стандартные файлы
+  klubModelPath := directoryPath + 'loc\klub_bil_v.dmd';
+  klubTexturePath := directoryPath + 'loc\klub_bil.bmp';
+  klubTexture2Path := directoryPath + 'loc\klub_bil2.bmp';
+  
+  // Если стандартных файлов нет, пробуем альтернативные
+  if not (FileExists(klubModelPath) and FileExists(klubTexturePath)) then
   begin
-    AddToLogFile(EngineLog, 'Папка loc не найдена, пропускаем загрузку кастомных моделей');
+    klubModelPath := directoryPath + 'loc\klub_bil_v2.dmd';
+    klubTexturePath := directoryPath + 'loc\klub_bil2.bmp';
+  end;
+  
+  if FileExists(klubModelPath) and FileExists(klubTexturePath) then
+  begin
+    try
+      KlubModelID := LoadModel(klubModelPath, 0, False);
+      KlubTextureID := LoadTextureFromFile(klubTexturePath, 0, -1);
+      
+      if (KlubModelID > 0) and (KlubTextureID > 0) then
+      begin
+        // Клуб модель
+        modelAddr := Pointer(baseStructAddr + klubBilOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(KlubModelID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+        
+        // Клуб текстура
+        textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + klubBilTextureOffset);
+        if VirtualProtect(textureAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(textureAddr)^ := Word(KlubTextureID);
+          VirtualProtect(textureAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки загрузки клуба
+    end;
+  end;
+  
+  // Вторая текстура клуба
+  if FileExists(klubTexture2Path) then
+  begin
+    try
+      KlubTexture2ID := LoadTextureFromFile(klubTexture2Path, 0, -1);
+      if KlubTexture2ID > 0 then
+      begin
+        textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + klubBil2TextureOffset);
+        if VirtualProtect(textureAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(textureAddr)^ := Word(KlubTexture2ID);
+          VirtualProtect(textureAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки загрузки второй текстуры клуба
+    end;
+  end;
+end;
+  
+  // ===== ЗАГРУЖАЕМ ПАНТОГРАФЫ =====
+  pantoPodstavkaPath := directoryPath + 'loc\tp_podstavka.dmd';
+  pantoSkiPath := directoryPath + 'loc\tp_ski.dmd';
+  pantoLever2BotPath := directoryPath + 'loc\l13u_lever1bot.dmd';
+  pantoLever2TopPath := directoryPath + 'loc\l13u_lever1top.dmd';
+  pantoLever1BotPath := directoryPath + 'loc\l13u_lever2bot.dmd';
+  pantoLever1TopPath := directoryPath + 'loc\l13u_lever2top.dmd';
+  pantoTexturePath := directoryPath + 'loc\2sls1.bmp';
+  
+  // Fallback на tp_ файлы если l13u_ не найдены
+  if not FileExists(pantoLever2BotPath) then
+    pantoLever2BotPath := directoryPath + 'loc\tp_lever1bot.dmd';
+  if not FileExists(pantoLever2TopPath) then
+    pantoLever2TopPath := directoryPath + 'loc\tp_lever1top.dmd';
+  if not FileExists(pantoLever1BotPath) then
+    pantoLever1BotPath := directoryPath + 'loc\tp_lever2bot.dmd';
+  if not FileExists(pantoLever1TopPath) then
+    pantoLever1TopPath := directoryPath + 'loc\tp_lever2top.dmd';
+  
+  // Загружаем текстуру пантографа
+  if FileExists(pantoTexturePath) then
+  begin
+    try
+      PantoTextureID := LoadTextureFromFile(pantoTexturePath, 0, -1);
+      if PantoTextureID > 0 then
+      begin
+        textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + $3C);
+        if VirtualProtect(textureAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(textureAddr)^ := Word(PantoTextureID);
+          VirtualProtect(textureAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки загрузки текстуры пантографа
+    end;
+  end;
+  
+  // Загружаем все части пантографа
+  if FileExists(pantoPodstavkaPath) then
+  begin
+    try
+      PantoPodstavkaID := LoadModel(pantoPodstavkaPath, 0, False);
+      if PantoPodstavkaID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + pantoPodstavkaOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(PantoPodstavkaID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(pantoSkiPath) then
+  begin
+    try
+      PantoSkiID := LoadModel(pantoSkiPath, 0, False);
+      if PantoSkiID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + pantoSkiOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(PantoSkiID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(pantoLever2BotPath) then
+  begin
+    try
+      PantoLever2BotID := LoadModel(pantoLever2BotPath, 0, False);
+      if PantoLever2BotID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + pantoLever2BotOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(PantoLever2BotID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(pantoLever2TopPath) then
+  begin
+    try
+      PantoLever2TopID := LoadModel(pantoLever2TopPath, 0, False);
+      if PantoLever2TopID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + pantoLever2TopOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(PantoLever2TopID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(pantoLever1BotPath) then
+  begin
+    try
+      PantoLever1BotID := LoadModel(pantoLever1BotPath, 0, False);
+      if PantoLever1BotID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + pantoLever1BotOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(PantoLever1BotID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(pantoLever1TopPath) then
+  begin
+    try
+      PantoLever1TopID := LoadModel(pantoLever1TopPath, 0, False);
+      if PantoLever1TopID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + pantoLever1TopOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(PantoLever1TopID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  // ===== ЗАГРУЖАЕМ НОВЫЕ МОДЕЛИ =====
+  
+  // Инициализируем пути к новым моделям
+  skorPrivod1Path := directoryPath + 'loc\skor_privod1.dmd';
+  skorPrivod2Path := directoryPath + 'loc\skor_privod2.dmd';
+  pisec1Path := directoryPath + 'loc\pisec1.dmd';
+  pisec2Path := directoryPath + 'loc\pisec2.dmd';
+  strelkaSkorPath := directoryPath + 'loc\strelka_skor.dmd';
+  strelkaSkorTimePath := directoryPath + 'loc\strelka_skor_time.dmd';
+  
+  // Загружаем skor_privod1.dmd
+  if FileExists(skorPrivod1Path) then
+  begin
+    try
+      SkorPrivod1ID := LoadModel(skorPrivod1Path, 0, False);
+      if (SkorPrivod1ID > 0) and (skorPrivod1Offset <> $00) then
+      begin
+        modelAddr := Pointer(baseStructAddr + skorPrivod1Offset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(SkorPrivod1ID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  // Загружаем skor_privod2.dmd
+  if FileExists(skorPrivod2Path) then
+  begin
+    try
+      SkorPrivod2ID := LoadModel(skorPrivod2Path, 0, False);
+      if (SkorPrivod2ID > 0) and (skorPrivod2Offset <> $00) then
+      begin
+        modelAddr := Pointer(baseStructAddr + skorPrivod2Offset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(SkorPrivod2ID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  // Загружаем pisec1.dmd
+  if FileExists(pisec1Path) then
+  begin
+    try
+      Pisec1ID := LoadModel(pisec1Path, 0, False);
+      if (Pisec1ID > 0) and (pisec1Offset <> $00) then
+      begin
+        modelAddr := Pointer(baseStructAddr + pisec1Offset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(Pisec1ID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  // Загружаем pisec2.dmd
+  if FileExists(pisec2Path) then
+  begin
+    try
+      Pisec2ID := LoadModel(pisec2Path, 0, False);
+      if (Pisec2ID > 0) and (pisec2Offset <> $00) then
+      begin
+        modelAddr := Pointer(baseStructAddr + pisec2Offset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(Pisec2ID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  // Загружаем strelka_skor.dmd
+  if FileExists(strelkaSkorPath) then
+  begin
+    try
+      StrelkaSkorID := LoadModel(strelkaSkorPath, 0, False);
+      if (StrelkaSkorID > 0) and (strelkaSkorOffset <> $00) then
+      begin
+        modelAddr := Pointer(baseStructAddr + strelkaSkorOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(StrelkaSkorID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  // Загружаем strelka_skor_time.dmd
+  if FileExists(strelkaSkorTimePath) then
+  begin
+    try
+      StrelkaSkorTimeID := LoadModel(strelkaSkorTimePath, 0, False);
+      if (StrelkaSkorTimeID > 0) and (strelkaSkorTimeOffset <> $00) then
+      begin
+        modelAddr := Pointer(baseStructAddr + strelkaSkorTimeOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(StrelkaSkorTimeID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  // ===== ИНИЦИАЛИЗИРУЕМ ПУТИ К LS МОДЕЛЯМ =====
+  lsPath := directoryPath + 'loc\ls.dmd';
+  lsBPath := directoryPath + 'loc\ls_b.dmd';
+  lsKPath := directoryPath + 'loc\ls_k.dmd';
+  lsKzhPath := directoryPath + 'loc\ls_kzh.dmd';
+  lsZPath := directoryPath + 'loc\ls_z.dmd';
+  lsZhPath := directoryPath + 'loc\ls_zh.dmd';
+  lsTexturePath := directoryPath + 'loc\ls.bmp';
+  
+  // Загружаем текстуру LS отдельно
+  if FileExists(lsTexturePath) then
+  begin
+    try
+      LsTextureID := LoadTextureFromFile(lsTexturePath, 0, -1);
+      if LsTextureID > 0 then
+      begin
+        textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + lsTextureOffset);
+        if VirtualProtect(textureAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(textureAddr)^ := Word(LsTextureID);
+          VirtualProtect(textureAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки загрузки LS текстуры
+    end;
+  end;
+  
+  // ===== ИНИЦИАЛИЗИРУЕМ ПУТИ К KLUB_LS МОДЕЛЯМ =====
+  klubLsPath := directoryPath + 'loc\klub_ls.dmd';
+  klubLsBPath := directoryPath + 'loc\klub_ls_b.dmd';
+  klubLsKPath := directoryPath + 'loc\klub_ls_k.dmd';
+  klubLsKzhPath := directoryPath + 'loc\klub_ls_kzh.dmd';
+  klubLsZPath := directoryPath + 'loc\klub_ls_z.dmd';
+  klubLsZhPath := directoryPath + 'loc\klub_ls_zh.dmd';
+  
+  // ===== ЗАГРУЖАЕМ LS МОДЕЛИ =====
+  if FileExists(lsPath) then
+  begin
+    try
+      LsID := LoadModel(lsPath, 0, False);
+      if LsID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + lsOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(LsID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(lsBPath) then
+  begin
+    try
+      LsBID := LoadModel(lsBPath, 0, False);
+      if LsBID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + lsBOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(LsBID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(lsKPath) then
+  begin
+    try
+      LsKID := LoadModel(lsKPath, 0, False);
+      if LsKID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + lsKOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(LsKID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(lsKzhPath) then
+  begin
+    try
+      LsKzhID := LoadModel(lsKzhPath, 0, False);
+      if LsKzhID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + lsKzhOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(LsKzhID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(lsZPath) then
+  begin
+    try
+      LsZID := LoadModel(lsZPath, 0, False);
+      if LsZID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + lsZOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(LsZID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(lsZhPath) then
+  begin
+    try
+      LsZhID := LoadModel(lsZhPath, 0, False);
+      if LsZhID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + lsZhOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(LsZhID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  // ===== ЗАГРУЖАЕМ KLUB_LS МОДЕЛИ =====
+  if FileExists(klubLsPath) then
+  begin
+    try
+      KlubLsID := LoadModel(klubLsPath, 0, False);
+      if KlubLsID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + klubLsOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(KlubLsID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(klubLsBPath) then
+  begin
+    try
+      KlubLsBID := LoadModel(klubLsBPath, 0, False);
+      if KlubLsBID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + klubLsBOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(KlubLsBID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(klubLsKPath) then
+  begin
+    try
+      KlubLsKID := LoadModel(klubLsKPath, 0, False);
+      if KlubLsKID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + klubLsKOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(KlubLsKID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(klubLsKzhPath) then
+  begin
+    try
+      KlubLsKzhID := LoadModel(klubLsKzhPath, 0, False);
+      if KlubLsKzhID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + klubLsKzhOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(KlubLsKzhID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(klubLsZPath) then
+  begin
+    try
+      KlubLsZID := LoadModel(klubLsZPath, 0, False);
+      if KlubLsZID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + klubLsZOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(KlubLsZID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+  end;
+  
+  if FileExists(klubLsZhPath) then
+  begin
+    try
+      KlubLsZhID := LoadModel(klubLsZhPath, 0, False);
+      if KlubLsZhID > 0 then
+      begin
+        modelAddr := Pointer(baseStructAddr + klubLsZhOffset);
+        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          PWord(modelAddr)^ := Word(KlubLsZhID);
+          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
   end;
   
   SettingsLoaded := True;
@@ -5378,41 +5795,37 @@ begin
   CurrentTime := GetTickCount;
   
   // ===== РУЧНОЕ УПРАВЛЕНИЕ (ВСЕГДА ДОСТУПНО) =====
-  // Обработка включения фрикамы (Alt + /) - работает ВСЕГДА
-  if IsKeyPressed(VK_MENU) and IsKeyPressed(VK_NUMPAD1) and // Alt + /
+  // Обработка переключения фрикамы (Page Down) - работает ВСЕГДА
+  if IsKeyPressed(VK_NEXT) and // Page Down
      (CurrentTime - LastFreecamToggle > FreecamKeyDelay) then
   begin
-    AddToLogFile(EngineLog, 'Ручное включение фрикама (Alt + /)');
-    
     if not FreecamEnabled then
     begin
+      // ВКЛЮЧАЕМ ФРИКАМ
+      AddToLogFile(EngineLog, 'Ручное включение фрикама (Page Down)');
+      
       if not FreecamInitialized then
         InitializeFreecam;
         
       FreecamEnabled := True;
       if ApplyNopPatch then
-begin
-  Config_Freecam := True;
-  SaveConfigFile;
-  AddToLogFile(EngineLog, 'УСПЕХ: Фрикам включен вручную + freecam: 1 в конфиг');
-  LastFreecamToggle := CurrentTime;
-end
+      begin
+        Config_Freecam := True;
+        SaveConfigFile;
+        AddToLogFile(EngineLog, 'УСПЕХ: Фрикам включен вручную + freecam: 1 в конфиг');
+        LastFreecamToggle := CurrentTime;
+      end
       else
       begin
         FreecamEnabled := False;
         AddToLogFile(EngineLog, 'ОШИБКА: Не удалось применить NOP patch при ручном включении');
       end;
-    end;
-  end
-  
-  // Обработка выключения фрикамы (/) - работает ВСЕГДА
-  else if IsKeyPressed(VK_NUMPAD1) and not IsKeyPressed(VK_MENU) and // / без Alt
-          (CurrentTime - LastFreecamDisable > FreecamKeyDelay) then
-  begin
-    AddToLogFile(EngineLog, 'Ручное выключение фрикама (/)');
-    
-    if FreecamEnabled then
+    end
+    else
     begin
+      // ВЫКЛЮЧАЕМ ФРИКАМ
+      AddToLogFile(EngineLog, 'Ручное выключение фрикама (Page Down)');
+      
       FreecamEnabled := False;
       
       // Восстанавливаем позицию
@@ -5421,13 +5834,13 @@ end
       WriteMemorySingle(ADDR_Y, InitialY);
       WriteMemorySingle(ADDR_Z, InitialZ);
       
-if RestoreOriginalBytes then
-begin
-  Config_Freecam := False;
-  SaveConfigFile;
-  AddToLogFile(EngineLog, 'УСПЕХ: Фрикам выключен вручную + freecam: 0 в конфиг');
-  LastFreecamDisable := CurrentTime;
-end
+      if RestoreOriginalBytes then
+      begin
+        Config_Freecam := False;
+        SaveConfigFile;
+        AddToLogFile(EngineLog, 'УСПЕХ: Фрикам выключен вручную + freecam: 0 в конфиг');
+        LastFreecamToggle := CurrentTime;
+      end
       else
       begin
         AddToLogFile(EngineLog, 'ОШИБКА: Не удалось восстановить байты при ручном выключении');

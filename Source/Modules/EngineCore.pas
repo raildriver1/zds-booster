@@ -93,6 +93,7 @@ implementation
 
 type
   TVSyncMode = (vsmSync, vsmNoSync);
+  TSub_4877F4 = procedure(A: Double; B, C, D, E: DWORD); stdcall;
 
 var
 MBRight, MBleft : boolean;
@@ -393,6 +394,7 @@ begin
  if WheelDelta>0 then result:=1;
 WheelDelta:=0;
 end;
+
 {------------------------------------------------------------------------------}
 //////////////////////////////ENGINE CORE///////////////////////////////////////
 {------------------------------------------------------------------------------}
@@ -901,7 +903,7 @@ begin
         try
           keys[wParam] := True;
 
-          if wParam = VK_INSERT then
+          if wParam = 123 then
             ToggleMenu;
 
         except

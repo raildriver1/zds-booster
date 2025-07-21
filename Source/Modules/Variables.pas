@@ -121,6 +121,8 @@ var
   WinY : integer = 0;
   CurW,CurH : integer;
 
+  MenuIsChangingSettings: Boolean = False;
+
   TexturesInfo : array of TTextureInfo;
 
   EngTimers : array of TEngTimer;

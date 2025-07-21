@@ -1362,7 +1362,7 @@ begin
   if not MenuVisible then Exit;
   
   // === ОПТИМИЗИРОВАННОЕ ЧТЕНИЕ КОНФИГА ДЛЯ СИНХРОНИЗАЦИИ ===
-  LoadConfigThrottled;
+  //LoadConfigThrottled;
   
   UpdateAnimations;
 
