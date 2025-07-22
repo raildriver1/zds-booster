@@ -1,5 +1,4 @@
-﻿//----------------------------------------------------------------------------//
-//CheatMenu.pas - Простое и рабочее чит-меню (ИСПРАВЛЕНО)                   //
+﻿//CheatMenu.pas - Простое и рабочее чит-меню (ИСПРАВЛЕНО)                   //
 //----------------------------------------------------------------------------//
 unit CheatMenu;
 
@@ -91,7 +90,7 @@ var
   
   // === ОПТИМИЗАЦИЯ: Ограничение частоты чтения конфига ===
   LastConfigReadTime: Cardinal = 0;
-  ConfigReadInterval: Cardinal = 50; // Читать конфиг не чаще чем раз в 50ms
+  ConfigReadInterval: Cardinal = 10; // Читать конфиг не чаще чем раз в 50ms
   
   // Переменные для патча "Новые позиции КЛУБ"
   ClubPositionsPatched: Boolean = False;
@@ -431,90 +430,108 @@ begin
   end;
 end;
 
-// ===== НОВАЯ ФУНКЦИЯ: Установка значений по умолчанию =====
-procedure SetDefaultValues;
+procedure LoadConfig;
+var
+  F: TextFile;
+  Line, Key, Value: string;
+  ColonPos: Integer;
+  OldFreecamState: Boolean;
 begin
-  // Обнуляем только структуры, не булевые значения
-  FillChar(Settings.FreecamSection, SizeOf(TExpandableSection), 0);
-  FillChar(Settings.MainCameraSection, SizeOf(TExpandableSection), 0);
-  FillChar(Settings.LightingSection, SizeOf(TExpandableSection), 0);
-  FillChar(Settings.MaxVisibleDistanceSection, SizeOf(TExpandableSection), 0);
+  if not FileExists('zdbooster.cfg') then Exit;
   
-  // Устанавливаем дефолтные состояния модулей (НЕ обнуляем!)
-  Settings.Freecam := False;
-  Settings.MainCamera := False;
-  Settings.Lighting := False;
-  Settings.MaxVisibleDistance := False;
-  Settings.NewSky := False;
-  Settings.NewClubPositions := False;
+  // Сохраняем старое состояние для отладки
+  OldFreecamState := Settings.Freecam;
   
-  // Дефолтные состояния чекбоксов дальности
-  Settings.ShowWires := True;
-  Settings.ShowDistantModels := True;
-  Settings.ShowTrafficLights := True;
+  try
+    AssignFile(F, 'zdbooster.cfg');
+    Reset(F);
+    
+    while not EOF(F) do
+    begin
+      ReadLn(F, Line);
+      Line := Trim(Line);
+      ColonPos := Pos(':', Line);
+      if ColonPos > 0 then
+      begin
+        Key := Trim(Copy(Line, 1, ColonPos - 1));
+        Value := Trim(Copy(Line, ColonPos + 1, Length(Line)));
+        
+        // Состояния модулей (0/1)
+        if Key = 'freecam' then Settings.Freecam := (Value = '1');
+        if Key = 'main_camera' then Settings.MainCamera := (Value = '1');
+        if Key = 'lighting' then Settings.Lighting := (Value = '1');
+        if Key = 'max_distance' then Settings.MaxVisibleDistance := (Value = '1');
+        if Key = 'newsky' then Settings.NewSky := (Value = '1');
+        if Key = 'new_club_positions' then Settings.NewClubPositions := (Value = '1');
+        
+        // Чекбоксы дальности
+        if Key = 'show_wires' then Settings.ShowWires := (Value = '1');
+        if Key = 'show_distant_models' then Settings.ShowDistantModels := (Value = '1');
+        if Key = 'show_traffic_lights' then Settings.ShowTrafficLights := (Value = '1');
+        
+        // Значения слайдеров
+        if Key = 'basespeed' then Settings.BasespeedSlider.Value := StrToFloatDef(Value, 1.0);
+        if Key = 'fastspeed' then Settings.FastspeedSlider.Value := StrToFloatDef(Value, 2.0);
+        if Key = 'turnspeed' then Settings.TurnspeedSlider.Value := StrToFloatDef(Value, 1.5);
+        if Key = 'stepforward' then Settings.StepForwardSlider.Value := StrToFloatDef(Value, 0.5);
+        if Key = 'maxvisibledistance' then Settings.MaxVisibleDistanceSlider.Value := StrToFloatDef(Value, 1200);
+        
+        // Глобальный слайдер яркости
+        if Key = 'brightness' then Settings.BrightnessSlider.Value := StrToFloatDef(Value, 0.0);
+        
+        // Слайдеры освещения
+        if Key = 'main_light_intensity' then Settings.MainLightIntensitySlider.Value := StrToFloatDef(Value, 5000.0);
+        if Key = 'additional_light_intensity' then Settings.AdditionalLightIntensitySlider.Value := StrToFloatDef(Value, 5000.0);
+        if Key = 'cabin_brightness' then Settings.CabinBrightnessSlider.Value := StrToFloatDef(Value, 5000.0);
+        if Key = 'cabin_contrast' then Settings.CabinContrastSlider.Value := StrToFloatDef(Value, 5000.0);
+        if Key = 'sun_orbit_radius' then Settings.SunOrbitRadiusSlider.Value := StrToFloatDef(Value, 700.0);
+        if Key = 'sun_height' then Settings.SunHeightSlider.Value := StrToFloatDef(Value, 200.0);
+      end;
+    end;
+    CloseFile(F);
+    
+    // Логируем изменения состояния freecam
+    if Settings.Freecam <> OldFreecamState then
+    begin
+      AddToLogFile(EngineLog, Format('FREECAM состояние изменилось внешне: %s -> %s', [BoolToStr(OldFreecamState), BoolToStr(Settings.Freecam)]));
+    end;
+    
+    // ИСПРАВЛЕНИЕ: Принудительно перезаписываем в движок при загрузке конфига
+    if Settings.Freecam then
+    begin
+      AddToLogFile(EngineLog, Format('Переустанавливаем скорости фрикама: base=%.2f, fast=%.2f', 
+        [Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value]));
+      // Здесь вызовы функций движка для установки скоростей
+      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
+    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
+    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
+    end;
+
+  except
+    // Игнорируем ошибки чтения конфига
+  end;
+end;
+
+// === ОПТИМИЗИРОВАННОЕ ЧТЕНИЕ КОНФИГА ===
+procedure LoadConfigThrottled;
+var
+  CurrentTime: Cardinal;
+begin
+  CurrentTime := GetTickCount;
   
-  // Инициализация ГЛОБАЛЬНОГО слайдера яркости
-  Settings.BrightnessSlider.Value := 0.0;
-  Settings.BrightnessSlider.MinValue := 0.0;
-  Settings.BrightnessSlider.MaxValue := 255.0;
-  Settings.BrightnessSlider.IsDragging := False;
-  
-  // ИСПРАВЛЕННАЯ ИНИЦИАЛИЗАЦИЯ СЛАЙДЕРОВ FREECAM (шаг 0.01, максимум 2)
-  Settings.BasespeedSlider.Value := 1.0;
-  Settings.BasespeedSlider.MinValue := 0.01;
-  Settings.BasespeedSlider.MaxValue := 2.0;
-  Settings.BasespeedSlider.IsDragging := False;
-  
-  Settings.FastspeedSlider.Value := 1.5;
-  Settings.FastspeedSlider.MinValue := 0.01;
-  Settings.FastspeedSlider.MaxValue := 2.0;
-  Settings.FastspeedSlider.IsDragging := False;
-  
-  Settings.TurnspeedSlider.Value := 1.5;
-  Settings.TurnspeedSlider.MinValue := 0.01;
-  Settings.TurnspeedSlider.MaxValue := 2.0;
-  Settings.TurnspeedSlider.IsDragging := False;
-  
-  Settings.StepForwardSlider.Value := 0.5;
-  Settings.StepForwardSlider.MinValue := 0.01;
-  Settings.StepForwardSlider.MaxValue := 1.0;
-  Settings.StepForwardSlider.IsDragging := False;
-  
-  Settings.MaxVisibleDistanceSlider.Value := 1200;
-  Settings.MaxVisibleDistanceSlider.MinValue := 800;
-  Settings.MaxVisibleDistanceSlider.MaxValue := 1600;
-  Settings.MaxVisibleDistanceSlider.IsDragging := False;
-  
-  // Инициализация слайдеров освещения
-  Settings.MainLightIntensitySlider.Value := 5000.0;
-  Settings.MainLightIntensitySlider.MinValue := 0.0;
-  Settings.MainLightIntensitySlider.MaxValue := 10000.0;
-  Settings.MainLightIntensitySlider.IsDragging := False;
-  
-  Settings.AdditionalLightIntensitySlider.Value := 5000.0;
-  Settings.AdditionalLightIntensitySlider.MinValue := 0.0;
-  Settings.AdditionalLightIntensitySlider.MaxValue := 10000.0;
-  Settings.AdditionalLightIntensitySlider.IsDragging := False;
-  
-  Settings.CabinBrightnessSlider.Value := 5000.0;
-  Settings.CabinBrightnessSlider.MinValue := 0.0;
-  Settings.CabinBrightnessSlider.MaxValue := 10000.0;
-  Settings.CabinBrightnessSlider.IsDragging := False;
-  
-  Settings.CabinContrastSlider.Value := 5000.0;
-  Settings.CabinContrastSlider.MinValue := 0.0;
-  Settings.CabinContrastSlider.MaxValue := 10000.0;
-  Settings.CabinContrastSlider.IsDragging := False;
-  
-  Settings.SunOrbitRadiusSlider.Value := 700.0;
-  Settings.SunOrbitRadiusSlider.MinValue := 100.0;
-  Settings.SunOrbitRadiusSlider.MaxValue := 5000.0;
-  Settings.SunOrbitRadiusSlider.IsDragging := False;
-  
-  Settings.SunHeightSlider.Value := 200.0;
-  Settings.SunHeightSlider.MinValue := -500.0;
-  Settings.SunHeightSlider.MaxValue := 2000.0;
-  Settings.SunHeightSlider.IsDragging := False;
+  // Читаем конфиг только если прошло достаточно времени
+  if (CurrentTime - LastConfigReadTime) >= ConfigReadInterval then
+  begin
+    LoadConfig;
+    LastConfigReadTime := CurrentTime;
+  end;
+end;
+
+// === ПРИНУДИТЕЛЬНОЕ ЧТЕНИЕ КОНФИГА ===
+procedure LoadConfigForced;
+begin
+  LoadConfig;
+  LastConfigReadTime := GetTickCount;
 end;
 
 
@@ -562,316 +579,6 @@ begin
     // Игнорируем ошибки записи конфига
   end;
 end;
-
-// === ИСПРАВЛЕННАЯ ФУНКЦИЯ ПЕРЕТАСКИВАНИЯ СЛАЙДЕРА ===
-procedure HandleSliderDrag(X: Integer; var Slider: TSlider; SliderX: Integer);
-var
-  NewProgress: Single;
-  OldValue: Single;
-  NewValue: Single;
-begin
-  if not Slider.IsDragging then Exit;
-  
-  OldValue := Slider.Value; // Сохраняем старое значение
-  
-  NewProgress := (X - SliderX) / SLIDER_WIDTH;
-  if NewProgress < 0 then NewProgress := 0;
-  if NewProgress > 1 then NewProgress := 1;
-  
-  // Вычисляем новое значение
-  NewValue := Slider.MinValue + NewProgress * (Slider.MaxValue - Slider.MinValue);
-  
-  // *** КРИТИЧЕСКИ ВАЖНО: Проверяем границы! ***
-  if NewValue < Slider.MinValue then NewValue := Slider.MinValue;
-  if NewValue > Slider.MaxValue then NewValue := Slider.MaxValue;
-  
-  Slider.Value := NewValue;
-  
-  // Применяем настройки только если значение действительно изменилось
-  if Abs(Slider.Value - OldValue) > 0.001 then
-  begin
-    // МГНОВЕННОЕ сохранение конфига для отзывчивости интерфейса
-    SaveConfig;
-    
-    // ОТЛОЖЕННОЕ применение настроек к памяти (только для освещения и дальности)
-    // Слайдер яркости меню не нуждается в throttling, так как не записывает в память игры
-    if (@Slider <> @Settings.BrightnessSlider) then
-      ApplySettingsThrottled;
-  end;
-end;
-
-// === ДОПОЛНИТЕЛЬНАЯ ФУНКЦИЯ: Проверка всех слайдеров на корректность ===
-procedure ValidateAllSliders;
-begin
-  // Проверяем все слайдеры на соответствие границам
-  if Settings.BasespeedSlider.Value < Settings.BasespeedSlider.MinValue then
-    Settings.BasespeedSlider.Value := Settings.BasespeedSlider.MinValue;
-  if Settings.BasespeedSlider.Value > Settings.BasespeedSlider.MaxValue then
-    Settings.BasespeedSlider.Value := Settings.BasespeedSlider.MaxValue;
-    
-  if Settings.FastspeedSlider.Value < Settings.FastspeedSlider.MinValue then
-    Settings.FastspeedSlider.Value := Settings.FastspeedSlider.MinValue;
-  if Settings.FastspeedSlider.Value > Settings.FastspeedSlider.MaxValue then
-    Settings.FastspeedSlider.Value := Settings.FastspeedSlider.MaxValue;
-    
-  if Settings.TurnspeedSlider.Value < Settings.TurnspeedSlider.MinValue then
-    Settings.TurnspeedSlider.Value := Settings.TurnspeedSlider.MinValue;
-  if Settings.TurnspeedSlider.Value > Settings.TurnspeedSlider.MaxValue then
-    Settings.TurnspeedSlider.Value := Settings.TurnspeedSlider.MaxValue;
-    
-  if Settings.StepForwardSlider.Value < Settings.StepForwardSlider.MinValue then
-    Settings.StepForwardSlider.Value := Settings.StepForwardSlider.MinValue;
-  if Settings.StepForwardSlider.Value > Settings.StepForwardSlider.MaxValue then
-    Settings.StepForwardSlider.Value := Settings.StepForwardSlider.MaxValue;
-    
-  if Settings.BrightnessSlider.Value < Settings.BrightnessSlider.MinValue then
-    Settings.BrightnessSlider.Value := Settings.BrightnessSlider.MinValue;
-  if Settings.BrightnessSlider.Value > Settings.BrightnessSlider.MaxValue then
-    Settings.BrightnessSlider.Value := Settings.BrightnessSlider.MaxValue;
-    
-  // Освещение
-  if Settings.MainLightIntensitySlider.Value < Settings.MainLightIntensitySlider.MinValue then
-    Settings.MainLightIntensitySlider.Value := Settings.MainLightIntensitySlider.MinValue;
-  if Settings.MainLightIntensitySlider.Value > Settings.MainLightIntensitySlider.MaxValue then
-    Settings.MainLightIntensitySlider.Value := Settings.MainLightIntensitySlider.MaxValue;
-    
-  if Settings.AdditionalLightIntensitySlider.Value < Settings.AdditionalLightIntensitySlider.MinValue then
-    Settings.AdditionalLightIntensitySlider.Value := Settings.AdditionalLightIntensitySlider.MinValue;
-  if Settings.AdditionalLightIntensitySlider.Value > Settings.AdditionalLightIntensitySlider.MaxValue then
-    Settings.AdditionalLightIntensitySlider.Value := Settings.AdditionalLightIntensitySlider.MaxValue;
-    
-  if Settings.CabinBrightnessSlider.Value < Settings.CabinBrightnessSlider.MinValue then
-    Settings.CabinBrightnessSlider.Value := Settings.CabinBrightnessSlider.MinValue;
-  if Settings.CabinBrightnessSlider.Value > Settings.CabinBrightnessSlider.MaxValue then
-    Settings.CabinBrightnessSlider.Value := Settings.CabinBrightnessSlider.MaxValue;
-    
-  if Settings.CabinContrastSlider.Value < Settings.CabinContrastSlider.MinValue then
-    Settings.CabinContrastSlider.Value := Settings.CabinContrastSlider.MinValue;
-  if Settings.CabinContrastSlider.Value > Settings.CabinContrastSlider.MaxValue then
-    Settings.CabinContrastSlider.Value := Settings.CabinContrastSlider.MaxValue;
-    
-  if Settings.SunOrbitRadiusSlider.Value < Settings.SunOrbitRadiusSlider.MinValue then
-    Settings.SunOrbitRadiusSlider.Value := Settings.SunOrbitRadiusSlider.MinValue;
-  if Settings.SunOrbitRadiusSlider.Value > Settings.SunOrbitRadiusSlider.MaxValue then
-    Settings.SunOrbitRadiusSlider.Value := Settings.SunOrbitRadiusSlider.MaxValue;
-    
-  if Settings.SunHeightSlider.Value < Settings.SunHeightSlider.MinValue then
-    Settings.SunHeightSlider.Value := Settings.SunHeightSlider.MinValue;
-  if Settings.SunHeightSlider.Value > Settings.SunHeightSlider.MaxValue then
-    Settings.SunHeightSlider.Value := Settings.SunHeightSlider.MaxValue;
-    
-  if Settings.MaxVisibleDistanceSlider.Value < Settings.MaxVisibleDistanceSlider.MinValue then
-    Settings.MaxVisibleDistanceSlider.Value := Settings.MaxVisibleDistanceSlider.MinValue;
-  if Settings.MaxVisibleDistanceSlider.Value > Settings.MaxVisibleDistanceSlider.MaxValue then
-    Settings.MaxVisibleDistanceSlider.Value := Settings.MaxVisibleDistanceSlider.MaxValue;
-end;
-
-
-// === ИСПРАВЛЕННАЯ ФУНКЦИЯ LoadConfig ===
-procedure LoadConfig;
-var
-  F: TextFile;
-  Line, Key, Value: string;
-  ColonPos: Integer;
-  OldFreecamState: Boolean;
-begin
-  // Если файла конфига нет - создаем его с дефолтными значениями
-  if not FileExists('zdbooster.cfg') then 
-  begin
-    AddToLogFile(EngineLog, 'Конфиг не найден, создаем дефолтный...');
-    SaveConfig;  // Создаем файл с текущими (дефолтными) настройками
-    Exit;
-  end;
-  
-  // Сохраняем старое состояние для отладки
-  OldFreecamState := Settings.Freecam;
-  
-  try
-    AssignFile(F, 'zdbooster.cfg');
-    Reset(F);
-    
-    while not EOF(F) do
-    begin
-      ReadLn(F, Line);
-      Line := Trim(Line);
-      ColonPos := Pos(':', Line);
-      if ColonPos > 0 then
-      begin
-        Key := Trim(Copy(Line, 1, ColonPos - 1));
-        Value := Trim(Copy(Line, ColonPos + 1, Length(Line)));
-        
-        // Состояния модулей (0/1)
-        if Key = 'freecam' then Settings.Freecam := (Value = '1');
-        if Key = 'main_camera' then Settings.MainCamera := (Value = '1');
-        if Key = 'lighting' then Settings.Lighting := (Value = '1');
-        if Key = 'max_distance' then Settings.MaxVisibleDistance := (Value = '1');
-        if Key = 'newsky' then Settings.NewSky := (Value = '1');
-        if Key = 'new_club_positions' then Settings.NewClubPositions := (Value = '1');
-        
-        // Чекбоксы дальности
-        if Key = 'show_wires' then Settings.ShowWires := (Value = '1');
-        if Key = 'show_distant_models' then Settings.ShowDistantModels := (Value = '1');
-        if Key = 'show_traffic_lights' then Settings.ShowTrafficLights := (Value = '1');
-        
-        // Значения слайдеров с проверкой границ
-        if Key = 'basespeed' then 
-        begin
-          Settings.BasespeedSlider.Value := StrToFloatDef(Value, 1.0);
-          // *** КРИТИЧЕСКИ ВАЖНО: Проверяем границы после загрузки! ***
-          if Settings.BasespeedSlider.Value < Settings.BasespeedSlider.MinValue then
-            Settings.BasespeedSlider.Value := Settings.BasespeedSlider.MinValue;
-          if Settings.BasespeedSlider.Value > Settings.BasespeedSlider.MaxValue then
-            Settings.BasespeedSlider.Value := Settings.BasespeedSlider.MaxValue;
-        end;
-        
-        if Key = 'fastspeed' then 
-        begin
-          Settings.FastspeedSlider.Value := StrToFloatDef(Value, 1.5);
-          if Settings.FastspeedSlider.Value < Settings.FastspeedSlider.MinValue then
-            Settings.FastspeedSlider.Value := Settings.FastspeedSlider.MinValue;
-          if Settings.FastspeedSlider.Value > Settings.FastspeedSlider.MaxValue then
-            Settings.FastspeedSlider.Value := Settings.FastspeedSlider.MaxValue;
-        end;
-        
-        if Key = 'turnspeed' then 
-        begin
-          Settings.TurnspeedSlider.Value := StrToFloatDef(Value, 1.5);
-          if Settings.TurnspeedSlider.Value < Settings.TurnspeedSlider.MinValue then
-            Settings.TurnspeedSlider.Value := Settings.TurnspeedSlider.MinValue;
-          if Settings.TurnspeedSlider.Value > Settings.TurnspeedSlider.MaxValue then
-            Settings.TurnspeedSlider.Value := Settings.TurnspeedSlider.MaxValue;
-        end;
-        
-        if Key = 'stepforward' then 
-        begin
-          Settings.StepForwardSlider.Value := StrToFloatDef(Value, 0.5);
-          if Settings.StepForwardSlider.Value < Settings.StepForwardSlider.MinValue then
-            Settings.StepForwardSlider.Value := Settings.StepForwardSlider.MinValue;
-          if Settings.StepForwardSlider.Value > Settings.StepForwardSlider.MaxValue then
-            Settings.StepForwardSlider.Value := Settings.StepForwardSlider.MaxValue;
-        end;
-        
-        if Key = 'maxvisibledistance' then 
-        begin
-          Settings.MaxVisibleDistanceSlider.Value := StrToFloatDef(Value, 1200);
-          if Settings.MaxVisibleDistanceSlider.Value < Settings.MaxVisibleDistanceSlider.MinValue then
-            Settings.MaxVisibleDistanceSlider.Value := Settings.MaxVisibleDistanceSlider.MinValue;
-          if Settings.MaxVisibleDistanceSlider.Value > Settings.MaxVisibleDistanceSlider.MaxValue then
-            Settings.MaxVisibleDistanceSlider.Value := Settings.MaxVisibleDistanceSlider.MaxValue;
-        end;
-        
-        // Глобальный слайдер яркости
-        if Key = 'brightness' then 
-        begin
-          Settings.BrightnessSlider.Value := StrToFloatDef(Value, 0.0);
-          if Settings.BrightnessSlider.Value < Settings.BrightnessSlider.MinValue then
-            Settings.BrightnessSlider.Value := Settings.BrightnessSlider.MinValue;
-          if Settings.BrightnessSlider.Value > Settings.BrightnessSlider.MaxValue then
-            Settings.BrightnessSlider.Value := Settings.BrightnessSlider.MaxValue;
-        end;
-        
-        // Слайдеры освещения с проверкой границ
-        if Key = 'main_light_intensity' then 
-        begin
-          Settings.MainLightIntensitySlider.Value := StrToFloatDef(Value, 5000.0);
-          if Settings.MainLightIntensitySlider.Value < Settings.MainLightIntensitySlider.MinValue then
-            Settings.MainLightIntensitySlider.Value := Settings.MainLightIntensitySlider.MinValue;
-          if Settings.MainLightIntensitySlider.Value > Settings.MainLightIntensitySlider.MaxValue then
-            Settings.MainLightIntensitySlider.Value := Settings.MainLightIntensitySlider.MaxValue;
-        end;
-        
-        if Key = 'additional_light_intensity' then 
-        begin
-          Settings.AdditionalLightIntensitySlider.Value := StrToFloatDef(Value, 5000.0);
-          if Settings.AdditionalLightIntensitySlider.Value < Settings.AdditionalLightIntensitySlider.MinValue then
-            Settings.AdditionalLightIntensitySlider.Value := Settings.AdditionalLightIntensitySlider.MinValue;
-          if Settings.AdditionalLightIntensitySlider.Value > Settings.AdditionalLightIntensitySlider.MaxValue then
-            Settings.AdditionalLightIntensitySlider.Value := Settings.AdditionalLightIntensitySlider.MaxValue;
-        end;
-        
-        if Key = 'cabin_brightness' then 
-        begin
-          Settings.CabinBrightnessSlider.Value := StrToFloatDef(Value, 5000.0);
-          if Settings.CabinBrightnessSlider.Value < Settings.CabinBrightnessSlider.MinValue then
-            Settings.CabinBrightnessSlider.Value := Settings.CabinBrightnessSlider.MinValue;
-          if Settings.CabinBrightnessSlider.Value > Settings.CabinBrightnessSlider.MaxValue then
-            Settings.CabinBrightnessSlider.Value := Settings.CabinBrightnessSlider.MaxValue;
-        end;
-        
-        if Key = 'cabin_contrast' then 
-        begin
-          Settings.CabinContrastSlider.Value := StrToFloatDef(Value, 5000.0);
-          if Settings.CabinContrastSlider.Value < Settings.CabinContrastSlider.MinValue then
-            Settings.CabinContrastSlider.Value := Settings.CabinContrastSlider.MinValue;
-          if Settings.CabinContrastSlider.Value > Settings.CabinContrastSlider.MaxValue then
-            Settings.CabinContrastSlider.Value := Settings.CabinContrastSlider.MaxValue;
-        end;
-        
-        if Key = 'sun_orbit_radius' then 
-        begin
-          Settings.SunOrbitRadiusSlider.Value := StrToFloatDef(Value, 700.0);
-          if Settings.SunOrbitRadiusSlider.Value < Settings.SunOrbitRadiusSlider.MinValue then
-            Settings.SunOrbitRadiusSlider.Value := Settings.SunOrbitRadiusSlider.MinValue;
-          if Settings.SunOrbitRadiusSlider.Value > Settings.SunOrbitRadiusSlider.MaxValue then
-            Settings.SunOrbitRadiusSlider.Value := Settings.SunOrbitRadiusSlider.MaxValue;
-        end;
-        
-        if Key = 'sun_height' then 
-        begin
-          Settings.SunHeightSlider.Value := StrToFloatDef(Value, 200.0);
-          if Settings.SunHeightSlider.Value < Settings.SunHeightSlider.MinValue then
-            Settings.SunHeightSlider.Value := Settings.SunHeightSlider.MinValue;
-          if Settings.SunHeightSlider.Value > Settings.SunHeightSlider.MaxValue then
-            Settings.SunHeightSlider.Value := Settings.SunHeightSlider.MaxValue;
-        end;
-      end;
-    end;
-    CloseFile(F);
-    
-    // *** ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: Валидируем все слайдеры после загрузки ***
-    ValidateAllSliders;
-    
-    // Логируем изменения состояния freecam
-    if Settings.Freecam <> OldFreecamState then
-    begin
-      AddToLogFile(EngineLog, Format('FREECAM состояние загружено из конфига: %s -> %s', [BoolToStr(OldFreecamState), BoolToStr(Settings.Freecam)]));
-    end;
-    
-    AddToLogFile(EngineLog, Format('Конфиг успешно загружен. BasespeedSlider.Value = %.3f', [Settings.BasespeedSlider.Value]));
-    
-  except
-    on E: Exception do
-    begin
-      AddToLogFile(EngineLog, 'Ошибка чтения конфига: ' + E.Message);
-      // При ошибке чтения не сбрасываем настройки - оставляем дефолтные
-      ValidateAllSliders; // Проверяем границы даже при ошибке
-    end;
-  end;
-end;
-
-
-// === ОПТИМИЗИРОВАННОЕ ЧТЕНИЕ КОНФИГА ===
-procedure LoadConfigThrottled;
-var
-  CurrentTime: Cardinal;
-begin
-  CurrentTime := GetTickCount;
-  
-  // Читаем конфиг только если прошло достаточно времени
-  if (CurrentTime - LastConfigReadTime) >= ConfigReadInterval then
-  begin
-    LoadConfig;
-    LastConfigReadTime := CurrentTime;
-  end;
-end;
-
-// === ПРИНУДИТЕЛЬНОЕ ЧТЕНИЕ КОНФИГА ===
-procedure LoadConfigForced;
-begin
-  LoadConfig;
-  LastConfigReadTime := GetTickCount;
-end;
-
 
 // ===== ФУНКЦИЯ ПРИМЕНЕНИЯ ПАТЧА =====
 procedure ApplyClubPositionsPatch;
@@ -1230,18 +937,61 @@ begin
   end;
 end;
 
-// ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ: Инициализация чит-меню =====
 procedure InitCheatMenu; stdcall;
 begin
-  AddToLogFile(EngineLog, 'Инициализация чит-меню...');
+  FillChar(Settings, SizeOf(Settings), 0);
   
-  // УБИРАЕМ ПРОБЛЕМНУЮ СТРОКУ!
-  // FillChar(Settings, SizeOf(Settings), 0);  // ← ЭТА СТРОКА УДАЛЕНА!
+  // Инициализация ГЛОБАЛЬНОГО слайдера яркости
+  Settings.BrightnessSlider.Value := 0.0;
+  Settings.BrightnessSlider.MinValue := 0.0;
+  Settings.BrightnessSlider.MaxValue := 255.0;
   
-  // Устанавливаем правильные дефолтные значения
-  SetDefaultValues;
+  // ИСПРАВЛЕННАЯ ИНИЦИАЛИЗАЦИЯ СЛАЙДЕРОВ FREECAM (шаг 0.01, максимум 2)
+  Settings.BasespeedSlider.Value := 1.0;
+  Settings.BasespeedSlider.MinValue := 0.01;
+  Settings.BasespeedSlider.MaxValue := 2.0;
   
-  // Загружаем настройки из конфига (или создаем дефолтный)
+  Settings.FastspeedSlider.Value := 1.5;
+  Settings.FastspeedSlider.MinValue := 0.01;
+  Settings.FastspeedSlider.MaxValue := 2.0;
+  
+  Settings.TurnspeedSlider.Value := 1.5;
+  Settings.TurnspeedSlider.MinValue := 0.01;
+  Settings.TurnspeedSlider.MaxValue := 2.0;
+  
+  Settings.StepForwardSlider.Value := 0.5;
+  Settings.StepForwardSlider.MinValue := 0.01;
+  Settings.StepForwardSlider.MaxValue := 1.0;
+  
+  Settings.MaxVisibleDistanceSlider.Value := 1200;
+  Settings.MaxVisibleDistanceSlider.MinValue := 800;
+  Settings.MaxVisibleDistanceSlider.MaxValue := 1600;
+  
+  // Инициализация слайдеров освещения
+  Settings.MainLightIntensitySlider.Value := 5000.0;
+  Settings.MainLightIntensitySlider.MinValue := 0.0;
+  Settings.MainLightIntensitySlider.MaxValue := 10000.0;
+  
+  Settings.AdditionalLightIntensitySlider.Value := 5000.0;
+  Settings.AdditionalLightIntensitySlider.MinValue := 0.0;
+  Settings.AdditionalLightIntensitySlider.MaxValue := 10000.0;
+  
+  Settings.CabinBrightnessSlider.Value := 5000.0;
+  Settings.CabinBrightnessSlider.MinValue := 0.0;
+  Settings.CabinBrightnessSlider.MaxValue := 10000.0;
+  
+  Settings.CabinContrastSlider.Value := 5000.0;
+  Settings.CabinContrastSlider.MinValue := 0.0;
+  Settings.CabinContrastSlider.MaxValue := 10000.0;
+  
+  Settings.SunOrbitRadiusSlider.Value := 700.0;
+  Settings.SunOrbitRadiusSlider.MinValue := 100.0;
+  Settings.SunOrbitRadiusSlider.MaxValue := 5000.0;
+  
+  Settings.SunHeightSlider.Value := 200.0;
+  Settings.SunHeightSlider.MinValue := -500.0;
+  Settings.SunHeightSlider.MaxValue := 2000.0;
+
   LoadConfig;
 
   // ИСПРАВЛЕННАЯ ИНИЦИАЛИЗАЦИЯ АДРЕСОВ (БЕЗ +1!)
@@ -1280,26 +1030,17 @@ begin
   
   // Применяем патч если он был включен в конфиге
   if Settings.NewClubPositions then
-  begin
-    AddToLogFile(EngineLog, 'Применяем КЛУБ патч при инициализации...');
     ApplyClubPositionsPatch;
-  end;
     
   // Применяем освещение если оно было включено в конфиге
   if Settings.Lighting then
-  begin
-    AddToLogFile(EngineLog, 'Применяем настройки освещения при инициализации...');
     ApplyLightingSettings;
-  end;
     
   // Применяем дальность если она была включена в конфиге
   if Settings.MaxVisibleDistance then
-  begin
-    AddToLogFile(EngineLog, 'Применяем настройки дальности при инициализации...');
     ApplyDistanceSettings;
-  end;
 
-  // Инициализация окон
+  // Остальная инициализация окон...
   RenderWindow.Title := 'RENDER';
   RenderWindow.X := 50;
   RenderWindow.Y := 40;
@@ -1307,9 +1048,6 @@ begin
   RenderWindow.Height := 120;
   RenderWindow.Alpha := 0.0;
   RenderWindow.TargetAlpha := 1.0;
-  RenderWindow.IsDragging := False;
-  RenderWindow.DragOffsetX := 0;
-  RenderWindow.DragOffsetY := 0;
   
   WorldWindow.Title := 'WORLD';
   WorldWindow.X := 310;
@@ -1318,9 +1056,6 @@ begin
   WorldWindow.Height := 100;
   WorldWindow.Alpha := 0.0;
   WorldWindow.TargetAlpha := 1.0;
-  WorldWindow.IsDragging := False;
-  WorldWindow.DragOffsetX := 0;
-  WorldWindow.DragOffsetY := 0;
   
   LocomotiveWindow.Title := 'LOCOMOTIVE';
   LocomotiveWindow.X := 570;
@@ -1329,11 +1064,6 @@ begin
   LocomotiveWindow.Height := 100;
   LocomotiveWindow.Alpha := 0.0;
   LocomotiveWindow.TargetAlpha := 1.0;
-  LocomotiveWindow.IsDragging := False;
-  LocomotiveWindow.DragOffsetX := 0;
-  LocomotiveWindow.DragOffsetY := 0;
-  
-  AddToLogFile(EngineLog, 'Чит-меню успешно инициализировано');
 end;
 
 procedure DrawExpandButton(X, Y: Integer; Expanded: Boolean; Alpha: Integer);
@@ -1641,7 +1371,7 @@ begin
   if not MenuVisible then Exit;
   
   // === ОПТИМИЗИРОВАННОЕ ЧТЕНИЕ КОНФИГА ДЛЯ СИНХРОНИЗАЦИИ ===
-  //LoadConfigThrottled;
+  LoadConfigThrottled;
   
   UpdateAnimations;
 
@@ -1660,6 +1390,47 @@ begin
     DrawInfoBar;
   finally
     End2D;
+  end;
+end;
+
+// 3. ИСПРАВЛЕННАЯ ФУНКЦИЯ HandleSliderDrag (ПОЛНАЯ ЗАМЕНА)
+procedure HandleSliderDrag(X: Integer; var Slider: TSlider; SliderX: Integer);
+var
+  NewProgress: Single;
+  OldValue: Single;
+begin
+  if not Slider.IsDragging then Exit;
+  
+  OldValue := Slider.Value; // Сохраняем старое значение
+  
+  NewProgress := (X - SliderX) / SLIDER_WIDTH;
+  if NewProgress < 0 then NewProgress := 0;
+  if NewProgress > 1 then NewProgress := 1;
+  
+  Slider.Value := Slider.MinValue + NewProgress * (Slider.MaxValue - Slider.MinValue);
+  
+  // Применяем настройки только если значение действительно изменилось
+  if Abs(Slider.Value - OldValue) > 0.001 then
+  begin
+    // МГНОВЕННОЕ сохранение конфига для отзывчивости интерфейса
+    SaveConfig;
+    
+    // ИСПРАВЛЕНИЕ: Специальная обработка для слайдеров фрикама
+    if (@Slider = @Settings.BasespeedSlider) or 
+       (@Slider = @Settings.FastspeedSlider) or 
+       (@Slider = @Settings.TurnspeedSlider) then
+    begin
+      AddToLogFile(EngineLog, Format('Изменен слайдер фрикама: %.2f', [Slider.Value]));
+      // Принудительная синхронизация с движком
+      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
+    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
+    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
+    end;
+    
+    // ОТЛОЖЕННОЕ применение настроек к памяти (только для освещения и дальности)
+    // Слайдер яркости меню не нуждается в throttling, так как не записывает в память игры
+    if (@Slider <> @Settings.BrightnessSlider) then
+      ApplySettingsThrottled;
   end;
 end;
 
@@ -1748,9 +1519,17 @@ begin
     if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
     begin
       Settings.Freecam := not Settings.Freecam;
-      if Settings.Freecam then Settings.FreecamSection.Expanded := True;
+      if Settings.Freecam then 
+      begin
+        Settings.FreecamSection.Expanded := True;
+        AddToLogFile(EngineLog, 'Фрикам включен через меню - принудительно применяем настройки');
+      end;
       SaveConfig;
-      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
+      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
+    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
+    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
+      // ИСПРАВЛЕНИЕ: Принудительная перезагрузка конфига
+      LoadConfigForced;
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
@@ -1789,7 +1568,9 @@ begin
       Settings.MainCamera := not Settings.MainCamera;
       if Settings.MainCamera then Settings.MainCameraSection.Expanded := True;
       SaveConfig;
-      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
+      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
+    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
+    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
@@ -1919,8 +1700,10 @@ begin
       // Сначала сохраняем, потом синхронизируем
       SaveConfig;
       
-      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
-      
+SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
+    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
+    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
+
       // Принудительно обновляем время последнего чтения конфига
       LastConfigReadTime := GetTickCount;
       
@@ -1979,7 +1762,9 @@ begin
     begin
       Settings.NewSky := not Settings.NewSky;
       SaveConfig;
-      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
+SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
+    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
+    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
       Exit;
     end;
   end;
@@ -2063,6 +1848,15 @@ begin
     
     // Патчим вызов при открытии меню
     ApplyMenuPatch;
+    
+    // ИСПРАВЛЕНИЕ: Принудительно синхронизируем все настройки при открытии меню
+    if Settings.Freecam then
+    begin
+      AddToLogFile(EngineLog, 'Меню открыто - пересинхронизируем фрикам');
+SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
+    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
+    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
+    end;
   end
   else
   begin
