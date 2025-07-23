@@ -1,4 +1,5 @@
-﻿//CheatMenu.pas - Простое и рабочее чит-меню (ИСПРАВЛЕНО)                   //
+﻿//----------------------------------------------------------------------------//
+//CheatMenu.pas - Простое и рабочее чит-меню (ИСПРАВЛЕНО)                   //
 //----------------------------------------------------------------------------//
 unit CheatMenu;
 
@@ -75,6 +76,10 @@ procedure HandleMenuHover(X, Y: Integer); stdcall;
 procedure HandleMenuMouseUp; stdcall;
 procedure ToggleMenu; stdcall;
 
+function GetFreecamBasespeed: Single; stdcall;
+function GetFreecamFastspeed: Single; stdcall;
+function GetFreecamTurnspeed: Single; stdcall;
+
 implementation
 
 var
@@ -90,7 +95,7 @@ var
   
   // === ОПТИМИЗАЦИЯ: Ограничение частоты чтения конфига ===
   LastConfigReadTime: Cardinal = 0;
-  ConfigReadInterval: Cardinal = 10; // Читать конфиг не чаще чем раз в 50ms
+  ConfigReadInterval: Cardinal = 50; // Читать конфиг не чаще чем раз в 50ms
   
   // Переменные для патча "Новые позиции КЛУБ"
   ClubPositionsPatched: Boolean = False;
@@ -164,6 +169,21 @@ const
   SLIDER_WIDTH = 190;
   BUTTON_SIZE = 20;
   CHECKBOX_SIZE = 16;
+
+function GetFreecamBasespeed: Single; stdcall;
+begin
+  Result := Settings.BasespeedSlider.Value;
+end;
+
+function GetFreecamFastspeed: Single; stdcall;
+begin
+  Result := Settings.FastspeedSlider.Value;
+end;
+
+function GetFreecamTurnspeed: Single; stdcall;
+begin
+  Result := Settings.TurnspeedSlider.Value;
+end;
 
 // Простая отрисовка текста
 procedure DrawText(X, Y: Integer; Text: string; Color: Integer; Alpha: Integer = 255);
@@ -489,28 +509,22 @@ begin
       end;
     end;
     CloseFile(F);
-    
+
+  MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
+  MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
+  MenuFreecamTurnSpeed := Settings.TurnspeedSlider.Value;
+
     // Логируем изменения состояния freecam
     if Settings.Freecam <> OldFreecamState then
     begin
       AddToLogFile(EngineLog, Format('FREECAM состояние изменилось внешне: %s -> %s', [BoolToStr(OldFreecamState), BoolToStr(Settings.Freecam)]));
     end;
     
-    // ИСПРАВЛЕНИЕ: Принудительно перезаписываем в движок при загрузке конфига
-    if Settings.Freecam then
-    begin
-      AddToLogFile(EngineLog, Format('Переустанавливаем скорости фрикама: base=%.2f, fast=%.2f', 
-        [Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value]));
-      // Здесь вызовы функций движка для установки скоростей
-      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
-    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
-    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
-    end;
-
   except
     // Игнорируем ошибки чтения конфига
   end;
 end;
+
 
 // === ОПТИМИЗИРОВАННОЕ ЧТЕНИЕ КОНФИГА ===
 procedure LoadConfigThrottled;
@@ -994,6 +1008,10 @@ begin
 
   LoadConfig;
 
+  MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
+  MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
+  MenuFreecamTurnSpeed := Settings.TurnspeedSlider.Value;
+
   // ИСПРАВЛЕННАЯ ИНИЦИАЛИЗАЦИЯ АДРЕСОВ (БЕЗ +1!)
   SpeedXAddr := $00400000 + $84B2B;
   AllowedSpeedAddr := $00400000 + $84D25;
@@ -1393,7 +1411,7 @@ begin
   end;
 end;
 
-// 3. ИСПРАВЛЕННАЯ ФУНКЦИЯ HandleSliderDrag (ПОЛНАЯ ЗАМЕНА)
+// === ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ПЕРЕТАСКИВАНИЯ СЛАЙДЕРА ===
 procedure HandleSliderDrag(X: Integer; var Slider: TSlider; SliderX: Integer);
 var
   NewProgress: Single;
@@ -1410,28 +1428,24 @@ begin
   Slider.Value := Slider.MinValue + NewProgress * (Slider.MaxValue - Slider.MinValue);
   
   // Применяем настройки только если значение действительно изменилось
-  if Abs(Slider.Value - OldValue) > 0.001 then
-  begin
-    // МГНОВЕННОЕ сохранение конфига для отзывчивости интерфейса
-    SaveConfig;
-    
-    // ИСПРАВЛЕНИЕ: Специальная обработка для слайдеров фрикама
-    if (@Slider = @Settings.BasespeedSlider) or 
-       (@Slider = @Settings.FastspeedSlider) or 
-       (@Slider = @Settings.TurnspeedSlider) then
-    begin
-      AddToLogFile(EngineLog, Format('Изменен слайдер фрикама: %.2f', [Slider.Value]));
-      // Принудительная синхронизация с движком
-      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
-    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
-    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
-    end;
-    
-    // ОТЛОЖЕННОЕ применение настроек к памяти (только для освещения и дальности)
-    // Слайдер яркости меню не нуждается в throttling, так как не записывает в память игры
-    if (@Slider <> @Settings.BrightnessSlider) then
-      ApplySettingsThrottled;
-  end;
+if Abs(Slider.Value - OldValue) > 0.001 then
+begin
+  // === СИНХРОНИЗАЦИЯ С ГЛОБАЛЬНЫМИ ПЕРЕМЕННЫМИ ===
+  if @Slider = @Settings.BasespeedSlider then
+    MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
+  if @Slider = @Settings.FastspeedSlider then
+    MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
+  if @Slider = @Settings.TurnspeedSlider then
+    MenuFreecamTurnSpeed := Settings.TurnspeedSlider.Value;
+  
+  // МГНОВЕННОЕ сохранение конфига для отзывчивости интерфейса
+  SaveConfig;
+  
+  // ОТЛОЖЕННОЕ применение настроек к памяти (только для освещения и дальности)
+  // Слайдер яркости меню не нуждается в throttling, так как не записывает в память игры
+  if (@Slider <> @Settings.BrightnessSlider) then
+    ApplySettingsThrottled;
+end;
 end;
 
 procedure HandleMenuHover(X, Y: Integer); stdcall;
@@ -1519,17 +1533,9 @@ begin
     if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
     begin
       Settings.Freecam := not Settings.Freecam;
-      if Settings.Freecam then 
-      begin
-        Settings.FreecamSection.Expanded := True;
-        AddToLogFile(EngineLog, 'Фрикам включен через меню - принудительно применяем настройки');
-      end;
+      if Settings.Freecam then Settings.FreecamSection.Expanded := True;
       SaveConfig;
-      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
-    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
-    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
-      // ИСПРАВЛЕНИЕ: Принудительная перезагрузка конфига
-      LoadConfigForced;
+      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
@@ -1568,9 +1574,7 @@ begin
       Settings.MainCamera := not Settings.MainCamera;
       if Settings.MainCamera then Settings.MainCameraSection.Expanded := True;
       SaveConfig;
-      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
-    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
-    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
+      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
@@ -1700,10 +1704,8 @@ begin
       // Сначала сохраняем, потом синхронизируем
       SaveConfig;
       
-SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
-    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
-    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
-
+      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
+      
       // Принудительно обновляем время последнего чтения конфига
       LastConfigReadTime := GetTickCount;
       
@@ -1762,9 +1764,7 @@ SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDis
     begin
       Settings.NewSky := not Settings.NewSky;
       SaveConfig;
-SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
-    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
-    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
+      SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
       Exit;
     end;
   end;
@@ -1848,15 +1848,6 @@ begin
     
     // Патчим вызов при открытии меню
     ApplyMenuPatch;
-    
-    // ИСПРАВЛЕНИЕ: Принудительно синхронизируем все настройки при открытии меню
-    if Settings.Freecam then
-    begin
-      AddToLogFile(EngineLog, 'Меню открыто - пересинхронизируем фрикам');
-SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky,
-    Settings.BasespeedSlider.Value, Settings.FastspeedSlider.Value, Settings.TurnspeedSlider.Value,
-    Settings.StepForwardSlider.Value, Round(Settings.MaxVisibleDistanceSlider.Value));
-    end;
   end
   else
   begin

@@ -108,18 +108,20 @@ var
   _frustumcalculated: boolean =false;
   //_NormCubemap : cardinal = 0;  
   MipMapping : boolean = false;
-  InitResX : cardinal = 800;
+  InitResX : cardinal = 2000;
   InitResY : cardinal = 600;
   InitPDepth : integer = 32;
   InitVsync : boolean = false;
   InitFrequency : integer = 60;
   InitZNear : single = 0.5;
-  InitZfar : single = 200.0;
+  InitZfar : single = 2200.0;
   initAngle : single = 45.0;
   InitZBuffer : byte = 24;
   WinX : integer = 0;
   WinY : integer = 0;
   CurW,CurH : integer;
+
+  MenuIsChangingSettings: Boolean = False;
 
   TexturesInfo : array of TTextureInfo;
 

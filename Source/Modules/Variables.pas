@@ -121,6 +121,10 @@ var
   WinY : integer = 0;
   CurW,CurH : integer;
 
+  MenuFreecamBaseSpeed: Single = 1.0;
+  MenuFreecamFastSpeed: Single = 2.0;
+  MenuFreecamTurnSpeed: Single = 1.5;
+
   MenuIsChangingSettings: Boolean = False;
 
   TexturesInfo : array of TTextureInfo;

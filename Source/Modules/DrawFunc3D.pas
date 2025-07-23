@@ -21,7 +21,7 @@
 unit DrawFunc3D;
 interface
 uses OpenGL, Variables, Windows, TFrustumClass, EngineUtils, SysUtils, DMD_MultyMesh,
-     Textures, DPC_Packages, Classes, KlubData, KlubProcessor, Math, TlHelp32,   MMSystem;
+     Textures, DPC_Packages, Classes, KlubData, KlubProcessor, Math, TlHelp32, MMSystem;
 
 
 type TVertex3D = record X,Y,Z : single; Color, Alpha : integer; TexX, TexY : single; end;
@@ -137,7 +137,7 @@ function GetCurrentHour: Integer; stdcall;  // если еще нет
 procedure ProcessFreecam; stdcall;
 procedure LoadSettingsAndCustomModels; stdcall;
 procedure ProcessDayNightSystem; stdcall;
-procedure LoadConfigFile; stdcall;
+
 var
   ConfigLoaded: Boolean;
 procedure ApplyMaxVisibleDistance; stdcall;
@@ -147,8 +147,7 @@ procedure PatchDrawSkyCall; stdcall;
 procedure ProcessAllModules; stdcall;
 
 // Функции для синхронизации с меню
-procedure SyncConfigFromMenu(Freecam, MainCamera, MaxDistance, NewSky: Boolean; 
-  BaseSpeed, FastSpeed, TurnSpeed, StepForward: Single; MaxDist: Integer); stdcall;
+procedure SyncConfigFromMenu(Freecam, MainCamera, MaxDistance, NewSky: Boolean); stdcall;
 function GetConfigFreecam: Boolean; stdcall;
 function GetConfigMainCamera: Boolean; stdcall;
 function GetConfigMaxDistance: Boolean; stdcall;
@@ -483,27 +482,18 @@ var
 
   CurrentIsNight: Boolean = False;
 
-procedure SyncConfigFromMenu(Freecam, MainCamera, MaxDistance, NewSky: Boolean; 
-  BaseSpeed, FastSpeed, TurnSpeed, StepForward: Single; MaxDist: Integer); stdcall;
+
+
+procedure SyncConfigFromMenu(Freecam, MainCamera, MaxDistance, NewSky: Boolean); stdcall;
 begin
   Config_Freecam := Freecam;
   Config_MainCamera := MainCamera;
   Config_MaxDistance := MaxDistance;
   Config_NewSky := NewSky;
   
-  // ДОБАВИТЬ СИНХРОНИЗАЦИЮ СКОРОСТЕЙ:
-  Config_BaseSpeed := BaseSpeed;
-  Config_FastSpeed := FastSpeed;
-  Config_TurnSpeed := TurnSpeed;
-  Config_StepForward := StepForward;
-  Config_MaxVisibleDistance := MaxDist;
-  
   AddToLogFile(EngineLog, Format('Синхронизация из меню: F=%s M=%s D=%s S=%s',
     [BoolToStr(Freecam, True), BoolToStr(MainCamera, True), 
      BoolToStr(MaxDistance, True), BoolToStr(NewSky, True)]));
-     
-  AddToLogFile(EngineLog, Format('Скорости: Base=%.2f, Fast=%.2f, Turn=%.2f, Step=%.6f',
-    [Config_BaseSpeed, Config_FastSpeed, Config_TurnSpeed, Config_StepForward]));
 end;
 
 function GetConfigFreecam: Boolean; stdcall;
@@ -1459,7 +1449,7 @@ begin
   // Обновляем конфиги по таймеру
   if (currentTime - LastBoosterConfigCheck) > BoosterConfigCheckInterval then
   begin
-    LoadConfigFile; // Обновляем все конфиги из zdbooster.cfg
+    //LoadConfigFile; // Обновляем все конфиги из zdbooster.cfg
     LastBoosterConfigCheck := currentTime;
   end;
   
@@ -5658,314 +5648,6 @@ begin
   end;
 end;
 
-// ===== ПОЛНАЯ ФУНКЦИЯ LoadConfigFile С ОТЛАДКОЙ =====
-procedure LoadConfigFile;
-var
-  f: TextFile;
-  line: string;
-  paramName, paramValue: string;
-  colonPos: Integer;
-  newStepForward: Single;
-  // === ДОБАВЛЕНО: Переменные для сохранения старых значений ===
-  OldBaseSpeed, OldFastSpeed, OldTurnSpeed: Single;
-  OldFreecam, OldMainCamera, OldMaxDistance, OldNewSky: Boolean;
-  KeepOldSpeeds: Boolean;
-begin
-  // === ОТЛАДКА В НАЧАЛЕ ===
-  AddToLogFile(EngineLog, '=== LoadConfigFile START ===');
-  AddToLogFile(EngineLog, Format('Перед загрузкой: BaseSpeed=%.2f, FastSpeed=%.2f, TurnSpeed=%.2f', 
-    [Config_BaseSpeed, Config_FastSpeed, Config_TurnSpeed]));
-  
-  // === СОХРАНЯЕМ СТАРЫЕ ЗНАЧЕНИЯ ===
-  OldBaseSpeed := Config_BaseSpeed;
-  OldFastSpeed := Config_FastSpeed;
-  OldTurnSpeed := Config_TurnSpeed;
-  OldFreecam := Config_Freecam;
-  OldMainCamera := Config_MainCamera;
-  OldMaxDistance := Config_MaxDistance;
-  OldNewSky := Config_NewSky;
-  
-  // Определяем, нужно ли сохранять старые скорости
-  KeepOldSpeeds := (OldBaseSpeed > 0.0) or (OldFastSpeed > 0.0) or (OldTurnSpeed > 0.0);
-  if KeepOldSpeeds then
-  begin
-    AddToLogFile(EngineLog, Format('Сохраняем ненулевые скорости: Base=%.2f, Fast=%.2f, Turn=%.2f', 
-      [OldBaseSpeed, OldFastSpeed, OldTurnSpeed]));
-  end;
-  
-  // Инициализация значений по умолчанию только при первом запуске
-  if LastStepForwardCheck = 0 then
-  begin
-    AddToLogFile(EngineLog, 'Первый запуск - устанавливаем значения по умолчанию');
-    
-    // Флаги систем
-    Config_Freecam := True;
-    Config_MainCamera := True;
-    Config_MaxDistance := True;
-    Config_NewSky := True;
-
-if not ConfigLoaded then
-begin
-  // Устанавливаем значения по умолчанию только при ПЕРВОМ запуске
-  if Config_BaseSpeed = 0.0 then Config_BaseSpeed := 0.5;
-  if Config_FastSpeed = 0.0 then Config_FastSpeed := 2.2;
-  if Config_TurnSpeed = 0.0 then Config_TurnSpeed := 1.5;
-end;
-
-    
-    // Параметры основной камеры
-    Config_StepForward := 0.1;
-    
-    // Параметры дистанции
-    Config_MaxVisibleDistance := 1200;
-    
-    LastStepForwardCheck := 0;
-    StepForwardCheckInterval := 1000;
-  end;
-  
-  newStepForward := Config_StepForward;
-  
-  if FileExists('zdbooster.cfg') then
-  begin
-    AddToLogFile(EngineLog, 'Файл zdbooster.cfg найден, читаем...');
-    
-    try
-      AssignFile(f, 'zdbooster.cfg');
-      Reset(f);
-      
-      while not Eof(f) do
-      begin
-        ReadLn(f, line);
-        line := Trim(line);
-        
-        // Пропускаем пустые строки и комментарии
-        if (line = '') or (line[1] = '#') or (line[1] = ';') then Continue;
-        
-        colonPos := Pos(':', line);
-        if colonPos > 0 then
-        begin
-          paramName := LowerCase(Trim(Copy(line, 1, colonPos - 1)));
-          paramValue := Trim(Copy(line, colonPos + 1, Length(line)));
-          
-          try
-            // ===== ФЛАГИ ВКЛЮЧЕНИЯ/ВЫКЛЮЧЕНИЯ =====
-            if paramName = 'freecam' then
-            begin
-              Config_Freecam := (paramValue = '1') or (LowerCase(paramValue) = 'true');
-              AddToLogFile(EngineLog, Format('Прочитан freecam: %s -> %s', [paramValue, BoolToStr(Config_Freecam, True)]));
-            end
-            else if paramName = 'main_camera' then
-            begin
-              Config_MainCamera := (paramValue = '1') or (LowerCase(paramValue) = 'true');
-              AddToLogFile(EngineLog, Format('Прочитан main_camera: %s -> %s', [paramValue, BoolToStr(Config_MainCamera, True)]));
-            end
-            else if paramName = 'max_distance' then
-            begin
-              Config_MaxDistance := (paramValue = '1') or (LowerCase(paramValue) = 'true');
-              AddToLogFile(EngineLog, Format('Прочитан max_distance: %s -> %s', [paramValue, BoolToStr(Config_MaxDistance, True)]));
-            end
-            else if paramName = 'newsky' then
-            begin
-              Config_NewSky := (paramValue = '1') or (LowerCase(paramValue) = 'true');
-              AddToLogFile(EngineLog, Format('Прочитан newsky: %s -> %s', [paramValue, BoolToStr(Config_NewSky, True)]));
-            end
-              
-            // ===== ПАРАМЕТРЫ ФРИКАМА =====
-            else if paramName = 'basespeed' then
-            begin
-              Config_BaseSpeed := StrToFloat(StringReplace(paramValue, '.', ',', [rfReplaceAll]));
-              AddToLogFile(EngineLog, Format('Прочитан basespeed: %s -> %.2f', [paramValue, Config_BaseSpeed]));
-            end
-            else if paramName = 'fastspeed' then
-            begin
-              Config_FastSpeed := StrToFloat(StringReplace(paramValue, '.', ',', [rfReplaceAll]));
-              AddToLogFile(EngineLog, Format('Прочитан fastspeed: %s -> %.2f', [paramValue, Config_FastSpeed]));
-            end
-            else if paramName = 'turnspeed' then
-            begin
-              Config_TurnSpeed := StrToFloat(StringReplace(paramValue, '.', ',', [rfReplaceAll]));
-              AddToLogFile(EngineLog, Format('Прочитан turnspeed: %s -> %.2f', [paramValue, Config_TurnSpeed]));
-            end
-              
-            // ===== ПАРАМЕТРЫ ОСНОВНОЙ КАМЕРЫ =====
-            else if paramName = 'stepforward' then
-            begin
-              Config_StepForward := StrToFloat(StringReplace(paramValue, '.', ',', [rfReplaceAll]));
-              AddToLogFile(EngineLog, Format('Прочитан stepforward: %s -> %.6f', [paramValue, Config_StepForward]));
-            end
-            
-            // ===== ПАРАМЕТРЫ ДИСТАНЦИИ =====
-            else if paramName = 'maxvisibledistance' then
-            begin
-              Config_MaxVisibleDistance := StrToInt(paramValue);
-              AddToLogFile(EngineLog, Format('Прочитан maxvisibledistance: %s -> %d', [paramValue, Config_MaxVisibleDistance]));
-            end;
-              
-          except
-            on E: Exception do
-            begin
-              AddToLogFile(EngineLog, Format('Ошибка парсинга %s=%s: %s', [paramName, paramValue, E.Message]));
-            end;
-          end;
-        end;
-      end;
-      
-      CloseFile(f);
-      AddToLogFile(EngineLog, 'Файл zdbooster.cfg прочитан успешно');
-      
-    except
-      on E: Exception do
-      begin
-        AddToLogFile(EngineLog, 'Ошибка загрузки zdbooster.cfg: ' + E.Message);
-        try
-          CloseFile(f);
-        except
-        end;
-      end;
-    end;
-  end
-  else
-  begin
-    AddToLogFile(EngineLog, 'Файл zdbooster.cfg НЕ найден, создаем с дефолтными значениями');
-    
-    // Создаем файл конфигурации со всеми параметрами
-    try
-      AssignFile(f, 'zdbooster.cfg');
-      Rewrite(f);
-      WriteLn(f, '# Конфигурация ZDBooster');
-      WriteLn(f, '# 1 = включено, 0 = выключено для флагов');
-      WriteLn(f, '# Числовые значения для параметров');
-      WriteLn(f, '');
-      WriteLn(f, '# ===== ВКЛЮЧЕНИЕ/ВЫКЛЮЧЕНИЕ СИСТЕМ =====');
-      WriteLn(f, '# Включить/выключить фрикам (свободную камеру)');
-      WriteLn(f, 'freecam: 1');
-      WriteLn(f, '');
-      WriteLn(f, '# Включить/выключить настройку основной камеры');
-      WriteLn(f, 'main_camera: 1');
-      WriteLn(f, '');
-      WriteLn(f, '# Включить/выключить настройку дистанции видимости');
-      WriteLn(f, 'max_distance: 1');
-      WriteLn(f, '');
-      WriteLn(f, '# Включить/выключить новое небо');
-      WriteLn(f, 'newsky: 1');
-      WriteLn(f, '');
-      WriteLn(f, '# ===== ПАРАМЕТРЫ ФРИКАМА =====');
-      WriteLn(f, '# (работают только если freecam: 1)');
-      WriteLn(f, '# Базовая скорость движения (обычная)');
-      WriteLn(f, 'basespeed: 0.5');
-      WriteLn(f, '');
-      WriteLn(f, '# Быстрая скорость движения (с зажатым Shift)');
-      WriteLn(f, 'fastspeed: 1.0');
-      WriteLn(f, '');
-      WriteLn(f, '# Скорость поворота камеры (стрелками)');
-      WriteLn(f, 'turnspeed: 1.5');
-      WriteLn(f, '');
-      WriteLn(f, '# ===== ПАРАМЕТРЫ ОСНОВНОЙ КАМЕРЫ =====');
-      WriteLn(f, '# (работают только если main_camera: 1)');
-      WriteLn(f, '# Шаг движения камеры (Shift + стрелки)');
-      WriteLn(f, 'stepforward: 0.1');
-      WriteLn(f, '');
-      WriteLn(f, '# ===== ПАРАМЕТРЫ ДИСТАНЦИИ =====');
-      WriteLn(f, '# (работают только если max_distance: 1)');
-      WriteLn(f, '# Максимальная дистанция видимости');
-      WriteLn(f, 'maxvisibledistance: 1200');
-      CloseFile(f);
-      AddToLogFile(EngineLog, 'Создан zdbooster.cfg с дефолтными значениями');
-    except
-      on E: Exception do
-        AddToLogFile(EngineLog, 'Ошибка создания zdbooster.cfg: ' + E.Message);
-    end;
-  end;
-
-  // === ВОССТАНАВЛИВАЕМ СКОРОСТИ ЕСЛИ ОНИ БЫЛИ СБРОШЕНЫ ===
-  if KeepOldSpeeds then
-  begin
-    AddToLogFile(EngineLog, 'Проверяем, нужно ли восстановить скорости...');
-    
-    // Если в конфиге скорости нулевые, а у нас были ненулевые - восстанавливаем
-    if (Config_BaseSpeed = 0.0) and (OldBaseSpeed > 0.0) then
-    begin
-      Config_BaseSpeed := OldBaseSpeed;
-      AddToLogFile(EngineLog, Format('ВОССТАНОВЛЕНА BaseSpeed: 0.0 -> %.2f', [Config_BaseSpeed]));
-    end;
-    if (Config_FastSpeed = 0.0) and (OldFastSpeed > 0.0) then
-    begin
-      Config_FastSpeed := OldFastSpeed;
-      AddToLogFile(EngineLog, Format('ВОССТАНОВЛЕНА FastSpeed: 0.0 -> %.2f', [Config_FastSpeed]));
-    end;
-    if (Config_TurnSpeed = 0.0) and (OldTurnSpeed > 0.0) then
-    begin
-      Config_TurnSpeed := OldTurnSpeed;
-      AddToLogFile(EngineLog, Format('ВОССТАНОВЛЕНА TurnSpeed: 0.0 -> %.2f', [Config_TurnSpeed]));
-    end;
-  end;
-
-  // === ОТЛАДКА В КОНЦЕ ===
-  AddToLogFile(EngineLog, Format('После загрузки: BaseSpeed=%.2f, FastSpeed=%.2f, TurnSpeed=%.2f', 
-    [Config_BaseSpeed, Config_FastSpeed, Config_TurnSpeed]));
-    
-  AddToLogFile(EngineLog, Format('Флаги систем: Freecam=%s, MainCamera=%s, MaxDistance=%s, NewSky=%s',
-    [BoolToStr(Config_Freecam, True), BoolToStr(Config_MainCamera, True), 
-     BoolToStr(Config_MaxDistance, True), BoolToStr(Config_NewSky, True)]));
-     
-  AddToLogFile(EngineLog, Format('Параметры: BaseSpeed=%.1f, FastSpeed=%.1f, TurnSpeed=%.1f, StepForward=%.6f, MaxDist=%d',
-    [Config_BaseSpeed, Config_FastSpeed, Config_TurnSpeed, Config_StepForward, Config_MaxVisibleDistance]));
-
-  AddToLogFile(EngineLog, '=== LoadConfigFile END ===');
-  ConfigLoaded := True;
-end;
-
-// ===== ПОЛНАЯ ФУНКЦИЯ SaveConfigFile С ОТЛАДКОЙ =====
-procedure SaveConfigFile;
-var
-  f: TextFile;
-begin
-  try
-    // === ОТЛАДКА ПЕРЕД ЗАПИСЬЮ ===
-    AddToLogFile(EngineLog, '=== SaveConfigFile START ===');
-    AddToLogFile(EngineLog, Format('Записываем в файл: BaseSpeed=%.2f, FastSpeed=%.2f, TurnSpeed=%.2f', 
-      [Config_BaseSpeed, Config_FastSpeed, Config_TurnSpeed]));
-    AddToLogFile(EngineLog, Format('Флаги: Freecam=%s, MainCamera=%s, MaxDistance=%s, NewSky=%s',
-      [BoolToStr(Config_Freecam, True), BoolToStr(Config_MainCamera, True), 
-       BoolToStr(Config_MaxDistance, True), BoolToStr(Config_NewSky, True)]));
-    
-    AssignFile(f, 'zdbooster.cfg');
-    Rewrite(f);
-    
-    // Записываем флаги
-    if Config_Freecam then WriteLn(f, 'freecam: 1') else WriteLn(f, 'freecam: 0');
-    if Config_MainCamera then WriteLn(f, 'main_camera: 1') else WriteLn(f, 'main_camera: 0');
-    if Config_MaxDistance then WriteLn(f, 'max_distance: 1') else WriteLn(f, 'max_distance: 0');
-    if Config_NewSky then WriteLn(f, 'newsky: 1') else WriteLn(f, 'newsky: 0');
-    
-    // Записываем параметры с отладкой
-    WriteLn(f, Format('basespeed: %.1f', [Config_BaseSpeed]));
-    AddToLogFile(EngineLog, Format('Записана строка: basespeed: %.1f', [Config_BaseSpeed]));
-    
-    WriteLn(f, Format('fastspeed: %.1f', [Config_FastSpeed])); 
-    AddToLogFile(EngineLog, Format('Записана строка: fastspeed: %.1f', [Config_FastSpeed]));
-    
-    WriteLn(f, Format('turnspeed: %.1f', [Config_TurnSpeed]));
-    AddToLogFile(EngineLog, Format('Записана строка: turnspeed: %.1f', [Config_TurnSpeed]));
-    
-    WriteLn(f, Format('stepforward: %.6f', [Config_StepForward]));
-    WriteLn(f, Format('maxvisibledistance: %d', [Config_MaxVisibleDistance]));
-    
-    CloseFile(f);
-    
-    // === ОТЛАДКА ПОСЛЕ ЗАПИСИ ===
-    AddToLogFile(EngineLog, 'SaveConfigFile: файл zdbooster.cfg записан успешно');
-    AddToLogFile(EngineLog, '=== SaveConfigFile END ===');
-    
-  except
-    on E: Exception do
-    begin
-      try CloseFile(f); except end;
-      AddToLogFile(EngineLog, 'SaveConfigFile: ОШИБКА записи файла - ' + E.Message);
-    end;
-  end;
-end;
-
 // ===== ФУНКЦИЯ ПЕРИОДИЧЕСКОЙ ПРОВЕРКИ STEPFORWARD =====
 procedure ProcessStepForwardConfig;
 var
@@ -5993,7 +5675,7 @@ begin
       // Перезагружаем только stepForward из конфига
       if FileExists('zdbooster.cfg') then
       begin
-        LoadConfigFile; // Это обновит Config_StepForward
+        //LoadConfigFile; // Это обновит Config_StepForward
       end;
       
       WriteStepForwardToMemory(Config_StepForward);
@@ -6056,7 +5738,7 @@ begin
         
         // === УБРАЛИ проверки и восстановления - НЕ ТРОГАЕМ скорости! ===
         
-        SaveConfigFile;
+        //SaveConfig;
         AddToLogFile(EngineLog, Format('После включения: BaseSpeed=%.2f, FastSpeed=%.2f, TurnSpeed=%.2f', 
           [Config_BaseSpeed, Config_FastSpeed, Config_TurnSpeed]));
         AddToLogFile(EngineLog, 'УСПЕХ: Фрикам включен вручную + freecam: 1 в конфиг');
@@ -6088,7 +5770,7 @@ begin
         Config_Freecam := False;
         // НЕ сбрасываем скорости при выключении!
         
-        SaveConfigFile;
+        //SaveConfig;
         AddToLogFile(EngineLog, Format('После выключения: BaseSpeed=%.2f, FastSpeed=%.2f, TurnSpeed=%.2f', 
           [Config_BaseSpeed, Config_FastSpeed, Config_TurnSpeed]));
         AddToLogFile(EngineLog, 'УСПЕХ: Фрикам выключен вручную + freecam: 0 в конфиг');
@@ -6209,9 +5891,9 @@ begin
   
   // Определяем скорость - ИСПОЛЬЗУЕМ ПЕРЕМЕННЫЕ ИЗ КОНФИГА КАК ЕСТЬ
   if IsKeyPressed(VK_SHIFT) then
-    Speed := Config_FastSpeed
+    Speed := MenuFreecamFastSpeed
   else
-    Speed := Config_BaseSpeed;
+    Speed := MenuFreecamBaseSpeed;
   
   // === ЗАЩИТА: Если скорость всё-таки 0, используем минимальную ===
   if Speed <= 0.0 then Speed := 0.01;
@@ -7891,7 +7573,7 @@ procedure InitializeAllConfigs;
 begin
   if not ConfigLoaded then
   begin
-    LoadConfigFile;        // Загружаем настройки фрикама
+    //LoadConfigFile;        // Загружаем настройки фрикама
     LoadBoosterConfig;     // Загружаем настройки отображения
     LoadArrowParams;       // Загружаем параметры стрелки
   end
