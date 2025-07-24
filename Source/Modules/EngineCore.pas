@@ -1255,7 +1255,6 @@ begin
     Result := LowerCase(ProcessName) = 'launcher.exe';
   end;
 end;
-
 {--------------------------------------------------------------------}
 function glCreateWnd(Width, Height : Integer; Fullscreen : Boolean; PixelDepth, Freq : Integer; Vsync : boolean) : Boolean;
 var
@@ -1649,7 +1648,7 @@ begin
     begin
       AddToLogFile(EngineLog, 'Hook not supported for locomotive type: ' + IntToStr(LocType));
     end;
-    
+
   except
     on E: Exception do
     begin
