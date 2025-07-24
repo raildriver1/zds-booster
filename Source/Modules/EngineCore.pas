@@ -121,6 +121,302 @@ h_Instance : HINST;
 
 LastConfigReadTime: DWORD = 0;
 
+ZDSimPatched: Boolean = False;
+
+
+procedure ApplyZDSimPatches;
+var
+  NOPs: array[0..4] of Byte;
+  j: Integer;
+  OldProtect: DWORD;
+  
+  // Переменные для CALL-инструкций
+  HookSkorostemerAddr: Cardinal;
+  CallAddress: Cardinal;
+  NewOffset: Integer;
+  CallBytes: array[0..4] of Byte;
+  
+  // Переменные для проверки файла
+  LocType: Integer;
+  LocNum: Integer;
+  LocFolder: string;
+  FilePath: string;
+  IniPath: string;
+  F: TextFile;
+  Line, Key, Value: string;
+  EqPos: Integer;
+  
+  // Функция получения папки локомотива
+  function GetLocomotiveFolder(locType: Integer): string;
+  begin
+    case locType of
+      812: Result := 'chs8';
+      822: Result := 'chs7';
+      882: Result := 'vl82';
+      880: Result := 'vl80t';
+      523: Result := 'chs4';
+      524: Result := 'chs4kvr';
+      621: Result := 'chs4t';
+      2070: Result := 'tep70';
+      2071: Result := 'tep70bs';
+      1462: Result := 'm62';
+      21014: Result := '2te10u';
+      3154: Result := 'ed4m';
+      3159: Result := 'ed9m';
+      23152: Result := '2es5k';
+      23142: Result := '2es4k';
+      343: Result := 'chs2k';
+      31714: Result := 'ep1m';
+      811: Result := 'vl11m';
+      885: Result := 'vl85';
+      201318: Result := 'tem18dm';
+      else
+        Result := 'chs7'; // по умолчанию
+    end;
+  end;
+  
+begin
+  if ZDSimPatched then Exit;
+  
+  try
+    AddToLogFile(EngineLog, 'Starting ZDSim patches - checking settings and file...');
+    
+    // Читаем настройки из settings.ini напрямую
+    IniPath := ExtractFilePath(ParamStr(0)) + 'settings.ini';
+    AddToLogFile(EngineLog, 'Reading settings from: ' + IniPath);
+    
+    // Устанавливаем значения по умолчанию
+    LocType := 885;
+    LocNum := 167;
+    
+    if FileExists(IniPath) then
+    begin
+      AssignFile(F, IniPath);
+      Reset(F);
+      try
+        while not Eof(F) do
+        begin
+          ReadLn(F, Line);
+          
+          // Убираем пробелы в начале и конце
+          while (Length(Line) > 0) and (Line[1] = ' ') do
+            Delete(Line, 1, 1);
+          while (Length(Line) > 0) and (Line[Length(Line)] = ' ') do
+            Delete(Line, Length(Line), 1);
+            
+          if (Length(Line) > 0) and (Line[1] <> ';') and (Line[1] <> '[') then
+          begin
+            EqPos := Pos('=', Line);
+            if EqPos > 0 then
+            begin
+              Key := Copy(Line, 1, EqPos - 1);
+              Value := Copy(Line, EqPos + 1, Length(Line) - EqPos);
+              
+              // Убираем пробелы из ключа и значения
+              while (Length(Key) > 0) and (Key[Length(Key)] = ' ') do
+                Delete(Key, Length(Key), 1);
+              while (Length(Value) > 0) and (Value[1] = ' ') do
+                Delete(Value, 1, 1);
+              
+              if Key = 'LocomotiveType' then
+                LocType := StrToIntDef(Value, 885)
+              else if Key = 'LocNum' then
+                LocNum := StrToIntDef(Value, 167);
+            end;
+          end;
+        end;
+      finally
+        CloseFile(F);
+      end;
+    end
+    else
+      AddToLogFile(EngineLog, 'Settings file not found, using defaults');
+    
+    AddToLogFile(EngineLog, 'Read from settings.ini: LocomotiveType=' + IntToStr(LocType) + ', LocNum=' + IntToStr(LocNum));
+    
+    // Получаем папку локомотива
+    LocFolder := GetLocomotiveFolder(LocType);
+    AddToLogFile(EngineLog, 'Locomotive folder: ' + LocFolder);
+    
+    // Формируем путь к файлу _skor.dmd
+    FilePath := ExtractFilePath(ParamStr(0)) + 'data\' + LocFolder + '\' + IntToStr(LocNum) + '\_skor.dmd';
+    AddToLogFile(EngineLog, 'Checking file: ' + FilePath);
+    
+    // Проверяем существование файла
+    if not FileExists(FilePath) then
+    begin
+      AddToLogFile(EngineLog, 'File _skor.dmd not found, skipping ZDSim patches');
+      Exit;
+    end;
+    
+    AddToLogFile(EngineLog, 'File _skor.dmd found, applying patches...');
+    
+    // Подготавливаем данные для патчинга
+    for j := 0 to 4 do
+      NOPs[j] := $90;
+    
+    // Патчим главную инструкцию: mov byte ptr [eax], 1 -> mov byte ptr [eax], 0
+    // По адресу .text:0072ABA2 меняем байт 01 на 00
+    AddToLogFile(EngineLog, 'Patching main instruction at $0072ABA2...');
+    
+    if VirtualProtect(Pointer($0072ABA2), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+    begin
+      // Ищем байт 01 в инструкции mov byte ptr [eax], 1 (обычно C6 00 01)
+      // и заменяем на 00 для mov byte ptr [eax], 0 (станет C6 00 00)
+      if PByte($0072ABA2 + 2)^ = $01 then // Проверяем что это действительно mov [eax], 1
+      begin
+        PByte($0072ABA2 + 2)^ := $00; // Меняем 1 на 0
+        AddToLogFile(EngineLog, 'Successfully patched main instruction: mov byte ptr [eax], 1 -> mov byte ptr [eax], 0');
+      end
+      else
+      begin
+        AddToLogFile(EngineLog, 'Warning: instruction pattern not found at expected offset');
+        // Попробуем найти байт 01 в окрестности
+        for j := 0 to 3 do
+        begin
+          if PByte($0072ABA2 + j)^ = $01 then
+          begin
+            PByte($0072ABA2 + j)^ := $00;
+            AddToLogFile(EngineLog, 'Found and patched byte 01->00 at offset +' + IntToStr(j));
+            Break;
+          end;
+        end;
+      end;
+      
+      VirtualProtect(Pointer($0072ABA2), 4, OldProtect, OldProtect);
+    end
+    else
+      AddToLogFile(EngineLog, 'Failed to patch main instruction at $0072ABA2, error: ' + IntToStr(GetLastError()));
+    
+    // Патчим call'ы
+    AddToLogFile(EngineLog, 'Patching CALL addresses...');
+    
+    // ПЕРВЫЙ CALL - заменяем на CALL к sub_488374
+    AddToLogFile(EngineLog, 'Creating CALL to sub_488374 at $006C4151...');
+    
+    try
+      CallAddress := $006C4151;
+      HookSkorostemerAddr := $00488374; // Адрес sub_488374
+      
+      // Вычисляем относительное смещение для CALL
+      NewOffset := Integer(HookSkorostemerAddr) - Integer(CallAddress + 5);
+      
+      AddToLogFile(EngineLog, 'sub_488374 address: $' + IntToHex(HookSkorostemerAddr, 8));
+      AddToLogFile(EngineLog, 'Call address: $' + IntToHex(CallAddress, 8));
+      AddToLogFile(EngineLog, 'Calculated offset: $' + IntToHex(Cardinal(NewOffset), 8));
+      
+      // Формируем CALL-инструкцию
+      CallBytes[0] := $E8; // CALL near
+      PInteger(@CallBytes[1])^ := NewOffset; // 4 байта смещения
+      
+      if VirtualProtect(Pointer($006C4151), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+      begin
+        Move(CallBytes, Pointer($006C4151)^, 5);
+        VirtualProtect(Pointer($006C4151), 5, OldProtect, OldProtect);
+        AddToLogFile(EngineLog, 'Successfully created CALL to sub_488374 at $006C4151');
+      end
+      else
+        AddToLogFile(EngineLog, 'Failed to patch call at $006C4151, error: ' + IntToStr(GetLastError()));
+        
+    except
+      on E: Exception do
+      begin
+        AddToLogFile(EngineLog, 'Exception while creating CALL to sub_488374: ' + E.Message);
+        // В случае ошибки - ставим NOPs как fallback
+        if VirtualProtect(Pointer($006C4151), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          Move(NOPs, Pointer($006C4151)^, 5);
+          VirtualProtect(Pointer($006C4151), 5, OldProtect, OldProtect);
+          AddToLogFile(EngineLog, 'Fallback: patched $006C4151 with NOPs due to CALL creation error');
+        end;
+      end;
+    end;
+      
+    // Второй CALL - оставляем как NOP
+    if VirtualProtect(Pointer($006C41FE), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+    begin
+      Move(NOPs, Pointer($006C41FE)^, 5);
+      VirtualProtect(Pointer($006C41FE), 5, OldProtect, OldProtect);
+      AddToLogFile(EngineLog, 'Successfully patched call at $006C41FE');
+    end
+    else
+      AddToLogFile(EngineLog, 'Failed to patch call at $006C41FE, error: ' + IntToStr(GetLastError()));
+      
+    // ТРЕТИЙ CALL - заменяем на CALL к HookSkorostemerViaKLUB
+    AddToLogFile(EngineLog, 'Creating CALL to HookSkorostemerViaKLUB at $006C2FBB...');
+    
+    try
+      // Получаем адрес функции HookSkorostemerViaKLUB
+      HookSkorostemerAddr := Cardinal(@HookSkorostemerViaKLUB);
+      CallAddress := $006C2FBB;
+      
+      // Вычисляем относительное смещение для CALL
+      NewOffset := Integer(HookSkorostemerAddr) - Integer(CallAddress + 5);
+      
+      AddToLogFile(EngineLog, 'HookSkorostemerViaKLUB address: $' + IntToHex(HookSkorostemerAddr, 8));
+      AddToLogFile(EngineLog, 'Call address: $' + IntToHex(CallAddress, 8));
+      AddToLogFile(EngineLog, 'Calculated offset: $' + IntToHex(Cardinal(NewOffset), 8));
+      
+      // Формируем CALL-инструкцию
+      CallBytes[0] := $E8; // CALL near
+      PInteger(@CallBytes[1])^ := NewOffset; // 4 байта смещения
+      
+      if VirtualProtect(Pointer($006C2FBB), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+      begin
+        Move(CallBytes, Pointer($006C2FBB)^, 5);
+        VirtualProtect(Pointer($006C2FBB), 5, OldProtect, OldProtect);
+        AddToLogFile(EngineLog, 'Successfully created CALL to HookSkorostemerViaKLUB at $006C2FBB');
+      end
+      else
+        AddToLogFile(EngineLog, 'Failed to patch call at $006C2FBB, error: ' + IntToStr(GetLastError()));
+        
+    except
+      on E: Exception do
+      begin
+        AddToLogFile(EngineLog, 'Exception while creating CALL to HookSkorostemerViaKLUB: ' + E.Message);
+        // В случае ошибки - ставим NOPs как fallback
+        if VirtualProtect(Pointer($006C2FBB), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          Move(NOPs, Pointer($006C2FBB)^, 5);
+          VirtualProtect(Pointer($006C2FBB), 5, OldProtect, OldProtect);
+          AddToLogFile(EngineLog, 'Fallback: patched $006C2FBB with NOPs due to CALL creation error');
+        end;
+      end;
+    end;
+
+// Дополнительный патч для push инструкции
+AddToLogFile(EngineLog, 'Applying Launcher push patch...');
+
+// Вычисляем абсолютный адрес
+CallAddress := Cardinal(GetModuleHandle(nil)) + $2C4136;
+AddToLogFile(EngineLog, 'Launcher push patch address: $' + IntToHex(CallAddress, 8));
+
+if VirtualProtect(Pointer(CallAddress), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+begin
+  if (PByte(CallAddress)^ = $68) and (PCardinal(CallAddress + 1)^ = $4129EB85) then
+  begin
+    PCardinal(CallAddress + 1)^ := $412b851f;
+    AddToLogFile(EngineLog, 'Successfully patched push: $4129EB85 -> $412b851f');
+  end
+  else
+    AddToLogFile(EngineLog, 'Push patch: pattern not found');
+    
+  VirtualProtect(Pointer(CallAddress), 5, OldProtect, OldProtect);
+end
+else
+  AddToLogFile(EngineLog, 'Failed to patch push instruction, error: ' + IntToStr(GetLastError()));
+
+    ZDSimPatched := True;
+    AddToLogFile(EngineLog, 'All ZDSim patches applied successfully!');
+    
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'Critical error in ApplyZDSimPatches: ' + E.Message);
+    end;
+  end;
+end;
+
 procedure SetTextureLODBias(x : integer); stdcall;
 begin
    x := 0;
@@ -1638,16 +1934,19 @@ begin
       AddToLogFile(EngineLog, 'Invalid locomotive type: ' + IntToStr(LocType) + ', hook skipped');
     end;
     
-    // Проверяем поддерживаемые типы
-    if LocType = 822 then  // Только ЧС7
-    begin
-      WriteHookAddress;
-      AddToLogFile(EngineLog, 'Hook activated for locomotive type 822 (CS7)');
-    end
-    else
-    begin
-      AddToLogFile(EngineLog, 'Hook not supported for locomotive type: ' + IntToStr(LocType));
-    end;
+        case LocType of
+          822: begin
+            WriteHookAddress;
+            AddToLogFile(EngineLog, 'Hook activated for locomotive type 822 (CS7)');
+          end;
+          885: begin
+            AddToLogFile(EngineLog, 'VL85 detected, applying ZDSim patches immediately...');
+            ApplyZDSimPatches;  // Вызываем сразу при обнаружении
+            AddToLogFile(EngineLog, 'ZDSim patches activation completed for locomotive type 885 (VL85)');
+          end;
+          else
+            AddToLogFile(EngineLog, 'Hook not supported for locomotive type: ' + IntToStr(LocType));
+        end;
 
   except
     on E: Exception do

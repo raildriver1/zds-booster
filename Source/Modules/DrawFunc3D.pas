@@ -232,7 +232,7 @@ CustomTextureID: Cardinal = 0;
   
   // Оптимизация времени
   LastTimeCheck: Cardinal = 0;
-  TimeCheckInterval: Cardinal = 100; // раз в 100мс
+  TimeCheckInterval: Cardinal = 300; // раз в 100мс
 
   LastFreecamConfigState: Boolean = False;  // Предыдущее состояние из конфига
   FreecamConfigStateInitialized: Boolean = False;  // Флаг инициализации
@@ -451,12 +451,12 @@ var
   ArrowCurrentSpeed: Single = 0.0;
   ArrowKoef: Single = 1.63;
   ArrowParamsLoaded: Boolean = False;
-  
+
   // ===== ПЕРЕМЕННЫЕ ДЛЯ РЕАЛ-ТАЙМ ОБНОВЛЕНИЯ =====
   LastArrowParamsCheck: Cardinal = 0;
   ArrowParamsCheckInterval: Cardinal = 500;
   LastBoosterConfigCheck: Cardinal = 0;
-  BoosterConfigCheckInterval: Cardinal = 1000; // Реже обновляем настройки отображения
+  BoosterConfigCheckInterval: Cardinal = 2000; // Реже обновляем настройки отображения
   
   // Адреса камеры
   ADDR_LOOKYAW: Cardinal = $9004398;
@@ -478,7 +478,7 @@ var
   // Переменные для обработки клавиш
   LastFreecamToggle: Cardinal = 0;
   LastFreecamDisable: Cardinal = 0;
-  FreecamKeyDelay: Cardinal = 100; // 200мс задержка между нажатиями
+  FreecamKeyDelay: Cardinal = 200; // 200мс задержка между нажатиями
   MaxDistanceWritten: Boolean = False;  // ← ДОБАВИТЬ ЭТУ СТРОКУ
   
   // NOP патч
@@ -1472,27 +1472,40 @@ begin
   MaxDistanceInitialized := True;
 end;
 
+var
+  LastProcessTime: Cardinal = 0;
+  ModuleIndex: Integer = 0;
+
+// Исправленная процедура ProcessAllModules
 procedure ProcessAllModules;
 var
   currentTime: Cardinal;
+const
+  PROCESS_INTERVAL = 50; // Обрабатываем модули раз в 50мс вместо каждого кадра
+  MODULE_COUNT = 4;
 begin
   currentTime := timeGetTime;
   
-  // Обновляем конфиги по таймеру
-  if (currentTime - LastBoosterConfigCheck) > BoosterConfigCheckInterval then
-  begin
-    //LoadConfigFile; // Обновляем все конфиги из zdbooster.cfg
-    LastBoosterConfigCheck := currentTime;
+  // Ограничиваем частоту обработки всех модулей
+  if (currentTime - LastProcessTime) < PROCESS_INTERVAL then Exit;
+  LastProcessTime := currentTime;
+  
+  // Обрабатываем модули по очереди (round-robin)
+  case ModuleIndex of
+    0: ProcessFreecam;           // Убираем "Optimized"
+    1: ProcessStepForwardConfig; // Убираем "Optimized"  
+    2: ApplyMaxVisibleDistance;  // Убираем "Optimized"
+    3: ProcessNewSkyPatch;       // Убираем "Optimized"
   end;
   
-  // Всегда обрабатываем фрикам (ручное управление должно работать всегда)
-  ProcessFreecam;
+  ModuleIndex := (ModuleIndex + 1) mod MODULE_COUNT;
   
-  // Обрабатываем модули в зависимости от их состояния
-  ProcessStepForwardConfig;  // Обрабатывает включение/выключение автоматически
-  ApplyMaxVisibleDistance;
-  ProcessNewSkyPatch;   // Обрабатывает включение/выключение автоматически  
-  //ProcessDayNightSystem;     // Обрабатывает включение/выключение автоматически
+  // Конфиги загружаем еще реже
+  if (currentTime - LastBoosterConfigCheck) > (BoosterConfigCheckInterval * 4) then
+  begin
+    // LoadConfigFile; // <- ВРЕМЕННО ОТКЛЮЧИТЬ
+    LastBoosterConfigCheck := currentTime;
+  end;
 end;
 
 //procedure DRAWTOOLS3D____DRAWKLUBLS_SINGLE_SINGLE_SINGLE_SINGLE_SINGLE_SHORTINT_SHORTINT
@@ -1954,7 +1967,7 @@ begin
       end
       else
       begin
-        lsTextureOffset := $38;
+        lsTextureOffset := $36;
         AddToLogFile(EngineLog, 'ВЛ85: lsTextureOffset = $38');
       end;
       
@@ -1996,7 +2009,7 @@ begin
 //      begin
 //        
 //      end;
-//      
+//
 
       // Оффсеты текстур
       kolparaTextureOffset := $3E;
@@ -6243,8 +6256,10 @@ begin
   
   // ===== РУЧНОЕ УПРАВЛЕНИЕ (ВСЕГДА ДОСТУПНО) =====
   // Обработка переключения фрикамы (Page Down) - работает ВСЕГДА
-  if IsKeyPressed(VK_NEXT) and // Page Down
-     (CurrentTime - LastFreecamToggle > FreecamKeyDelay) then
+if IsKeyPressed(88) and // X
+   (GetAsyncKeyState(VK_MENU) < 0) and // Alt зажат
+   (CurrentTime - LastFreecamToggle > FreecamKeyDelay) then
+
   begin
     if not FreecamEnabled then
     begin
@@ -6459,17 +6474,17 @@ begin
   NewYaw := CurrentYaw;
   NewPitch := CurrentPitch;
   
-  if IsKeyPressed(VK_UP) then
-    NewPitch := NewPitch + Config_TurnSpeed;
-  
-  if IsKeyPressed(VK_DOWN) then
-    NewPitch := NewPitch - Config_TurnSpeed;
-  
-  if IsKeyPressed(VK_LEFT) then
-    NewYaw := NewYaw - Config_TurnSpeed;
-  
-  if IsKeyPressed(VK_RIGHT) then
-    NewYaw := NewYaw + Config_TurnSpeed;
+//  if IsKeyPressed(VK_UP) then
+//    NewPitch := NewPitch + Config_TurnSpeed;
+//  
+//  if IsKeyPressed(VK_DOWN) then
+//    NewPitch := NewPitch - Config_TurnSpeed;
+//  
+//  if IsKeyPressed(VK_LEFT) then
+//    NewYaw := NewYaw - Config_TurnSpeed;
+//  
+//  if IsKeyPressed(VK_RIGHT) then
+//    NewYaw := NewYaw + Config_TurnSpeed;
   
   // Ограничиваем pitch
   NewPitch := ClampPitch(NewPitch);
