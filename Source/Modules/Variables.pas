@@ -125,6 +125,11 @@ var
   MenuFreecamFastSpeed: Single = 2.0;
   MenuFreecamTurnSpeed: Single = 1.5;
 
+  stepforward: Single = 1.5;
+  maxvisibledistance: Single = 1600;
+
+  newsky : boolean = false;
+
   MenuIsChangingSettings: Boolean = False;
 
   TexturesInfo : array of TTextureInfo;

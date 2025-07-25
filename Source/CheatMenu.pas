@@ -510,9 +510,14 @@ begin
     end;
     CloseFile(F);
 
-  MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
-  MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
-  MenuFreecamTurnSpeed := Settings.TurnspeedSlider.Value;
+    MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
+    MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
+    MenuFreecamTurnSpeed := Settings.TurnspeedSlider.Value;
+
+    stepforward := Settings.StepForwardSlider.Value;
+    maxvisibledistance := Settings.MaxVisibleDistanceSlider.Value;
+
+    newsky := Settings.NewSky;
 
     // Логируем изменения состояния freecam
     if Settings.Freecam <> OldFreecamState then
@@ -1012,6 +1017,9 @@ begin
   MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
   MenuFreecamTurnSpeed := Settings.TurnspeedSlider.Value;
 
+  stepforward := Settings.StepForwardSlider.Value;
+  maxvisibledistance := Settings.MaxVisibleDistanceSlider.Value;
+
   // ИСПРАВЛЕННАЯ ИНИЦИАЛИЗАЦИЯ АДРЕСОВ (БЕЗ +1!)
   SpeedXAddr := $00400000 + $84B2B;
   AllowedSpeedAddr := $00400000 + $84D25;
@@ -1283,36 +1291,36 @@ begin
       end;
       
       // Lighting
-      ExpandButtonX := Win.X + 200;
-      DrawToggle(Win.X + MARGIN, ContentY, 'Освещение (alpha)', Settings.Lighting, Alpha, True, ExpandButtonX, Settings.LightingSection.Expanded);
-      Inc(ContentY, ITEM_HEIGHT + MARGIN);
+//      ExpandButtonX := Win.X + 200;
+//      DrawToggle(Win.X + MARGIN, ContentY, 'Освещение (alpha)', Settings.Lighting, Alpha, True, ExpandButtonX, Settings.LightingSection.Expanded);
+//      Inc(ContentY, ITEM_HEIGHT + MARGIN);
       
       // Lighting секция (7 слайдеров)
-      if Settings.LightingSection.AnimProgress > 0.01 then
-      begin
-        SectionHeight := Round(320 * Settings.LightingSection.AnimProgress);
-        DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $202020, Alpha, True);
-        DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $353535, Alpha, False);
-        
-        if SectionHeight > 30 then
-        begin
-          DrawSlider(Win.X + MARGIN + 20, ContentY + 20, Settings.MainLightIntensitySlider, 'Яркость рельс', Alpha);
-          if SectionHeight > 70 then
-            DrawSlider(Win.X + MARGIN + 20, ContentY + 60, Settings.AdditionalLightIntensitySlider, 'Контрастность рельс', Alpha);
-          if SectionHeight > 110 then
-            DrawSlider(Win.X + MARGIN + 20, ContentY + 100, Settings.CabinBrightnessSlider, 'Яркость кабины', Alpha);
-          if SectionHeight > 150 then
-            DrawSlider(Win.X + MARGIN + 20, ContentY + 140, Settings.CabinContrastSlider, 'Контрастность кабины', Alpha);
-          if SectionHeight > 190 then
-            DrawSlider(Win.X + MARGIN + 20, ContentY + 180, Settings.BrightnessSlider, 'Яркость меню', Alpha);
-          if SectionHeight > 230 then
-            DrawSlider(Win.X + MARGIN + 20, ContentY + 220, Settings.SunOrbitRadiusSlider, 'Радиус орбиты', Alpha);
-          if SectionHeight > 270 then
-            DrawSlider(Win.X + MARGIN + 20, ContentY + 260, Settings.SunHeightSlider, 'Высота солнца', Alpha);
-        end;
-        
-        Inc(ContentY, SectionHeight + MARGIN);
-      end;
+//      if Settings.LightingSection.AnimProgress > 0.01 then
+//      begin
+//        SectionHeight := Round(320 * Settings.LightingSection.AnimProgress);
+//        DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $202020, Alpha, True);
+//        DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $353535, Alpha, False);
+//        
+//        if SectionHeight > 30 then
+//        begin
+//          DrawSlider(Win.X + MARGIN + 20, ContentY + 20, Settings.MainLightIntensitySlider, 'Яркость рельс', Alpha);
+//          if SectionHeight > 70 then
+//            DrawSlider(Win.X + MARGIN + 20, ContentY + 60, Settings.AdditionalLightIntensitySlider, 'Контрастность рельс', Alpha);
+//          if SectionHeight > 110 then
+//            DrawSlider(Win.X + MARGIN + 20, ContentY + 100, Settings.CabinBrightnessSlider, 'Яркость кабины', Alpha);
+//          if SectionHeight > 150 then
+//            DrawSlider(Win.X + MARGIN + 20, ContentY + 140, Settings.CabinContrastSlider, 'Контрастность кабины', Alpha);
+//          if SectionHeight > 190 then
+//            DrawSlider(Win.X + MARGIN + 20, ContentY + 180, Settings.BrightnessSlider, 'Яркость меню', Alpha);
+//          if SectionHeight > 230 then
+//            DrawSlider(Win.X + MARGIN + 20, ContentY + 220, Settings.SunOrbitRadiusSlider, 'Радиус орбиты', Alpha);
+//          if SectionHeight > 270 then
+//            DrawSlider(Win.X + MARGIN + 20, ContentY + 260, Settings.SunHeightSlider, 'Высота солнца', Alpha);
+//        end;
+//        
+//        Inc(ContentY, SectionHeight + MARGIN);
+//      end;
     end;
     
     1: // WORLD окно
@@ -1352,7 +1360,7 @@ begin
     2: // LOCOMOTIVE окно
     begin
       // ПРЯМО "Исправления КЛУБ" без секции
-      DrawToggle(Win.X + MARGIN, ContentY, 'Исправления КЛУБ', Settings.NewClubPositions, Alpha);
+      DrawToggle(Win.X + MARGIN, ContentY, 'Исправления БИЛ-В', Settings.NewClubPositions, Alpha);
     end;
   end;
 end;
@@ -1437,7 +1445,11 @@ begin
     MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
   if @Slider = @Settings.TurnspeedSlider then
     MenuFreecamTurnSpeed := Settings.TurnspeedSlider.Value;
-  
+  if @Slider = @Settings.StepForwardSlider then
+    stepforward := Settings.StepForwardSlider.Value;
+  if @Slider = @Settings.MaxVisibleDistanceSlider then
+    maxvisibledistance := Settings.MaxVisibleDistanceSlider.Value;
+
   // МГНОВЕННОЕ сохранение конфига для отзывчивости интерфейса
   SaveConfig;
   

@@ -297,7 +297,7 @@ var
   Config_BaseSpeed: Single = 0.0;        // Базовая скорость фрикама
   Config_FastSpeed: Single = 2.2;        // Быстрая скорость фрикама (Shift)
   Config_TurnSpeed: Single = 1.5;        // Скорость поворота камеры
-  Config_MaxVisibleDistance: Integer = 820; // Максимальная дистанция видимости
+  Config_MaxVisibleDistance: Integer = 1600; // Максимальная дистанция видимости
 
   Config_StepForward: Single;              // Значение stepForward
   LastStepForwardCheck: Cardinal;
@@ -456,7 +456,7 @@ var
   LastArrowParamsCheck: Cardinal = 0;
   ArrowParamsCheckInterval: Cardinal = 500;
   LastBoosterConfigCheck: Cardinal = 0;
-  BoosterConfigCheckInterval: Cardinal = 2000; // Реже обновляем настройки отображения
+  BoosterConfigCheckInterval: Cardinal = 500; // Реже обновляем настройки отображения
   
   // Адреса камеры
   ADDR_LOOKYAW: Cardinal = $9004398;
@@ -1320,14 +1320,14 @@ var
   StateChanged: Boolean;
 begin
   // Проверяем изменилось ли состояние модуля
-  StateChanged := not NewSkyInitialized or (Config_NewSky <> LastNewSkyState);
+  StateChanged := not NewSkyInitialized or (newsky <> LastNewSkyState);
   
   if StateChanged then
   begin
     AddToLogFile(EngineLog, Format('Изменение состояния NewSky: %s -> %s',
       [BoolToStr(LastNewSkyState, True), BoolToStr(Config_NewSky, True)]));
       
-    if Config_NewSky then
+    if newsky then
     begin
       // ===== МОДУЛЬ ВКЛЮЧЕН - ПРИМЕНЯЕМ ПАТЧ НЕБА =====
       AddToLogFile(EngineLog, 'Применяем патч неба (newsky: 1)');
@@ -1399,10 +1399,10 @@ begin
       end;
 
       // Применяем наше значение
-      PInteger(Pointer($91D4DD0))^ := Config_MaxVisibleDistance;
+      PInteger(Pointer($91D4DD0))^ := Trunc(maxvisibledistance);
 
       // Преобразование и запись float по адресу 00791DD8
-      PatchValue := Config_MaxVisibleDistance;
+      PatchValue := Trunc(maxvisibledistance);
       PatchAddress := Pointer($00791DD8);
       PatchAddress^ := PatchValue;
 
@@ -1501,7 +1501,7 @@ begin
   ModuleIndex := (ModuleIndex + 1) mod MODULE_COUNT;
   
   // Конфиги загружаем еще реже
-  if (currentTime - LastBoosterConfigCheck) > (BoosterConfigCheckInterval * 4) then
+  if (currentTime - LastBoosterConfigCheck) > (BoosterConfigCheckInterval) then
   begin
     // LoadConfigFile; // <- ВРЕМЕННО ОТКЛЮЧИТЬ
     LastBoosterConfigCheck := currentTime;
@@ -1796,12 +1796,12 @@ begin
   // Вычисляем оффсеты в зависимости от типа локомотива
   AddToLogFile(EngineLog, 'Вычисляем оффсеты для типа локомотива: ' + IntToStr(currentLocType));
 
-  skorPrivod1Offset := $10;   // ← ИСПРАВЛЕНО: было 14 ($0E), стало $04
-  skorPrivod2Offset := $10;   // ← ОК: 16 = $10
-  pisec1Offset := $0A;        // ← ОК: 10 = $0A  
-  pisec2Offset := $0C;        // ← ИСПРАВЛЕНО: было 10 ($0A), стало $0C
-  strelkaSkorOffset := $06;   // ← ОК: 6 = $06
-  strelkaSkorTimeOffset := $08; // ← ОК: 8 = $08
+pisec1Offset := 10;         // ← Десятичное 6
+pisec2Offset := 12;         // ← Десятичное 7
+skorPrivod1Offset := 14;    // ← Десятичное 8
+skorPrivod2Offset := 16;    // ← Десятичное 9
+strelkaSkorOffset := 6;   // ← Десятичное 10
+strelkaSkorTimeOffset := 8; // ← Десятичное 12
 
   case currentLocType of
     23152: begin // 2ЭС5К
@@ -6216,7 +6216,7 @@ begin
         //LoadConfigFile; // Это обновит Config_StepForward
       end;
       
-      WriteStepForwardToMemory(Config_StepForward);
+      WriteStepForwardToMemory(stepforward);
       
       if StateChanged then
         AddToLogFile(EngineLog, Format('stepForward применен: %.6f', [Config_StepForward]));
@@ -7830,190 +7830,6 @@ begin
   AddToLogFile(EngineLog, 'Directory exists: ' + BoolToStr(DirectoryExists(Result), True));
 end;
 
-// ===== ЗАГРУЗКА ПАРАМЕТРОВ СТРЕЛКИ ИЗ НОВОЙ ПАПКИ =====
-procedure LoadArrowParams(ForceReload: Boolean = False);
-var
-  f: TextFile;
-  line: string;
-  paramName, paramValue: string;
-  colonPos: Integer;
-  currentTime: Cardinal;
-  arrowFilePath, elementsPath: string;
-begin
-  currentTime := timeGetTime;
-  
-  // Проверяем, нужно ли обновлять (по таймеру или принудительно)
-  if not ForceReload and ArrowParamsLoaded and 
-     ((currentTime - LastArrowParamsCheck) < ArrowParamsCheckInterval) then
-    Exit;
-  
-  // Значения по умолчанию
-  ArrowAngle := 150.0;
-  ArrowRotation := 90.0;
-  ArrowScale := 1.61;
-  ArrowX := 0.895;
-  ArrowY := 7.45;
-  ArrowZ := 3.64;
-  ArrowRotateX := -40.4;
-  ArrowRotateY := 0.0;
-  ArrowRotateZ := 0.0;
-  ArrowCurrentSpeed := 0.0;
-  ArrowKoef := 1.63;
-  
-  // Получаем путь к файлу
-  elementsPath := GetElementsPath;
-  arrowFilePath := elementsPath + 'arrow_usavpp.txt';
-  
-  // ОТЛАДКА ПУТЕЙ
-  AddToLogFile(EngineLog, '=== LoadArrowParams DEBUG ===');
-  AddToLogFile(EngineLog, 'Elements path: ' + elementsPath);
-  AddToLogFile(EngineLog, 'Arrow file path: ' + arrowFilePath);
-  AddToLogFile(EngineLog, 'Elements directory exists: ' + BoolToStr(DirectoryExists(elementsPath), True));
-  AddToLogFile(EngineLog, 'Arrow file exists: ' + BoolToStr(FileExists(arrowFilePath), True));
-  
-  if FileExists(arrowFilePath) then
-  begin
-    try
-      AddToLogFile(EngineLog, 'Попытка загрузки arrow_usavpp.txt...');
-      AssignFile(f, arrowFilePath);
-      Reset(f);
-      
-      while not Eof(f) do
-      begin
-        ReadLn(f, line);
-        line := Trim(line);
-        
-        // Пропускаем пустые строки и комментарии
-        if (line = '') or (line[1] = '#') or (line[1] = ';') then Continue;
-        
-        colonPos := Pos(':', line);
-        if colonPos > 0 then
-        begin
-          paramName := LowerCase(Trim(Copy(line, 1, colonPos - 1)));
-          paramValue := Trim(Copy(line, colonPos + 1, Length(line)));
-          
-          AddToLogFile(EngineLog, 'Читаем параметр: ' + paramName + ' = ' + paramValue);
-          
-          try
-            if paramName = 'arrowangle' then
-              ArrowAngle := SafeStrToFloat(paramValue)
-            else if paramName = 'arrowrotation' then
-              ArrowRotation := SafeStrToFloat(paramValue)
-            else if paramName = 'arrowscale' then
-              ArrowScale := SafeStrToFloat(paramValue)
-            else if paramName = 'arrowx' then
-              ArrowX := SafeStrToFloat(paramValue)
-            else if paramName = 'arrowy' then
-              ArrowY := SafeStrToFloat(paramValue)
-            else if paramName = 'arrowz' then
-              ArrowZ := SafeStrToFloat(paramValue)
-            else if paramName = 'arrowrotatex' then
-              ArrowRotateX := SafeStrToFloat(paramValue)
-            else if paramName = 'arrowrotatey' then
-              ArrowRotateY := SafeStrToFloat(paramValue)
-            else if paramName = 'arrowrotatez' then
-              ArrowRotateZ := SafeStrToFloat(paramValue)
-            else if paramName = 'currentspeed' then
-              ArrowCurrentSpeed := SafeStrToFloat(paramValue)
-            else if paramName = 'koef' then
-              ArrowKoef := SafeStrToFloat(paramValue)
-            else if paramName = 'updateinterval' then
-            begin
-              ArrowParamsCheckInterval := Round(SafeStrToFloat(paramValue));
-              if ArrowParamsCheckInterval < 50 then ArrowParamsCheckInterval := 50;
-              if ArrowParamsCheckInterval > 5000 then ArrowParamsCheckInterval := 5000;
-            end;
-          except
-            on E: Exception do
-              AddToLogFile(EngineLog, 'Ошибка преобразования параметра ' + paramName + ': ' + E.Message);
-          end;
-        end;
-      end;
-      
-      CloseFile(f);
-      AddToLogFile(EngineLog, 'arrow_usavpp.txt успешно загружен');
-      
-    except
-      on E: Exception do
-      begin
-        AddToLogFile(EngineLog, 'КРИТИЧЕСКАЯ ОШИБКА загрузки arrow_usavpp.txt: ' + E.Message);
-        try
-          CloseFile(f);
-        except
-        end;
-      end;
-    end;
-  end
-  else
-  begin
-    AddToLogFile(EngineLog, 'arrow_usavpp.txt НЕ НАЙДЕН по пути: ' + arrowFilePath);
-    
-    // Создаем файл и папки только при первой загрузке
-    if not ArrowParamsLoaded then
-    begin
-      try
-        AddToLogFile(EngineLog, 'Попытка создания папки: ' + elementsPath);
-        // Создаем папки если их нет
-        if CreateDirectoryPath(elementsPath) then
-        begin
-          AddToLogFile(EngineLog, 'Папка создана успешно, создаем arrow_usavpp.txt');
-          AssignFile(f, arrowFilePath);
-          Rewrite(f);
-          WriteLn(f, '# Конфигурация параметров стрелки спидометра УСАВП');
-          WriteLn(f, '# Используйте точку как разделитель десятичных');
-          WriteLn(f, '');
-          WriteLn(f, '# Интервал обновления файла в миллисекундах (50-5000)');
-          WriteLn(f, 'updateInterval: ', ArrowParamsCheckInterval);
-          WriteLn(f, '');
-          WriteLn(f, '# Угол стрелки (базовый)');
-          WriteLn(f, 'arrowAngle: 150.0');
-          WriteLn(f, '');
-          WriteLn(f, '# Поворот стрелки');
-          WriteLn(f, 'arrowRotation: 90.0');
-          WriteLn(f, '');
-          WriteLn(f, '# Масштаб стрелки');
-          WriteLn(f, 'arrowScale: 1.61');
-          WriteLn(f, '');
-          WriteLn(f, '# Позиция стрелки');
-          WriteLn(f, 'arrowX: 0.895');
-          WriteLn(f, 'arrowY: 7.45');
-          WriteLn(f, 'arrowZ: 3.64');
-          WriteLn(f, '');
-          WriteLn(f, '# Поворот по оси X');
-          WriteLn(f, 'arrowRotateX: -40.4');
-          WriteLn(f, '');
-          WriteLn(f, '# Поворот по оси Y');
-          WriteLn(f, 'arrowRotateY: 0.0');
-          WriteLn(f, '');
-          WriteLn(f, '# Поворот по оси Z');
-          WriteLn(f, 'arrowRotateZ: 0.0');
-          WriteLn(f, '');
-          WriteLn(f, '# Текущая скорость (для расчета угла)');
-          WriteLn(f, 'currentSpeed: 0.0');
-          WriteLn(f, '');
-          WriteLn(f, '# Коэффициент (множитель скорости)');
-          WriteLn(f, 'koef: 1.63');
-          CloseFile(f);
-          AddToLogFile(EngineLog, 'arrow_usavpp.txt создан успешно: ' + arrowFilePath);
-        end
-        else
-        begin
-          AddToLogFile(EngineLog, 'ОШИБКА создания папки: ' + elementsPath);
-        end;
-      except
-        on E: Exception do
-          AddToLogFile(EngineLog, 'ОШИБКА создания arrow_usavpp.txt: ' + E.Message);
-      end;
-    end;
-  end;
-  
-  ArrowParamsLoaded := True;
-  LastArrowParamsCheck := currentTime;
-  
-  AddToLogFile(EngineLog, Format('Финальные параметры стрелки: Angle=%.2f, X=%.3f, Y=%.3f, Z=%.3f',
-    [ArrowAngle, ArrowX, ArrowY, ArrowZ]));
-end;
-
 // ===== ЗАГРУЗКА НАСТРОЕК ОТОБРАЖЕНИЯ ИЗ BOOSTER.TXT =====
 procedure LoadBoosterConfig(ForceReload: Boolean = False);
 var
@@ -8152,24 +7968,6 @@ begin
   AddToLogFile(EngineLog, 'Финальные настройки: SAUT=' + BoolToStr(Config_SAUT, True) + 
     ', BGSD=' + BoolToStr(Config_BGSD, True) + ', STUPEN=' + BoolToStr(Config_STUPEN, True));
 end;
-
-// ===== ОБЩАЯ ФУНКЦИЯ ИНИЦИАЛИЗАЦИИ ВСЕХ КОНФИГОВ =====
-procedure InitializeAllConfigs;
-begin
-  if not ConfigLoaded then
-  begin
-    //LoadConfigFile;        // Загружаем настройки фрикама
-    LoadBoosterConfig;     // Загружаем настройки отображения
-    LoadArrowParams;       // Загружаем параметры стрелки
-  end
-  else
-  begin
-    // Обновляем в реал-тайм
-    LoadBoosterConfig;     // Проверяем booster.txt
-    LoadArrowParams;       // Проверяем arrow_usavpp.txt
-  end;
-end;
-
 
 procedure LoadYellowBlockParams;
 var
