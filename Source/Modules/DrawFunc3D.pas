@@ -182,8 +182,15 @@ procedure HookSkorostemerViaKLUB(
   AngZ: Single
 ); stdcall; export;
 
+procedure HookSkorostemerCHS7(
+  x: Single;
+  y: Single;
+  z: Single;
+  AngZ: Single
+); stdcall; export;
+
 exports
-  HookKLUB, DrawSky, DrawSkorostemer, HookSkorostemerViaKLUB, DrawKLUB;
+  HookKLUB, DrawSky, DrawSkorostemer, HookSkorostemerViaKLUB, DrawKLUB, HookSkorostemerCHS7;
 procedure FreeEng;
 procedure InitEng;
 
@@ -3365,17 +3372,17 @@ begin
   Write3D(FontID, TextPtr);
 end;
 
-
 procedure WriteHookAddress; stdcall;
 var
-  F: TextFile;
   HookAddr: Cardinal;
   CallAddress: Cardinal;
+  CallAddress2: Cardinal;
   NewOffset: Integer;
+  NewOffset2: Integer;
   OldProtect: DWORD;
   i: Integer;
   StartTime: Cardinal;
-
+  ConditionValue: Byte;
 
   // Адреса для замены PUSH инструкций
   SpeedXAddr: Cardinal;
@@ -3398,7 +3405,7 @@ var
   NewReverseValue: array[0..3] of Byte;
   NewAdditionalValue: array[0..3] of Byte;
 
-    function SafeVirtualProtect(Address: Pointer; Size: Cardinal; NewProtect: DWORD; var OldProtect: DWORD): Boolean;
+  function SafeVirtualProtect(Address: Pointer; Size: Cardinal; NewProtect: DWORD; var OldProtect: DWORD): Boolean;
   var
     AttemptStart: Cardinal;
     Attempts: Integer;
@@ -3413,14 +3420,11 @@ var
         if Result then Break;
         
         Inc(Attempts);
-//        Sleep(1); // Небольшая пауза между попытками
 
-        // Если больше 10 попыток или прошло больше секунды - выходим
         if (Attempts > 10) or ((GetTickCount - AttemptStart) > 1000) then
           Break;
           
       except
-        // Игнорируем исключения и пробуем еще раз
         Inc(Attempts);
         if Attempts > 5 then Break;
       end;
@@ -3435,30 +3439,17 @@ var
 begin
   StartTime := GetTickCount;
 
-
-
   try
-    // Быстрое получение адреса
+    // Читаем условие из адреса 007498A8
+    try
+      ConditionValue := PByte(Pointer($007498A8))^;
+    except
+      ConditionValue := 0; // По умолчанию если не можем прочитать
+    end;
+
+    // Всегда патчим HookKLUB
     try
       HookAddr := Cardinal(@HookKLUB);
-    except
-      Exit; // Если не можем получить адрес, выходим
-    end;
-    
-    // Быстрая запись в файл без излишних проверок
-    try
-      AssignFile(F, 'hook.txt');
-      Rewrite(F);
-      WriteLn(F, IntToStr(HookAddr));
-      CloseFile(F);
-    except
-      // Если не можем записать в файл, продолжаем без него
-    end;
-    
-    if IsTimeoutExceeded then Exit;
-    
-    // Основная операция патчинга с тайм-аутом
-    try
       CallAddress := $00400000 + $277938;
       NewOffset := Integer(HookAddr) - Integer(CallAddress + 5);
       
@@ -3472,12 +3463,34 @@ begin
         end;
       end;
     except
-      // Игнорируем ошибки основного патчинга
+      // Игнорируем ошибки
+    end;
+    
+    // Дополнительно патчим HookSkorostemerCHS7 если условие не выполнено
+    if ConditionValue <> 1 then
+    begin
+      try
+        HookAddr := Cardinal(@HookSkorostemerCHS7);
+        CallAddress2 := $00400000 + $27795A;
+        NewOffset2 := Integer(HookAddr) - Integer(CallAddress2 + 5);
+        
+        if SafeVirtualProtect(Pointer(CallAddress2 + 1), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          try
+            PInteger(CallAddress2 + 1)^ := NewOffset2;
+            SafeVirtualProtect(Pointer(CallAddress2 + 1), 4, OldProtect, OldProtect);
+          except
+            // Игнорируем ошибки записи
+          end;
+        end;
+      except
+        // Игнорируем ошибки
+      end;
     end;
     
     if IsTimeoutExceeded then Exit;
     
-    // Быстрое применение всех патчей с проверкой тайм-аута
+    // Остальные патчи применяем как раньше
     try
       // Скорость X
       if not IsTimeoutExceeded and SafeVirtualProtect(Pointer(SpeedXAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
@@ -3503,7 +3516,7 @@ begin
         end;
       end;
       
-      // Остальные патчи применяем аналогично, но с проверкой тайм-аута
+      // Остальные патчи применяем аналогично
       if not IsTimeoutExceeded then
       begin
         // Маневровый режим
@@ -3598,15 +3611,9 @@ begin
   except
     on E: Exception do
     begin
-      // Записываем ошибку в лог только если это возможно
-      try
-        //AddToLogFile(EngineLog, 'WriteHookAddress error: ' + E.Message);
-      except
-        // Если даже запись в лог не работает, просто выходим
-      end;
+      // Игнорируем ошибки
     end;
   end;
-
 end;
 
 {System------------------------------------------------------------------------}
@@ -6922,6 +6929,131 @@ begin
   glEnd;
 end;
 
+// Функция для проверки, нужно ли показывать цифру float
+function ShouldShowFloatDigit(position: Integer): Boolean;
+var
+  currentFloatValue: Single;
+  floatAsInt: Integer;
+  floatStr: string;
+begin
+  Result := False;
+  
+  try
+    currentFloatValue := PSingle(Pointer(FloatValueAddr))^;
+    floatAsInt := Round(currentFloatValue);
+    if floatAsInt < 0 then floatAsInt := 0;
+    
+    floatStr := IntToStr(floatAsInt);
+    
+    case position of
+      1: Result := (Length(floatStr) >= 2) or (floatAsInt >= 10); // 1-я позиция - показывать если >= 10
+      2: Result := True; // 2-я позиция - всегда показывать
+    end;
+    
+  except
+    Result := False;
+  end;
+end;
+
+
+function GetFloatDigit(position: Integer): string;
+var
+  currentFloatValue: Single;
+  floatStr: string;
+begin
+  Result := '0'; // По умолчанию
+  
+  try
+    // Читаем float из памяти
+    currentFloatValue := PSingle(Pointer(FloatValueAddr))^;
+    
+    // Конвертируем в целое число
+    FloatAsInt := Round(currentFloatValue);
+    if FloatAsInt < 0 then FloatAsInt := 0; // Защита от отрицательных
+    
+    // Конвертируем в строку
+    floatStr := IntToStr(FloatAsInt);
+    
+    // Дополняем нулями слева до 2 знаков для позиций 1-2
+    while Length(floatStr) < 2 do
+      floatStr := '0' + floatStr;
+    
+    // Возвращаем цифру в нужной позиции
+    if (position >= 1) and (position <= Length(floatStr)) then
+      Result := floatStr[position]
+    else
+      Result := '0';
+      
+  except
+    on E: Exception do
+    begin
+      //AddToLogFile(EngineLog, 'Ошибка чтения float: ' + E.Message);
+      Result := '0';
+    end;
+  end;
+end;
+
+
+
+// Функция для проверки, нужно ли отображать цифру в позиции
+function ShouldShowDigit(funcType: Integer): Boolean;
+var
+  speedValue, limitValue, distanceValue: Integer;
+  speedStr, limitStr, distanceStr: string;
+begin
+  Result := True; // По умолчанию показываем
+  
+  try
+    case funcType of
+      // Скорость (позиции 1, 2, 3)
+      20..22: begin
+        speedValue := GetSpeedValue; // Используем новую функцию
+        speedStr := IntToStr(speedValue);
+        
+        case funcType of
+          20: Result := Length(speedStr) >= 3; // 1-я позиция - только если 3+ цифр (100+)
+          21: Result := Length(speedStr) >= 2; // 2-я позиция - только если 2+ цифр (10+)
+          22: Result := Length(speedStr) >= 1; // 3-я позиция - всегда
+        end;
+      end;
+
+      // Допустимая скорость (позиции 1, 2, 3)
+      23..25: begin
+        limitValue := GetLimitSpeedValue; // Используем функцию из KlubData
+        limitStr := IntToStr(limitValue);
+        
+        case funcType of
+          23: Result := Length(limitStr) >= 3; // 1-я позиция - только если 3+ цифр (100+)
+          24: Result := Length(limitStr) >= 2; // 2-я позиция - только если 2+ цифр (10+)
+          25: Result := Length(limitStr) >= 1; // 3-я позиция - всегда
+        end;
+      end;
+      
+      // Расстояние до цели (позиции 1, 2, 3, 4)
+      26..29: begin
+        distanceValue := GetDistanceValue; // Используем новую функцию
+        distanceStr := IntToStr(distanceValue);
+        
+        case funcType of
+          26: Result := Length(distanceStr) >= 4; // 1-я позиция - только если 4+ цифр (1000+)
+          27: Result := Length(distanceStr) >= 3; // 2-я позиция - только если 3+ цифр (100+)
+          28: Result := Length(distanceStr) >= 2; // 3-я позиция - только если 2+ цифр (10+)
+          29: Result := Length(distanceStr) >= 1; // 4-я позиция - всегда
+        end;
+      end;
+      34..35: begin
+        case funcType of
+          34: Result := ShouldShowFloatDigit(1); // 1-я позиция
+          35: Result := ShouldShowFloatDigit(2); // 2-я позиция
+        end;
+      end;
+
+    end;
+  except
+    Result := False;
+  end;
+end;
+
 
 var
   PosX, PosY, PosZ: Double;
@@ -6987,6 +7119,55 @@ begin
     
 @skip:
   end;
+end;
+
+procedure HookSkorostemerCHS7(
+  x: Single;
+  y: Single;
+  z: Single;
+  AngZ: Single
+);
+begin
+  // Сначала всегда вызываем оригинальную функцию
+  asm
+    push $3F8F9DB2    // 1.26
+    push $40E5EB85    // 4.928 (было 6.928)
+    push $40623D71    // 3.497
+    push $42140000    // 25.0
+    push $0C0A00000  // 0
+    xor eax, eax
+    mov eax, $4877F4  // Адрес оригинальной функции
+    call eax
+  end;
+  
+  if ImpactFont = 0 then
+  begin
+    ImpactFont := CreateFont3D('7-Segment');
+  end;
+  
+  // Отрисовываем цифру на позиции 34
+  BeginObj3D;
+  Position3D(0.142, 7.48, 3.162);
+  RotateX(-57.3);
+  RotateY(0.0);
+  RotateZ(0.0);
+  Scale3D(0.018);
+  SetTexture(0);
+  Color3D($0000FF, 255, False, 0);
+  DrawText3D(ImpactFont, GetFloatDigit(1));
+  EndObj3D;
+  
+  // Отрисовываем цифру на позиции 35
+  BeginObj3D;
+  Position3D(0.1533, 7.48, 3.162);
+  RotateX(-57.3);
+  RotateY(0.0);
+  RotateZ(0.0);
+  Scale3D(0.018);
+  SetTexture(0);
+  Color3D($0000FF, 255, False, 0);
+  DrawText3D(ImpactFont, GetFloatDigit(2));
+  EndObj3D;
 end;
 
 procedure HookKLUB(
@@ -7177,69 +7358,6 @@ begin
   with StaticData[35] do begin X:=0.1533; Y:=7.48; Z:=3.162; RotX:=-57.3; RotY:=0.0; RotZ:=0.0; Scale:=0.016; Text:='3'; Color:=$0000FF; FuncType:=35; end; // 2-я позиция float
 
   initialized := True;
-end;
-
-function GetFloatDigit(position: Integer): string;
-var
-  currentFloatValue: Single;
-  floatStr: string;
-begin
-  Result := '0'; // По умолчанию
-  
-  try
-    // Читаем float из памяти
-    currentFloatValue := PSingle(Pointer(FloatValueAddr))^;
-    
-    // Конвертируем в целое число
-    FloatAsInt := Round(currentFloatValue);
-    if FloatAsInt < 0 then FloatAsInt := 0; // Защита от отрицательных
-    
-    // Конвертируем в строку
-    floatStr := IntToStr(FloatAsInt);
-    
-    // Дополняем нулями слева до 2 знаков для позиций 1-2
-    while Length(floatStr) < 2 do
-      floatStr := '0' + floatStr;
-    
-    // Возвращаем цифру в нужной позиции
-    if (position >= 1) and (position <= Length(floatStr)) then
-      Result := floatStr[position]
-    else
-      Result := '0';
-      
-  except
-    on E: Exception do
-    begin
-      //AddToLogFile(EngineLog, 'Ошибка чтения float: ' + E.Message);
-      Result := '0';
-    end;
-  end;
-end;
-
-// Функция для проверки, нужно ли показывать цифру float
-function ShouldShowFloatDigit(position: Integer): Boolean;
-var
-  currentFloatValue: Single;
-  floatAsInt: Integer;
-  floatStr: string;
-begin
-  Result := False;
-  
-  try
-    currentFloatValue := PSingle(Pointer(FloatValueAddr))^;
-    floatAsInt := Round(currentFloatValue);
-    if floatAsInt < 0 then floatAsInt := 0;
-    
-    floatStr := IntToStr(floatAsInt);
-    
-    case position of
-      1: Result := (Length(floatStr) >= 2) or (floatAsInt >= 10); // 1-я позиция - показывать если >= 10
-      2: Result := True; // 2-я позиция - всегда показывать
-    end;
-    
-  except
-    Result := False;
-  end;
 end;
 
 // Добавьте эту функцию в начало implementation секции:
@@ -7649,64 +7767,6 @@ begin
   end;
 end;
 
-// Функция для проверки, нужно ли отображать цифру в позиции
-function ShouldShowDigit(funcType: Integer): Boolean;
-var
-  speedValue, limitValue, distanceValue: Integer;
-  speedStr, limitStr, distanceStr: string;
-begin
-  Result := True; // По умолчанию показываем
-  
-  try
-    case funcType of
-      // Скорость (позиции 1, 2, 3)
-      20..22: begin
-        speedValue := GetSpeedValue; // Используем новую функцию
-        speedStr := IntToStr(speedValue);
-        
-        case funcType of
-          20: Result := Length(speedStr) >= 3; // 1-я позиция - только если 3+ цифр (100+)
-          21: Result := Length(speedStr) >= 2; // 2-я позиция - только если 2+ цифр (10+)
-          22: Result := Length(speedStr) >= 1; // 3-я позиция - всегда
-        end;
-      end;
-      
-      // Допустимая скорость (позиции 1, 2, 3)
-      23..25: begin
-        limitValue := GetLimitSpeedValue; // Используем функцию из KlubData
-        limitStr := IntToStr(limitValue);
-        
-        case funcType of
-          23: Result := Length(limitStr) >= 3; // 1-я позиция - только если 3+ цифр (100+)
-          24: Result := Length(limitStr) >= 2; // 2-я позиция - только если 2+ цифр (10+)
-          25: Result := Length(limitStr) >= 1; // 3-я позиция - всегда
-        end;
-      end;
-      
-      // Расстояние до цели (позиции 1, 2, 3, 4)
-      26..29: begin
-        distanceValue := GetDistanceValue; // Используем новую функцию
-        distanceStr := IntToStr(distanceValue);
-        
-        case funcType of
-          26: Result := Length(distanceStr) >= 4; // 1-я позиция - только если 4+ цифр (1000+)
-          27: Result := Length(distanceStr) >= 3; // 2-я позиция - только если 3+ цифр (100+)
-          28: Result := Length(distanceStr) >= 2; // 3-я позиция - только если 2+ цифр (10+)
-          29: Result := Length(distanceStr) >= 1; // 4-я позиция - всегда
-        end;
-      end;
-      34..35: begin
-        case funcType of
-          34: Result := ShouldShowFloatDigit(1); // 1-я позиция
-          35: Result := ShouldShowFloatDigit(2); // 2-я позиция
-        end;
-      end;
-
-    end;
-  except
-    Result := False;
-  end;
-end;
 
 // Обновленная функция DrawObject
 procedure DrawObject(o: TObjectParams; ElementIndex: Integer = -1);
