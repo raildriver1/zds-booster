@@ -130,6 +130,11 @@ var
 
   newsky : boolean = false;
 
+  Config_Freecam: Boolean = False;     // Глобальная переменная состояния фрикама
+  Config_MainCamera: Boolean = False;
+  Config_MaxDistance: Boolean = False;
+  Config_NewSky: Boolean = False;
+
   MenuIsChangingSettings: Boolean = False;
 
   TexturesInfo : array of TTextureInfo;

@@ -521,14 +521,16 @@ var
 
 procedure SyncConfigFromMenu(Freecam, MainCamera, MaxDistance, NewSky: Boolean); stdcall;
 begin
+  
+  // ИСПРАВЛЯЕМ: используем правильные переменные
   Config_Freecam := Freecam;
   Config_MainCamera := MainCamera;
   Config_MaxDistance := MaxDistance;
   Config_NewSky := NewSky;
   
-  AddToLogFile(EngineLog, Format('Синхронизация из меню: F=%s M=%s D=%s S=%s',
-    [BoolToStr(Freecam, True), BoolToStr(MainCamera, True), 
-     BoolToStr(MaxDistance, True), BoolToStr(NewSky, True)]));
+  AddToLogFile(EngineLog, Format('Установлены глобальные переменные: F=%s M=%s D=%s S=%s',
+    [BoolToStr(Config_Freecam, True), BoolToStr(Config_MainCamera, True), 
+     BoolToStr(Config_MaxDistance, True), BoolToStr(Config_NewSky, True)]));
 end;
 
 function GetConfigFreecam: Boolean; stdcall;
@@ -1479,19 +1481,141 @@ begin
   MaxDistanceInitialized := True;
 end;
 
+procedure LoadConfigAtStartup;
+var
+  F: TextFile;
+  Line, Key, Value: string;
+  ColonPos: Integer;
+begin
+  // Устанавливаем значения по умолчанию
+  Config_Freecam := False;
+  Config_MainCamera := True;
+  Config_MaxDistance := True;
+  Config_NewSky := True;
+  
+  MenuFreecamBaseSpeed := 0.5;
+  MenuFreecamFastSpeed := 2.0;
+  MenuFreecamTurnSpeed := 1.5;
+  stepforward := 0.1;
+  maxvisibledistance := 1200;
+  
+  if not FileExists('zdbooster.cfg') then
+  begin
+    AddToLogFile(EngineLog, 'zdbooster.cfg не найден, используем значения по умолчанию');
+    Exit;
+  end;
+  
+  try
+    AddToLogFile(EngineLog, '=== ЗАГРУЗКА КОНФИГА ПРИ СТАРТЕ ===');
+    AssignFile(F, 'zdbooster.cfg');
+    Reset(F);
+    
+    while not EOF(F) do
+    begin
+      ReadLn(F, Line);
+      Line := Trim(Line);
+      ColonPos := Pos(':', Line);
+      if ColonPos > 0 then
+      begin
+        Key := Trim(Copy(Line, 1, ColonPos - 1));
+        Value := Trim(Copy(Line, ColonPos + 1, Length(Line)));
+        
+        // Состояния модулей
+        if Key = 'freecam' then
+        begin
+          Config_Freecam := (Value = '1');
+          AddToLogFile(EngineLog, 'Загружен freecam: ' + BoolToStr(Config_Freecam, True));
+        end
+        else if Key = 'main_camera' then
+          Config_MainCamera := (Value = '1')
+        else if Key = 'max_distance' then
+          Config_MaxDistance := (Value = '1')
+        else if Key = 'newsky' then
+        begin
+          Config_NewSky := (Value = '1');
+          newsky := Config_NewSky;
+        end
+        
+        // Значения слайдеров
+        else if Key = 'basespeed' then
+        begin
+          try
+            MenuFreecamBaseSpeed := StrToFloat(StringReplace(Value, ',', '.', [rfReplaceAll]));
+            AddToLogFile(EngineLog, 'Загружен basespeed: ' + FloatToStr(MenuFreecamBaseSpeed));
+          except
+            MenuFreecamBaseSpeed := 0.5;
+          end;
+        end
+        else if Key = 'fastspeed' then
+        begin
+          try
+            MenuFreecamFastSpeed := StrToFloat(StringReplace(Value, ',', '.', [rfReplaceAll]));
+            AddToLogFile(EngineLog, 'Загружен fastspeed: ' + FloatToStr(MenuFreecamFastSpeed));
+          except
+            MenuFreecamFastSpeed := 2.0;
+          end;
+        end
+        else if Key = 'turnspeed' then
+        begin
+          try
+            MenuFreecamTurnSpeed := StrToFloat(StringReplace(Value, ',', '.', [rfReplaceAll]));
+          except
+            MenuFreecamTurnSpeed := 1.5;
+          end;
+        end
+        else if Key = 'stepforward' then
+        begin
+          try
+            stepforward := StrToFloat(StringReplace(Value, ',', '.', [rfReplaceAll]));
+          except
+            stepforward := 0.1;
+          end;
+        end
+        else if Key = 'maxvisibledistance' then
+        begin
+          try
+            maxvisibledistance := StrToInt(Value);
+          except
+            maxvisibledistance := 1200;
+          end;
+        end;
+      end;
+    end;
+    CloseFile(F);
+    
+    AddToLogFile(EngineLog, Format('Конфиг загружен: freecam=%s, basespeed=%.2f, fastspeed=%.2f',
+      [BoolToStr(Config_Freecam, True), MenuFreecamBaseSpeed, MenuFreecamFastSpeed]));
+    
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'Ошибка загрузки конфига: ' + E.Message);
+      try CloseFile(F); except end;
+    end;
+  end;
+end;
+
 var
   LastProcessTime: Cardinal = 0;
   ModuleIndex: Integer = 0;
+  ConfigLoadedAtStartup: Boolean = False;  // ДОБАВИТЬ ЭТУ ПЕРЕМЕННУЮ
 
-// Исправленная процедура ProcessAllModules
 procedure ProcessAllModules;
 var
   currentTime: Cardinal;
 const
-  PROCESS_INTERVAL = 50; // Обрабатываем модули раз в 50мс вместо каждого кадра
+  PROCESS_INTERVAL = 50;
   MODULE_COUNT = 4;
 begin
   currentTime := timeGetTime;
+  
+  // === ЗАГРУЖАЕМ КОНФИГ ТОЛЬКО ОДИН РАЗ ПРИ ПЕРВОМ ВЫЗОВЕ ===
+  if not ConfigLoadedAtStartup then
+  begin
+    LoadConfigAtStartup;
+    ConfigLoadedAtStartup := True;
+    AddToLogFile(EngineLog, 'Конфиг загружен при старте системы');
+  end;
   
   // Ограничиваем частоту обработки всех модулей
   if (currentTime - LastProcessTime) < PROCESS_INTERVAL then Exit;
@@ -1499,10 +1623,10 @@ begin
   
   // Обрабатываем модули по очереди (round-robin)
   case ModuleIndex of
-    0: ProcessFreecam;           // Убираем "Optimized"
-    1: ProcessStepForwardConfig; // Убираем "Optimized"  
-    2: ApplyMaxVisibleDistance;  // Убираем "Optimized"
-    3: ProcessNewSkyPatch;       // Убираем "Optimized"
+    0: ProcessFreecam;
+    1: ProcessStepForwardConfig;
+    2: ApplyMaxVisibleDistance;
+    3: ProcessNewSkyPatch;
   end;
   
   ModuleIndex := (ModuleIndex + 1) mod MODULE_COUNT;
@@ -1510,7 +1634,6 @@ begin
   // Конфиги загружаем еще реже
   if (currentTime - LastBoosterConfigCheck) > (BoosterConfigCheckInterval) then
   begin
-    // LoadConfigFile; // <- ВРЕМЕННО ОТКЛЮЧИТЬ
     LastBoosterConfigCheck := currentTime;
   end;
 end;
@@ -2377,7 +2500,7 @@ end;
   pantoLever1BotPath := directoryPath + 'loc\l13u_lever2bot.dmd';
   pantoLever1TopPath := directoryPath + 'loc\l13u_lever2top.dmd';
   pantoTexturePath := directoryPath + 'loc\2sls1.bmp';
-  
+
   AddToLogFile(EngineLog, 'Пути к файлам пантографа:');
   AddToLogFile(EngineLog, 'Podstavka: ' + pantoPodstavkaPath);
   AddToLogFile(EngineLog, 'Ski: ' + pantoSkiPath);
@@ -2386,7 +2509,17 @@ end;
   AddToLogFile(EngineLog, 'Lever1Bot: ' + pantoLever1BotPath);
   AddToLogFile(EngineLog, 'Lever1Top: ' + pantoLever1TopPath);
   AddToLogFile(EngineLog, 'Texture: ' + pantoTexturePath);
-  
+
+if not FileExists(pantoSkiPath) then
+begin
+  pantoSkiPath := directoryPath + 'loc\l13u_ski.dmd';
+  AddToLogFile(EngineLog, 'tp_ski не найден, используем fallback: ' + pantoSkiPath);
+end
+else if not FileExists(directoryPath + 'loc\l13u_ski.dmd') then
+begin
+  // tp_ski.dmd существует, это нормально
+  AddToLogFile(EngineLog, 'Используем tp_ski.dmd');
+end;
   // Fallback на tp_ файлы если l13u_ не найдены
   if not FileExists(pantoLever2BotPath) then
   begin
@@ -6246,7 +6379,38 @@ begin
   MainCameraInitialized := True;
 end;
 
-// Обработка фрикамы
+procedure SaveConfigLocal;
+var
+  F: TextFile;
+begin
+  try
+    AssignFile(F, 'zdbooster.cfg');
+    Rewrite(F);
+    
+    // Сохраняем только основные настройки
+    if Config_Freecam then WriteLn(F, 'freecam: 1') else WriteLn(F, 'freecam: 0');
+    if Config_MainCamera then WriteLn(F, 'main_camera: 1') else WriteLn(F, 'main_camera: 0');
+    if Config_MaxDistance then WriteLn(F, 'max_distance: 1') else WriteLn(F, 'max_distance: 0');
+    if Config_NewSky then WriteLn(F, 'newsky: 1') else WriteLn(F, 'newsky: 0');
+    
+    // Сохраняем значения фрикама
+    WriteLn(F, 'basespeed: ' + Format('%.2f', [MenuFreecamBaseSpeed]));
+    WriteLn(F, 'fastspeed: ' + Format('%.2f', [MenuFreecamFastSpeed]));
+    WriteLn(F, 'turnspeed: ' + Format('%.2f', [MenuFreecamTurnSpeed]));
+    WriteLn(F, 'stepforward: ' + Format('%.2f', [stepforward]));
+    WriteLn(F, 'maxvisibledistance: ' + IntToStr(Round(maxvisibledistance)));
+    
+    CloseFile(F);
+    AddToLogFile(EngineLog, 'Конфиг сохранен из DrawFunc3D');
+  except
+    on E: Exception do
+    begin
+      try CloseFile(F); except end;
+      AddToLogFile(EngineLog, 'Ошибка сохранения конфига: ' + E.Message);
+    end;
+  end;
+end;
+
 procedure ProcessFreecam;
 var
   CurrentTime: Cardinal;
@@ -6261,19 +6425,54 @@ var
 begin
   CurrentTime := GetTickCount;
   
-  // ===== РУЧНОЕ УПРАВЛЕНИЕ (ВСЕГДА ДОСТУПНО) =====
-  // Обработка переключения фрикамы (Page Down) - работает ВСЕГДА
-if IsKeyPressed(88) and // X
-   (GetAsyncKeyState(VK_MENU) < 0) and // Alt зажат
-   (CurrentTime - LastFreecamToggle > FreecamKeyDelay) then
-
+  // ===== ПРИНУДИТЕЛЬНАЯ ПРОВЕРКА СОСТОЯНИЯ ПРИ ПЕРВОМ ЗАПУСКЕ =====
+  if not FreecamConfigStateInitialized then
+  begin
+    
+    // Если в конфиге freecam = 0, а фрикам включен - выключаем его
+    if not Config_Freecam and FreecamEnabled then
+    begin
+      AddToLogFile(EngineLog, 'Конфиг требует выключить фрикам при старте');
+      FreecamEnabled := False;
+      
+      // Восстанавливаем оригинальные байты
+      if RestoreOriginalBytes then
+      begin
+        AddToLogFile(EngineLog, 'Фрикам принудительно выключен при старте');
+      end;
+    end
+    // Если в конфиге freecam = 1, а фрикам выключен - включаем его
+    else if Config_Freecam and not FreecamEnabled then
+    begin
+      AddToLogFile(EngineLog, 'Конфиг требует включить фрикам при старте');
+      
+      if not FreecamInitialized then
+        InitializeFreecam;
+        
+      FreecamEnabled := True;
+      if ApplyNopPatch then
+      begin
+        AddToLogFile(EngineLog, 'Фрикам принудительно включен при старте');
+      end
+      else
+      begin
+        FreecamEnabled := False;
+        AddToLogFile(EngineLog, 'ОШИБКА: Не удалось включить фрикам при старте');
+      end;
+    end;
+    
+    LastFreecamConfigState := Config_Freecam;
+    FreecamConfigStateInitialized := True;
+  end;
+  
+  // ===== РУЧНОЕ УПРАВЛЕНИЕ (Alt + X) =====
+  if IsKeyPressed(88) and // X
+     (GetAsyncKeyState(VK_MENU) < 0) and // Alt зажат
+     (CurrentTime - LastFreecamToggle > FreecamKeyDelay) then
   begin
     if not FreecamEnabled then
     begin
-      // ВКЛЮЧАЕМ ФРИКАМ
-      AddToLogFile(EngineLog, 'Ручное включение фрикама (Page Down)');
-      AddToLogFile(EngineLog, Format('Перед включением: BaseSpeed=%.2f, FastSpeed=%.2f, TurnSpeed=%.2f', 
-        [Config_BaseSpeed, Config_FastSpeed, Config_TurnSpeed]));
+      AddToLogFile(EngineLog, 'Ручное включение фрикама (Alt+X)');
       
       if not FreecamInitialized then
         InitializeFreecam;
@@ -6282,31 +6481,22 @@ if IsKeyPressed(88) and // X
       if ApplyNopPatch then
       begin
         Config_Freecam := True;
-        
-        // === УБРАЛИ проверки и восстановления - НЕ ТРОГАЕМ скорости! ===
-        
-        //SaveConfig;
-        AddToLogFile(EngineLog, Format('После включения: BaseSpeed=%.2f, FastSpeed=%.2f, TurnSpeed=%.2f', 
-          [Config_BaseSpeed, Config_FastSpeed, Config_TurnSpeed]));
-        AddToLogFile(EngineLog, 'УСПЕХ: Фрикам включен вручную + freecam: 1 в конфиг');
+        SaveConfigLocal;
+        AddToLogFile(EngineLog, 'УСПЕХ: Фрикам включен вручную');
         LastFreecamToggle := CurrentTime;
       end
       else
       begin
         FreecamEnabled := False;
-        AddToLogFile(EngineLog, 'ОШИБКА: Не удалось применить NOP patch при ручном включении');
+        AddToLogFile(EngineLog, 'ОШИБКА: Не удалось применить NOP patch');
       end;
     end
     else
     begin
-      // ВЫКЛЮЧАЕМ ФРИКАМ
-      AddToLogFile(EngineLog, 'Ручное выключение фрикама (Page Down)');
-      AddToLogFile(EngineLog, Format('Перед выключением: BaseSpeed=%.2f, FastSpeed=%.2f, TurnSpeed=%.2f', 
-        [Config_BaseSpeed, Config_FastSpeed, Config_TurnSpeed]));
+      AddToLogFile(EngineLog, 'Ручное выключение фрикама (Alt+X)');
       
       FreecamEnabled := False;
       
-      // Восстанавливаем позицию
       WriteMemoryDouble(FREEMODE_SWITCH_ADDR, 0.0);
       WriteMemorySingle(ADDR_X, InitialX);
       WriteMemorySingle(ADDR_Y, InitialY);
@@ -6315,72 +6505,49 @@ if IsKeyPressed(88) and // X
       if RestoreOriginalBytes then
       begin
         Config_Freecam := False;
-        // НЕ сбрасываем скорости при выключении!
-        
-        //SaveConfig;
-        AddToLogFile(EngineLog, Format('После выключения: BaseSpeed=%.2f, FastSpeed=%.2f, TurnSpeed=%.2f', 
-          [Config_BaseSpeed, Config_FastSpeed, Config_TurnSpeed]));
-        AddToLogFile(EngineLog, 'УСПЕХ: Фрикам выключен вручную + freecam: 0 в конфиг');
+        SaveConfigLocal;
+        AddToLogFile(EngineLog, 'УСПЕХ: Фрикам выключен вручную');
         LastFreecamToggle := CurrentTime;
-      end
-      else
-      begin
-        AddToLogFile(EngineLog, 'ОШИБКА: Не удалось восстановить байты при ручном выключении');
       end;
     end;
   end;
 
-  // ===== АВТОМАТИЧЕСКОЕ ВКЛЮЧЕНИЕ/ВЫКЛЮЧЕНИЕ ПО КОНФИГУ =====
-  
-  // Проверяем, изменилось ли состояние конфига
-  ConfigStateChanged := not FreecamConfigStateInitialized or 
-                       (Config_Freecam <> LastFreecamConfigState);
+  // ===== АВТОМАТИЧЕСКОЕ ВКЛЮЧЕНИЕ/ВЫКЛЮЧЕНИЕ ПО КОНФИГУ (ИЗ МЕНЮ) =====
+  ConfigStateChanged := (Config_Freecam <> LastFreecamConfigState);
   
   if ConfigStateChanged then
   begin
-    AddToLogFile(EngineLog, Format('Изменение состояния фрикама в конфиге: %s -> %s', 
+    AddToLogFile(EngineLog, Format('Изменение состояния фрикама из меню: %s -> %s', 
       [BoolToStr(LastFreecamConfigState, True), BoolToStr(Config_Freecam, True)]));
     
     if Config_Freecam then
     begin
-      // ===== АВТОМАТИЧЕСКИ ВКЛЮЧАЕМ ФРИКАМ =====
       if not FreecamEnabled then
       begin
-        AddToLogFile(EngineLog, 'Автоматически включаем фрикам (freecam: 1)...');
+        AddToLogFile(EngineLog, 'Автоматически включаем фрикам (из меню)...');
         
         if not FreecamInitialized then
-        begin
-          AddToLogFile(EngineLog, 'Инициализируем фрикам...');
           InitializeFreecam;
-        end;
         
         FreecamEnabled := True;
         if ApplyNopPatch then
         begin
-          AddToLogFile(EngineLog, Format('Используем скорости из конфига: base=%.2f, fast=%.2f, turn=%.2f', 
-            [Config_BaseSpeed, Config_FastSpeed, Config_TurnSpeed]));
-          AddToLogFile(EngineLog, 'УСПЕХ: Фрикам автоматически включен через конфиг');
+          AddToLogFile(EngineLog, 'УСПЕХ: Фрикам автоматически включен через меню');
         end
         else
         begin
           FreecamEnabled := False;
           AddToLogFile(EngineLog, 'ОШИБКА: Не удалось применить NOP patch при автовключении');
         end;
-      end
-      else
-      begin
-        AddToLogFile(EngineLog, 'Фрикам уже включен');
       end;
     end
     else
     begin
-      // ===== АВТОМАТИЧЕСКИ ВЫКЛЮЧАЕМ ФРИКАМ =====
       if FreecamEnabled then
       begin
-        AddToLogFile(EngineLog, 'Автоматически выключаем фрикам (freecam: 0)...');
+        AddToLogFile(EngineLog, 'Автоматически выключаем фрикам (из меню)...');
         FreecamEnabled := False;
         
-        // Восстанавливаем позицию
         WriteMemoryDouble(FREEMODE_SWITCH_ADDR, 0.0);
         WriteMemorySingle(ADDR_X, InitialX);
         WriteMemorySingle(ADDR_Y, InitialY);
@@ -6388,47 +6555,30 @@ if IsKeyPressed(88) and // X
         
         if RestoreOriginalBytes then
         begin
-          AddToLogFile(EngineLog, 'УСПЕХ: Фрикам автоматически выключен через конфиг');
-        end
-        else
-        begin
-          AddToLogFile(EngineLog, 'ОШИБКА: Не удалось восстановить байты при автовыключении');
+          AddToLogFile(EngineLog, 'УСПЕХ: Фрикам автоматически выключен через меню');
         end;
-      end
-      else
-      begin
-        AddToLogFile(EngineLog, 'Фрикам уже выключен');
       end;
     end;
     
-    // Обновляем состояние
     LastFreecamConfigState := Config_Freecam;
-    FreecamConfigStateInitialized := True;
   end;
 
   // ===== ЕСЛИ ФРИКАМ НЕ ВКЛЮЧЕН, ВЫХОДИМ =====
   if not FreecamEnabled then Exit;
   
-  // ===== ОБРАБОТКА ДВИЖЕНИЯ ФРИКАМА =====
-  
-  // Читаем текущие значения камеры
+  // ===== ОБРАБОТКА ДВИЖЕНИЯ ФРИКАМА (остается без изменений) =====
   CurrentYaw := ReadMemorySingle(ADDR_LOOKYAW);
   CurrentPitch := ReadMemorySingle(ADDR_LOOKPITCH);
   CurrentX := ReadMemorySingle(ADDR_X);
   CurrentY := ReadMemorySingle(ADDR_Y);
   CurrentZ := ReadMemorySingle(ADDR_Z);
 
-  // Нормализуем yaw
-  while CurrentYaw >= 360.0 do
-    CurrentYaw := CurrentYaw - 360.0;
-  while CurrentYaw < 0.0 do
-    CurrentYaw := CurrentYaw + 360.0;
+  while CurrentYaw >= 360.0 do CurrentYaw := CurrentYaw - 360.0;
+  while CurrentYaw < 0.0 do CurrentYaw := CurrentYaw + 360.0;
   
-  // Конвертируем в радианы
   YawRad := CurrentYaw * (Pi / 180.0);
   PitchRad := CurrentPitch * (Pi / 180.0);
   
-  // Вычисляем направления
   ForwardX := cos(PitchRad) * sin(YawRad);
   ForwardY := cos(PitchRad) * cos(YawRad);
   ForwardZ := sin(PitchRad);
@@ -6436,16 +6586,13 @@ if IsKeyPressed(88) and // X
   RightX := sin(YawRad - Pi / 2);
   RightY := cos(YawRad - Pi / 2);
   
-  // Определяем скорость - ИСПОЛЬЗУЕМ ПЕРЕМЕННЫЕ ИЗ КОНФИГА КАК ЕСТЬ
   if IsKeyPressed(VK_SHIFT) then
     Speed := MenuFreecamFastSpeed
   else
     Speed := MenuFreecamBaseSpeed;
   
-  // === ЗАЩИТА: Если скорость всё-таки 0, используем минимальную ===
   if Speed <= 0.0 then Speed := 0.01;
   
-  // Обработка движения
   if IsKeyPressed(Ord('W')) then
   begin
     CurrentX := CurrentX + ForwardX * Speed;
@@ -6473,30 +6620,11 @@ if IsKeyPressed(88) and // X
   end;
   
   if IsKeyPressed(VK_SPACE) then
-  begin
     CurrentZ := CurrentZ + Speed;
-  end;
   
-  // Обработка поворота камеры - ИСПОЛЬЗУЕМ ПЕРЕМЕННУЮ ИЗ КОНФИГА
   NewYaw := CurrentYaw;
-  NewPitch := CurrentPitch;
-  
-//  if IsKeyPressed(VK_UP) then
-//    NewPitch := NewPitch + Config_TurnSpeed;
-//  
-//  if IsKeyPressed(VK_DOWN) then
-//    NewPitch := NewPitch - Config_TurnSpeed;
-//  
-//  if IsKeyPressed(VK_LEFT) then
-//    NewYaw := NewYaw - Config_TurnSpeed;
-//  
-//  if IsKeyPressed(VK_RIGHT) then
-//    NewYaw := NewYaw + Config_TurnSpeed;
-  
-  // Ограничиваем pitch
-  NewPitch := ClampPitch(NewPitch);
+  NewPitch := ClampPitch(CurrentPitch);
 
-  // Применяем изменения
   WriteMemoryDouble(FREEMODE_SWITCH_ADDR, 2.3);
   WriteMemorySingle(ADDR_X, CurrentX);
   WriteMemorySingle(ADDR_Y, CurrentY);
@@ -7144,21 +7272,28 @@ begin
   begin
     ImpactFont := CreateFont3D('7-Segment');
   end;
-  
-  // Отрисовываем цифру на позиции 34
-  BeginObj3D;
-  Position3D(0.142, 7.48, 3.162);
-  RotateX(-57.3);
-  RotateY(0.0);
-  RotateZ(0.0);
-  Scale3D(0.018);
-  SetTexture(0);
-  Color3D($0000FF, 255, False, 0);
-  DrawText3D(ImpactFont, GetFloatDigit(1));
-  EndObj3D;
+
+  if PSingle(Pointer(FloatValueAddr))^ > 9 then
+  begin
+    // Отрисовываем цифру на позиции 34
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(0.142, 7.48, 3.162);
+    RotateX(-57.3);
+    RotateY(0.0);
+    RotateZ(0.0);
+    Scale3D(0.018);
+    SetTexture(0);
+    Color3D($0000FF, 255, False, 0);
+    DrawText3D(ImpactFont, GetFloatDigit(1));
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+  end;
+
   
   // Отрисовываем цифру на позиции 35
   BeginObj3D;
+  glDisable(GL_LIGHTING);
   Position3D(0.1533, 7.48, 3.162);
   RotateX(-57.3);
   RotateY(0.0);
@@ -7167,6 +7302,7 @@ begin
   SetTexture(0);
   Color3D($0000FF, 255, False, 0);
   DrawText3D(ImpactFont, GetFloatDigit(2));
+  glEnable(GL_LIGHTING);
   EndObj3D;
 end;
 

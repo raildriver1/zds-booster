@@ -477,7 +477,11 @@ begin
         Value := Trim(Copy(Line, ColonPos + 1, Length(Line)));
         
         // Состояния модулей (0/1)
-        if Key = 'freecam' then Settings.Freecam := (Value = '1');
+        if Key = 'freecam' then 
+        begin
+          Settings.Freecam := (Value = '1');
+          Config_Freecam := Settings.Freecam; // ИСПРАВЛЯЕМ: синхронизируем глобальную переменную
+        end;
         if Key = 'main_camera' then Settings.MainCamera := (Value = '1');
         if Key = 'lighting' then Settings.Lighting := (Value = '1');
         if Key = 'max_distance' then Settings.MaxVisibleDistance := (Value = '1');
@@ -510,23 +514,16 @@ begin
     end;
     CloseFile(F);
 
+    // ИСПРАВЛЯЕМ: синхронизируем глобальные переменные
     MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
     MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
     MenuFreecamTurnSpeed := Settings.TurnspeedSlider.Value;
-
     stepforward := Settings.StepForwardSlider.Value;
     maxvisibledistance := Settings.MaxVisibleDistanceSlider.Value;
-
     newsky := Settings.NewSky;
-
-    // Логируем изменения состояния freecam
-    if Settings.Freecam <> OldFreecamState then
-    begin
-      AddToLogFile(EngineLog, Format('FREECAM состояние изменилось внешне: %s -> %s', [BoolToStr(OldFreecamState), BoolToStr(Settings.Freecam)]));
-    end;
     
-  except
-    // Игнорируем ошибки чтения конфига
+  except on E: Exception do
+    AddToLogFile(EngineLog, 'Ошибка чтения конфига: ' + E.Message);
   end;
 end;
 
@@ -1546,8 +1543,15 @@ begin
     begin
       Settings.Freecam := not Settings.Freecam;
       if Settings.Freecam then Settings.FreecamSection.Expanded := True;
+  
       SaveConfig;
+  
+      // ИСПРАВЛЯЕМ: вызываем синхронизацию ПОСЛЕ сохранения
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
+  
+      // ДОБАВЛЯЕМ ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ
+      LoadConfigForced; // Принудительно перечитываем конфиг
+  
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
