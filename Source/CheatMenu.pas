@@ -1,5 +1,5 @@
 ﻿//----------------------------------------------------------------------------//
-//CheatMenu.pas - Простое и рабочее чит-меню (ИСПРАВЛЕНО)                   //
+//CheatMenu.pas - Простое и рабочее чит-меню (ИСПРАВЛЕНО + ЧУВСТВИТЕЛЬНОСТЬ)  //
 //----------------------------------------------------------------------------//
 unit CheatMenu;
 
@@ -46,6 +46,8 @@ type
     StepForwardSlider: TSlider;
     NewViewAngle: Boolean;              // НОВАЯ ГАЛОЧКА
     ViewAngleSlider: TSlider;           // НОВЫЙ СЛАЙДЕР
+    CameraSensitivity: Boolean;         // ГАЛОЧКА ЧУВСТВИТЕЛЬНОСТИ
+    CameraSensitivitySlider: TSlider;   // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ
 
     // Освещение
     Lighting: Boolean;
@@ -144,6 +146,11 @@ var
   OrigViewAngleBytes2: array[0..6] of Byte; // для 7 байт инструкции mov [eax],0000000A
   OrigViewAngleValue: Single;
   ViewAngleValuesRead: Boolean = False;
+
+  // Переменные для чувствительности камеры
+  CameraSensitivityAddr: Cardinal;    // 7229F8
+  OrigCameraSensitivityValue: Single;
+  CameraSensitivityValuesRead: Boolean = False;
 
  // ОРИГИНАЛЬНЫЕ ЗНАЧЕНИЯ (ИЗ ВАШЕГО ДАМПА)
   OrigSpeedXValue: array[0..3] of Byte = ($58, $39, $34, $BC);
@@ -282,6 +289,37 @@ begin
   OrigViewAngleValue := ReadFloatFromMemory(ViewAngleSliderAddr);
   ViewAngleValuesRead := True;
   AddToLogFile(EngineLog, 'Оригинальные значения угла обзора сохранены');
+end;
+
+// Чтение оригинального значения чувствительности камеры
+procedure ReadOriginalCameraSensitivityValues;
+begin
+  if CameraSensitivityValuesRead then Exit;
+  
+  AddToLogFile(EngineLog, 'Читаем оригинальные значения чувствительности камеры...');
+  OrigCameraSensitivityValue := ReadFloatFromMemory(CameraSensitivityAddr);
+  CameraSensitivityValuesRead := True;
+  AddToLogFile(EngineLog, 'Оригинальные значения чувствительности камеры сохранены');
+end;
+
+// Применение чувствительности камеры
+procedure ApplyCameraSensitivity;
+begin
+  if not Settings.MainCamera or not Settings.CameraSensitivity then Exit;
+  
+  AddToLogFile(EngineLog, 'Применяем чувствительность камеры...');
+  WriteFloatToMemory(CameraSensitivityAddr, Settings.CameraSensitivitySlider.Value);
+  AddToLogFile(EngineLog, 'Чувствительность камеры применена');
+end;
+
+// Восстановление чувствительности камеры
+procedure RestoreCameraSensitivity;
+begin
+  if not CameraSensitivityValuesRead then Exit;
+  
+  AddToLogFile(EngineLog, 'Восстанавливаем чувствительность камеры...');
+  WriteFloatToMemory(CameraSensitivityAddr, OrigCameraSensitivityValue);
+  AddToLogFile(EngineLog, 'Чувствительность камеры восстановлена');
 end;
 
 // Применение патча угла обзора
@@ -594,6 +632,8 @@ begin
       ApplyLightingSettings;
     if Settings.MaxVisibleDistance then
       ApplyDistanceSettings;
+    if Settings.MainCamera and Settings.CameraSensitivity then
+      ApplyCameraSensitivity;
     
     LastApplyTime := CurrentTime;
     PendingApply := False;
@@ -642,6 +682,7 @@ begin
         if Key = 'newsky' then Settings.NewSky := (Value = '1');
         if Key = 'new_club_positions' then Settings.NewClubPositions := (Value = '1');
         if Key = 'new_view_angle' then Settings.NewViewAngle := (Value = '1');        // НОВАЯ ГАЛОЧКА
+        if Key = 'camera_sensitivity' then Settings.CameraSensitivity := (Value = '1'); // ГАЛОЧКА ЧУВСТВИТЕЛЬНОСТИ
 
         // Чекбоксы дальности
         if Key = 'show_wires' then Settings.ShowWires := (Value = '1');
@@ -654,7 +695,8 @@ begin
         if Key = 'turnspeed' then Settings.TurnspeedSlider.Value := StrToFloatDef(Value, 1.5);
         if Key = 'stepforward' then Settings.StepForwardSlider.Value := StrToFloatDef(Value, 0.5);
         if Key = 'maxvisibledistance' then Settings.MaxVisibleDistanceSlider.Value := StrToFloatDef(Value, 1200);
-        if Key = 'view_angle' then Settings.ViewAngleSlider.Value := StrToFloatDef(Value, 3.0); // ДРОБНЫЙ
+        if Key = 'view_angle' then Settings.ViewAngleSlider.Value := StrToFloatDef(Value, 3.0); // НОВЫЙ СЛАЙДЕР (ЦЕЛОЧИСЛЕННЫЙ)
+        if Key = 'camera_sensitivity_value' then Settings.CameraSensitivitySlider.Value := StrToFloatDef(Value, 5.0); // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ
         
         // Глобальный слайдер яркости
         if Key = 'brightness' then Settings.BrightnessSlider.Value := StrToFloatDef(Value, 0.0);
@@ -723,6 +765,7 @@ begin
     if Settings.NewSky then WriteLn(F, 'newsky: 1') else WriteLn(F, 'newsky: 0');
     if Settings.NewClubPositions then WriteLn(F, 'new_club_positions: 1') else WriteLn(F, 'new_club_positions: 0');
     if Settings.NewViewAngle then WriteLn(F, 'new_view_angle: 1') else WriteLn(F, 'new_view_angle: 0'); // НОВАЯ ГАЛОЧКА
+    if Settings.CameraSensitivity then WriteLn(F, 'camera_sensitivity: 1') else WriteLn(F, 'camera_sensitivity: 0'); // ГАЛОЧКА ЧУВСТВИТЕЛЬНОСТИ
     
     // Чекбоксы дальности
     if Settings.ShowWires then WriteLn(F, 'show_wires: 1') else WriteLn(F, 'show_wires: 0');
@@ -736,6 +779,7 @@ begin
     WriteLn(F, 'stepforward: ' + FormatValue(Settings.StepForwardSlider.Value));
     WriteLn(F, 'maxvisibledistance: ' + IntToStr(Round(Settings.MaxVisibleDistanceSlider.Value)));
     WriteLn(F, 'view_angle: ' + FormatValue(Settings.ViewAngleSlider.Value)); // ИЗМЕНЕНО: теперь дробное
+    WriteLn(F, 'camera_sensitivity_value: ' + FormatValue(Settings.CameraSensitivitySlider.Value)); // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ
     
     // Глобальный слайдер яркости
     WriteLn(F, 'brightness: ' + FormatValue(Settings.BrightnessSlider.Value));
@@ -1121,9 +1165,9 @@ begin
   Settings.BrightnessSlider.MaxValue := 255.0;
   
   // ИСПРАВЛЕННАЯ ИНИЦИАЛИЗАЦИЯ СЛАЙДЕРОВ FREECAM (шаг 0.01, максимум 2)
-  Settings.BasespeedSlider.Value := 0.01;       // Дефолт: минимальное значение
-  Settings.BasespeedSlider.MinValue := 0.01;    // Минимум: 0.01
-  Settings.BasespeedSlider.MaxValue := 0.10;    // Максимум: 0.10
+  Settings.BasespeedSlider.Value := 0.01;        // Изменено: дефолтное значение 0.5
+  Settings.BasespeedSlider.MinValue := 0.01;     // Изменено: минимум 0.0
+  Settings.BasespeedSlider.MaxValue := 1.00;     // Изменено: максимум 1.0
   
   Settings.FastspeedSlider.Value := 1.5;
   Settings.FastspeedSlider.MinValue := 0.01;
@@ -1141,10 +1185,15 @@ begin
   Settings.MaxVisibleDistanceSlider.MinValue := 800;
   Settings.MaxVisibleDistanceSlider.MaxValue := 1600;
   
-  // НОВЫЙ СЛАЙДЕР УГЛА ОБЗОРА (ЦЕЛОЧИСЛЕННЫЙ)
+  // НОВЫЙ СЛАЙДЕР УГЛА ОБЗОРА (ДРОБНЫЙ)
   Settings.ViewAngleSlider.Value := 3.0;
   Settings.ViewAngleSlider.MinValue := 0.0;
   Settings.ViewAngleSlider.MaxValue := 7.0;
+  
+  // НОВЫЙ СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ КАМЕРЫ (от 1.00 до 9.00, формат f.ff)
+  Settings.CameraSensitivitySlider.Value := 5.0;
+  Settings.CameraSensitivitySlider.MinValue := 1.0;
+  Settings.CameraSensitivitySlider.MaxValue := 9.0;
   
   // Инициализация слайдеров освещения
   Settings.MainLightIntensitySlider.Value := 5000.0;
@@ -1176,14 +1225,24 @@ begin
   ViewAngleNopAddr2 := $72384C;   // Второй адрес для нопания (7 байт)  
   ViewAngleSliderAddr := $725C1C; // Адрес float значения
 
+  // АДРЕС ДЛЯ ЧУВСТВИТЕЛЬНОСТИ КАМЕРЫ
+  CameraSensitivityAddr := $7229F8; // Адрес чувствительности камеры
+
   // Читаем оригинальные значения угла обзора
   ReadOriginalViewAngleValues;
+
+  // Читаем оригинальные значения чувствительности камеры
+  ReadOriginalCameraSensitivityValues;
 
   LoadConfig;
 
   // Применяем патч угла обзора только если MainCamera И NewViewAngle включены
   if Settings.MainCamera and Settings.NewViewAngle then
     ApplyViewAnglePatch;
+
+  // Применяем чувствительность камеры если включена
+  if Settings.MainCamera and Settings.CameraSensitivity then
+    ApplyCameraSensitivity;
 
   MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
   MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
@@ -1381,7 +1440,7 @@ begin
       
       TotalHeight := TotalHeight + ITEM_HEIGHT; // Main Camera
       if Settings.MainCameraSection.AnimProgress > 0.01 then
-        TotalHeight := TotalHeight + Round(120 * Settings.MainCameraSection.AnimProgress) + MARGIN;
+        TotalHeight := TotalHeight + Round(180 * Settings.MainCameraSection.AnimProgress) + MARGIN; // УВЕЛИЧЕНО СО 120 ДО 180
       
       TotalHeight := TotalHeight + ITEM_HEIGHT; // Lighting
       if Settings.LightingSection.AnimProgress > 0.01 then
@@ -1449,10 +1508,10 @@ begin
       DrawToggle(Win.X + MARGIN, ContentY, 'Основная Камера', Settings.MainCamera, Alpha, True, ExpandButtonX, Settings.MainCameraSection.Expanded);
       Inc(ContentY, ITEM_HEIGHT + MARGIN);
       
-      // Main Camera секция
+      // Main Camera секция (УВЕЛИЧЕНА СО 120 ДО 180)
       if Settings.MainCameraSection.AnimProgress > 0.01 then
       begin
-        SectionHeight := Round(120 * Settings.MainCameraSection.AnimProgress);
+        SectionHeight := Round(180 * Settings.MainCameraSection.AnimProgress);
         DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $202020, Alpha, True);
         DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $353535, Alpha, False);
         
@@ -1461,10 +1520,17 @@ begin
         
         // НОВЫЕ ЭЛЕМЕНТЫ
         if SectionHeight > 60 then
-          DrawCheckbox(Win.X + MARGIN + 20, ContentY + 50, 'Новый угол обзора', Settings.NewViewAngle, Alpha);
+          DrawCheckbox(Win.X + MARGIN + 20, ContentY + 50, 'Новый Zoom', Settings.NewViewAngle, Alpha);
         
         if (SectionHeight > 90) and Settings.NewViewAngle then
-          DrawSlider(Win.X + MARGIN + 20, ContentY + 80, Settings.ViewAngleSlider, 'Угол обзора', Alpha);
+          DrawSlider(Win.X + MARGIN + 20, ContentY + 80, Settings.ViewAngleSlider, 'Значение', Alpha);
+        
+        // ДОБАВЛЯЕМ ЧУВСТВИТЕЛЬНОСТЬ КАМЕРЫ
+        if SectionHeight > 120 then
+          DrawCheckbox(Win.X + MARGIN + 20, ContentY + 110, 'Чувствительность', Settings.CameraSensitivity, Alpha);
+        
+        if (SectionHeight > 150) and Settings.CameraSensitivity then
+          DrawSlider(Win.X + MARGIN + 20, ContentY + 140, Settings.CameraSensitivitySlider, 'Значение', Alpha);
         
         Inc(ContentY, SectionHeight + MARGIN);
       end;
@@ -1634,6 +1700,12 @@ begin
       if Settings.MainCamera and Settings.NewViewAngle then
         WriteFloatToMemory(ViewAngleSliderAddr, Settings.ViewAngleSlider.Value);
     end;
+    if @Slider = @Settings.CameraSensitivitySlider then
+    begin
+      // Записываем в память только если MainCamera И CameraSensitivity включены
+      if Settings.MainCamera and Settings.CameraSensitivity then
+        WriteFloatToMemory(CameraSensitivityAddr, Settings.CameraSensitivitySlider.Value);
+    end;
 
   // МГНОВЕННОЕ сохранение конфига для отзывчивости интерфейса
   SaveConfig;
@@ -1695,6 +1767,8 @@ begin
     HandleSliderDrag(X, Settings.MaxVisibleDistanceSlider, WorldWindow.X + MARGIN + 20);
   if Settings.ViewAngleSlider.IsDragging then    // НОВЫЙ СЛАЙДЕР
     HandleSliderDrag(X, Settings.ViewAngleSlider, RenderWindow.X + MARGIN + 20);
+  if Settings.CameraSensitivitySlider.IsDragging then // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ
+    HandleSliderDrag(X, Settings.CameraSensitivitySlider, RenderWindow.X + MARGIN + 20);
 end;
 
 procedure HandleMenuClick(X, Y: Integer); stdcall;
@@ -1782,14 +1856,20 @@ begin
         Settings.MainCameraSection.Expanded := True
       else
       begin
-        // При выключении MainCamera - отключаем патч угла обзора
+        // При выключении MainCamera - отключаем патч угла обзора и чувствительности
         if ViewAnglePatched then
           RemoveViewAnglePatch;
+        RestoreCameraSensitivity;
       end;
       
-      // При включении MainCamera - проверяем нужно ли включить патч угла обзора
-      if Settings.MainCamera and Settings.NewViewAngle then
-        ApplyViewAnglePatch;
+      // При включении MainCamera - проверяем нужно ли включить патчи
+      if Settings.MainCamera then
+      begin
+        if Settings.NewViewAngle then
+          ApplyViewAnglePatch;
+        if Settings.CameraSensitivity then
+          ApplyCameraSensitivity;
+      end;
         
       SaveConfig;
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
@@ -1797,11 +1877,11 @@ begin
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
     
-    // Main Camera section
+    // Main Camera section (УВЕЛИЧЕНА СО 120 ДО 180)
     MainCameraSectionY := ContentY;
     if Settings.MainCameraSection.AnimProgress > 0.01 then
     begin
-      SectionHeight := Round(120 * Settings.MainCameraSection.AnimProgress);
+      SectionHeight := Round(180 * Settings.MainCameraSection.AnimProgress);
       
       // Клик по слайдеру StepForward
       if (SectionHeight > 30) and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 10, SLIDER_WIDTH + 25, 40) then
@@ -1829,6 +1909,28 @@ begin
       if (SectionHeight > 90) and Settings.NewViewAngle and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 70, SLIDER_WIDTH + 25, 40) then
       begin
         Settings.ViewAngleSlider.IsDragging := True;
+        Exit;
+      end;
+      
+      // ГАЛОЧКА ЧУВСТВИТЕЛЬНОСТИ КАМЕРЫ
+      if (SectionHeight > 120) and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 110, 180, CHECKBOX_SIZE) then
+      begin
+        Settings.CameraSensitivity := not Settings.CameraSensitivity;
+        
+        // Применяем или убираем чувствительность в зависимости от состояния MainCamera И CameraSensitivity
+        if Settings.MainCamera and Settings.CameraSensitivity then
+          ApplyCameraSensitivity
+        else
+          RestoreCameraSensitivity;
+          
+        SaveConfig;
+        Exit;
+      end;
+      
+      // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ КАМЕРЫ
+      if (SectionHeight > 150) and Settings.CameraSensitivity and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 130, SLIDER_WIDTH + 25, 40) then
+      begin
+        Settings.CameraSensitivitySlider.IsDragging := True;
         Exit;
       end;
       
@@ -2062,12 +2164,15 @@ begin
   Settings.SunHeightSlider.IsDragging := False;
   Settings.MaxVisibleDistanceSlider.IsDragging := False;
   Settings.ViewAngleSlider.IsDragging := False;      // НОВЫЙ СЛАЙДЕР
+  Settings.CameraSensitivitySlider.IsDragging := False; // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ
 
   // ПРИНУДИТЕЛЬНО применяем все настройки при отпускании мыши
   if Settings.Lighting then
     ApplyLightingSettings;
   if Settings.MaxVisibleDistance then
     ApplyDistanceSettings;
+  if Settings.MainCamera and Settings.CameraSensitivity then
+    ApplyCameraSensitivity;
   
   // Конфиг уже сохранен в HandleSliderDrag, дублировать не нужно
 end;
