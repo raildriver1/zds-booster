@@ -44,7 +44,9 @@ type
     MainCamera: Boolean;
     MainCameraSection: TExpandableSection;
     StepForwardSlider: TSlider;
-    
+    NewViewAngle: Boolean;              // НОВАЯ ГАЛОЧКА
+    ViewAngleSlider: TSlider;           // НОВЫЙ СЛАЙДЕР
+
     // Освещение
     Lighting: Boolean;
     LightingSection: TExpandableSection;
@@ -132,7 +134,17 @@ var
   OrigDistantModelValue: Single;
   OrigTrafficLightValues: array[0..2] of Single;
   DistanceValuesRead: Boolean = False;
-  
+
+  // Переменные для патча "Новый угол обзора"
+  ViewAnglePatched: Boolean = False;
+  ViewAngleNopAddr1: Cardinal;        // 723909
+  ViewAngleNopAddr2: Cardinal;        // 72384C  
+  ViewAngleSliderAddr: Cardinal;      // 725C1C
+  OrigViewAngleBytes1: array[0..5] of Byte; // для 6 байт инструкции mov dword ptr [eax], 0Ah
+  OrigViewAngleBytes2: array[0..6] of Byte; // для 7 байт инструкции mov [eax],0000000A
+  OrigViewAngleValue: Single;
+  ViewAngleValuesRead: Boolean = False;
+
  // ОРИГИНАЛЬНЫЕ ЗНАЧЕНИЯ (ИЗ ВАШЕГО ДАМПА)
   OrigSpeedXValue: array[0..3] of Byte = ($58, $39, $34, $BC);
   OrigAllowedSpeedValue: array[0..3] of Byte = ($58, $39, $34, $BC);
@@ -259,6 +271,148 @@ begin
   OrigSunHeightValue := ReadFloatFromMemory(SunHeightAddr);
   LightingValuesRead := True;
   AddToLogFile(EngineLog, 'Оригинальные значения освещения сохранены');
+end;
+
+// Чтение оригинального значения угла обзора
+procedure ReadOriginalViewAngleValues;
+begin
+  if ViewAngleValuesRead then Exit;
+  
+  AddToLogFile(EngineLog, 'Читаем оригинальные значения угла обзора...');
+  OrigViewAngleValue := ReadFloatFromMemory(ViewAngleSliderAddr);
+  ViewAngleValuesRead := True;
+  AddToLogFile(EngineLog, 'Оригинальные значения угла обзора сохранены');
+end;
+
+// Применение патча угла обзора
+procedure ApplyViewAnglePatch;
+var
+  OldProtect: Cardinal;
+  NopBytes1: array[0..5] of Byte;
+  NopBytes2: array[0..6] of Byte;
+  BytesWritten: Cardinal;
+  i: Integer;
+begin
+  if ViewAnglePatched then Exit;
+  
+  // ПРОВЕРЯЕМ ЧТО MainCamera И NewViewAngle ВКЛЮЧЕНЫ
+  if not Settings.MainCamera or not Settings.NewViewAngle then Exit;
+  
+  try
+    AddToLogFile(EngineLog, 'Применяем патч угла обзора...');
+    
+    // Сохраняем оригинальные байты первого адреса (6 байт)
+    if not ReadProcessMemory(GetCurrentProcess, Pointer(ViewAngleNopAddr1), @OrigViewAngleBytes1[0], 6, BytesWritten) then
+    begin
+      AddToLogFile(EngineLog, 'Ошибка чтения оригинальных байтов угла обзора (адрес 1)');
+      Exit;
+    end;
+    
+    // Сохраняем оригинальные байты второго адреса (7 байт)
+    if not ReadProcessMemory(GetCurrentProcess, Pointer(ViewAngleNopAddr2), @OrigViewAngleBytes2[0], 6, BytesWritten) then
+    begin
+      AddToLogFile(EngineLog, 'Ошибка чтения оригинальных байтов угла обзора (адрес 2)');
+      Exit;
+    end;
+    
+    // Заполняем NOP'ами для первого адреса (6 байт)
+    for i := 0 to 5 do
+      NopBytes1[i] := $90;
+    
+    // Заполняем NOP'ами для второго адреса (7 байт)
+    for i := 0 to 6 do
+      NopBytes2[i] := $90;
+    
+    // Применяем патч для первого адреса
+    if VirtualProtect(Pointer(ViewAngleNopAddr1), 6, PAGE_EXECUTE_READWRITE, OldProtect) then
+    begin
+      if WriteProcessMemory(GetCurrentProcess, Pointer(ViewAngleNopAddr1), @NopBytes1[0], 6, BytesWritten) then
+        AddToLogFile(EngineLog, 'Патч угла обзора (адрес 1) успешно применен')
+      else
+      begin
+        AddToLogFile(EngineLog, 'Ошибка записи патча угла обзора (адрес 1)');
+        Exit;
+      end;
+      VirtualProtect(Pointer(ViewAngleNopAddr1), 6, OldProtect, OldProtect);
+    end
+    else
+    begin
+      AddToLogFile(EngineLog, 'Ошибка получения прав на запись патча угла обзора (адрес 1)');
+      Exit;
+    end;
+    
+    // Применяем патч для второго адреса
+    if VirtualProtect(Pointer(ViewAngleNopAddr2), 6, PAGE_EXECUTE_READWRITE, OldProtect) then
+    begin
+      if WriteProcessMemory(GetCurrentProcess, Pointer(ViewAngleNopAddr2), @NopBytes2[0], 6, BytesWritten) then
+      begin
+        ViewAnglePatched := True;
+        // Применяем значение из слайдера
+        WriteFloatToMemory(ViewAngleSliderAddr, Settings.ViewAngleSlider.Value);
+        AddToLogFile(EngineLog, 'Патч угла обзора (адрес 2) успешно применен');
+      end
+      else
+        AddToLogFile(EngineLog, 'Ошибка записи патча угла обзора (адрес 2)');
+      VirtualProtect(Pointer(ViewAngleNopAddr2), 6, OldProtect, OldProtect);
+    end
+    else
+      AddToLogFile(EngineLog, 'Ошибка получения прав на запись патча угла обзора (адрес 2)');
+      
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'Исключение при применении патча угла обзора: ' + E.Message);
+      ViewAnglePatched := False;
+    end;
+  end;
+end;
+
+// Восстановление патча угла обзора
+procedure RemoveViewAnglePatch;
+var
+  OldProtect: Cardinal;
+  BytesWritten: Cardinal;
+begin
+  if not ViewAnglePatched then Exit;
+  
+  try
+    AddToLogFile(EngineLog, 'Восстанавливаем патч угла обзора...');
+    
+    // Восстанавливаем оригинальные байты первого адреса
+    if VirtualProtect(Pointer(ViewAngleNopAddr1), 6, PAGE_EXECUTE_READWRITE, OldProtect) then
+    begin
+      if WriteProcessMemory(GetCurrentProcess, Pointer(ViewAngleNopAddr1), @OrigViewAngleBytes1[0], 6, BytesWritten) then
+        AddToLogFile(EngineLog, 'Патч угла обзора (адрес 1) успешно восстановлен')
+      else
+        AddToLogFile(EngineLog, 'Ошибка восстановления патча угла обзора (адрес 1)');
+      VirtualProtect(Pointer(ViewAngleNopAddr1), 6, OldProtect, OldProtect);
+    end
+    else
+      AddToLogFile(EngineLog, 'Ошибка получения прав на запись при восстановлении патча угла обзора (адрес 1)');
+    
+    // Восстанавливаем оригинальные байты второго адреса
+    if VirtualProtect(Pointer(ViewAngleNopAddr2), 7, PAGE_EXECUTE_READWRITE, OldProtect) then
+    begin
+      if WriteProcessMemory(GetCurrentProcess, Pointer(ViewAngleNopAddr2), @OrigViewAngleBytes2[0], 7, BytesWritten) then
+      begin
+        ViewAnglePatched := False;
+        // Восстанавливаем оригинальное значение
+        WriteFloatToMemory(ViewAngleSliderAddr, OrigViewAngleValue);
+        AddToLogFile(EngineLog, 'Патч угла обзора (адрес 2) успешно восстановлен');
+      end
+      else
+        AddToLogFile(EngineLog, 'Ошибка восстановления патча угла обзора (адрес 2)');
+      VirtualProtect(Pointer(ViewAngleNopAddr2), 7, OldProtect, OldProtect);
+    end
+    else
+      AddToLogFile(EngineLog, 'Ошибка получения прав на запись при восстановлении патча угла обзора (адрес 2)');
+      
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'Исключение при восстановлении патча угла обзора: ' + E.Message);
+    end;
+  end;
 end;
 
 // Чтение оригинальных значений дальности (ТЕПЕРЬ ВОССТАНАВЛИВАЮТСЯ!)
@@ -487,7 +641,8 @@ begin
         if Key = 'max_distance' then Settings.MaxVisibleDistance := (Value = '1');
         if Key = 'newsky' then Settings.NewSky := (Value = '1');
         if Key = 'new_club_positions' then Settings.NewClubPositions := (Value = '1');
-        
+        if Key = 'new_view_angle' then Settings.NewViewAngle := (Value = '1');        // НОВАЯ ГАЛОЧКА
+
         // Чекбоксы дальности
         if Key = 'show_wires' then Settings.ShowWires := (Value = '1');
         if Key = 'show_distant_models' then Settings.ShowDistantModels := (Value = '1');
@@ -499,10 +654,11 @@ begin
         if Key = 'turnspeed' then Settings.TurnspeedSlider.Value := StrToFloatDef(Value, 1.5);
         if Key = 'stepforward' then Settings.StepForwardSlider.Value := StrToFloatDef(Value, 0.5);
         if Key = 'maxvisibledistance' then Settings.MaxVisibleDistanceSlider.Value := StrToFloatDef(Value, 1200);
+        if Key = 'view_angle' then Settings.ViewAngleSlider.Value := StrToFloatDef(Value, 3.0); // ДРОБНЫЙ
         
         // Глобальный слайдер яркости
         if Key = 'brightness' then Settings.BrightnessSlider.Value := StrToFloatDef(Value, 0.0);
-        
+
         // Слайдеры освещения
         if Key = 'main_light_intensity' then Settings.MainLightIntensitySlider.Value := StrToFloatDef(Value, 5000.0);
         if Key = 'additional_light_intensity' then Settings.AdditionalLightIntensitySlider.Value := StrToFloatDef(Value, 5000.0);
@@ -566,6 +722,7 @@ begin
     if Settings.MaxVisibleDistance then WriteLn(F, 'max_distance: 1') else WriteLn(F, 'max_distance: 0');
     if Settings.NewSky then WriteLn(F, 'newsky: 1') else WriteLn(F, 'newsky: 0');
     if Settings.NewClubPositions then WriteLn(F, 'new_club_positions: 1') else WriteLn(F, 'new_club_positions: 0');
+    if Settings.NewViewAngle then WriteLn(F, 'new_view_angle: 1') else WriteLn(F, 'new_view_angle: 0'); // НОВАЯ ГАЛОЧКА
     
     // Чекбоксы дальности
     if Settings.ShowWires then WriteLn(F, 'show_wires: 1') else WriteLn(F, 'show_wires: 0');
@@ -578,6 +735,7 @@ begin
     WriteLn(F, 'turnspeed: ' + FormatValue(Settings.TurnspeedSlider.Value));
     WriteLn(F, 'stepforward: ' + FormatValue(Settings.StepForwardSlider.Value));
     WriteLn(F, 'maxvisibledistance: ' + IntToStr(Round(Settings.MaxVisibleDistanceSlider.Value)));
+    WriteLn(F, 'view_angle: ' + FormatValue(Settings.ViewAngleSlider.Value)); // ИЗМЕНЕНО: теперь дробное
     
     // Глобальный слайдер яркости
     WriteLn(F, 'brightness: ' + FormatValue(Settings.BrightnessSlider.Value));
@@ -589,7 +747,7 @@ begin
     WriteLn(F, 'cabin_contrast: ' + FormatValue(Settings.CabinContrastSlider.Value));
     WriteLn(F, 'sun_orbit_radius: ' + FormatValue(Settings.SunOrbitRadiusSlider.Value));
     WriteLn(F, 'sun_height: ' + FormatValue(Settings.SunHeightSlider.Value));
-    
+
     CloseFile(F);
   except
     // Игнорируем ошибки записи конфига
@@ -963,9 +1121,9 @@ begin
   Settings.BrightnessSlider.MaxValue := 255.0;
   
   // ИСПРАВЛЕННАЯ ИНИЦИАЛИЗАЦИЯ СЛАЙДЕРОВ FREECAM (шаг 0.01, максимум 2)
-  Settings.BasespeedSlider.Value := 1.0;
-  Settings.BasespeedSlider.MinValue := 0.01;
-  Settings.BasespeedSlider.MaxValue := 2.0;
+  Settings.BasespeedSlider.Value := 0.01;       // Дефолт: минимальное значение
+  Settings.BasespeedSlider.MinValue := 0.01;    // Минимум: 0.01
+  Settings.BasespeedSlider.MaxValue := 0.10;    // Максимум: 0.10
   
   Settings.FastspeedSlider.Value := 1.5;
   Settings.FastspeedSlider.MinValue := 0.01;
@@ -982,6 +1140,11 @@ begin
   Settings.MaxVisibleDistanceSlider.Value := 1200;
   Settings.MaxVisibleDistanceSlider.MinValue := 800;
   Settings.MaxVisibleDistanceSlider.MaxValue := 1600;
+  
+  // НОВЫЙ СЛАЙДЕР УГЛА ОБЗОРА (ЦЕЛОЧИСЛЕННЫЙ)
+  Settings.ViewAngleSlider.Value := 3.0;
+  Settings.ViewAngleSlider.MinValue := 0.0;
+  Settings.ViewAngleSlider.MaxValue := 7.0;
   
   // Инициализация слайдеров освещения
   Settings.MainLightIntensitySlider.Value := 5000.0;
@@ -1005,10 +1168,22 @@ begin
   Settings.SunOrbitRadiusSlider.MaxValue := 5000.0;
   
   Settings.SunHeightSlider.Value := 200.0;
-  Settings.SunHeightSlider.MinValue := -500.0;
+  Settings.SunHeightSlider.MinValue := -500.0;  
   Settings.SunHeightSlider.MaxValue := 2000.0;
 
+  // АДРЕСА ДЛЯ УГЛА ОБЗОРА
+  ViewAngleNopAddr1 := $723909;   // Первый адрес для нопания (6 байт)
+  ViewAngleNopAddr2 := $72384C;   // Второй адрес для нопания (7 байт)  
+  ViewAngleSliderAddr := $725C1C; // Адрес float значения
+
+  // Читаем оригинальные значения угла обзора
+  ReadOriginalViewAngleValues;
+
   LoadConfig;
+
+  // Применяем патч угла обзора только если MainCamera И NewViewAngle включены
+  if Settings.MainCamera and Settings.NewViewAngle then
+    ApplyViewAnglePatch;
 
   MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
   MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
@@ -1206,7 +1381,7 @@ begin
       
       TotalHeight := TotalHeight + ITEM_HEIGHT; // Main Camera
       if Settings.MainCameraSection.AnimProgress > 0.01 then
-        TotalHeight := TotalHeight + Round(75 * Settings.MainCameraSection.AnimProgress) + MARGIN;
+        TotalHeight := TotalHeight + Round(120 * Settings.MainCameraSection.AnimProgress) + MARGIN;
       
       TotalHeight := TotalHeight + ITEM_HEIGHT; // Lighting
       if Settings.LightingSection.AnimProgress > 0.01 then
@@ -1277,12 +1452,19 @@ begin
       // Main Camera секция
       if Settings.MainCameraSection.AnimProgress > 0.01 then
       begin
-        SectionHeight := Round(75 * Settings.MainCameraSection.AnimProgress);
+        SectionHeight := Round(120 * Settings.MainCameraSection.AnimProgress);
         DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $202020, Alpha, True);
         DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $353535, Alpha, False);
         
         if SectionHeight > 30 then
           DrawSlider(Win.X + MARGIN + 20, ContentY + 20, Settings.StepForwardSlider, 'Шаг вперёд', Alpha);
+        
+        // НОВЫЕ ЭЛЕМЕНТЫ
+        if SectionHeight > 60 then
+          DrawCheckbox(Win.X + MARGIN + 20, ContentY + 50, 'Новый угол обзора', Settings.NewViewAngle, Alpha);
+        
+        if (SectionHeight > 90) and Settings.NewViewAngle then
+          DrawSlider(Win.X + MARGIN + 20, ContentY + 80, Settings.ViewAngleSlider, 'Угол обзора', Alpha);
         
         Inc(ContentY, SectionHeight + MARGIN);
       end;
@@ -1433,19 +1615,25 @@ begin
   Slider.Value := Slider.MinValue + NewProgress * (Slider.MaxValue - Slider.MinValue);
   
   // Применяем настройки только если значение действительно изменилось
-if Abs(Slider.Value - OldValue) > 0.001 then
-begin
-  // === СИНХРОНИЗАЦИЯ С ГЛОБАЛЬНЫМИ ПЕРЕМЕННЫМИ ===
-  if @Slider = @Settings.BasespeedSlider then
-    MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
-  if @Slider = @Settings.FastspeedSlider then
-    MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
-  if @Slider = @Settings.TurnspeedSlider then
-    MenuFreecamTurnSpeed := Settings.TurnspeedSlider.Value;
-  if @Slider = @Settings.StepForwardSlider then
-    stepforward := Settings.StepForwardSlider.Value;
-  if @Slider = @Settings.MaxVisibleDistanceSlider then
-    maxvisibledistance := Settings.MaxVisibleDistanceSlider.Value;
+  if Abs(Slider.Value - OldValue) > 0.001 then
+  begin
+    // === СИНХРОНИЗАЦИЯ С ГЛОБАЛЬНЫМИ ПЕРЕМЕННЫМИ ===
+    if @Slider = @Settings.BasespeedSlider then
+      MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
+    if @Slider = @Settings.FastspeedSlider then
+      MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
+    if @Slider = @Settings.TurnspeedSlider then
+      MenuFreecamTurnSpeed := Settings.TurnspeedSlider.Value;
+    if @Slider = @Settings.StepForwardSlider then
+      stepforward := Settings.StepForwardSlider.Value;
+    if @Slider = @Settings.MaxVisibleDistanceSlider then
+      maxvisibledistance := Settings.MaxVisibleDistanceSlider.Value;
+    if @Slider = @Settings.ViewAngleSlider then
+    begin
+      // Записываем в память только если MainCamera И NewViewAngle включены
+      if Settings.MainCamera and Settings.NewViewAngle then
+        WriteFloatToMemory(ViewAngleSliderAddr, Settings.ViewAngleSlider.Value);
+    end;
 
   // МГНОВЕННОЕ сохранение конфига для отзывчивости интерфейса
   SaveConfig;
@@ -1505,6 +1693,8 @@ begin
     HandleSliderDrag(X, Settings.SunHeightSlider, RenderWindow.X + MARGIN + 20);
   if Settings.MaxVisibleDistanceSlider.IsDragging then
     HandleSliderDrag(X, Settings.MaxVisibleDistanceSlider, WorldWindow.X + MARGIN + 20);
+  if Settings.ViewAngleSlider.IsDragging then    // НОВЫЙ СЛАЙДЕР
+    HandleSliderDrag(X, Settings.ViewAngleSlider, RenderWindow.X + MARGIN + 20);
 end;
 
 procedure HandleMenuClick(X, Y: Integer); stdcall;
@@ -1588,23 +1778,60 @@ begin
     if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
     begin
       Settings.MainCamera := not Settings.MainCamera;
-      if Settings.MainCamera then Settings.MainCameraSection.Expanded := True;
+      if Settings.MainCamera then 
+        Settings.MainCameraSection.Expanded := True
+      else
+      begin
+        // При выключении MainCamera - отключаем патч угла обзора
+        if ViewAnglePatched then
+          RemoveViewAnglePatch;
+      end;
+      
+      // При включении MainCamera - проверяем нужно ли включить патч угла обзора
+      if Settings.MainCamera and Settings.NewViewAngle then
+        ApplyViewAnglePatch;
+        
       SaveConfig;
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
     
-    // Main Camera slider
+    // Main Camera section
     MainCameraSectionY := ContentY;
     if Settings.MainCameraSection.AnimProgress > 0.01 then
     begin
-      SectionHeight := Round(75 * Settings.MainCameraSection.AnimProgress);
+      SectionHeight := Round(120 * Settings.MainCameraSection.AnimProgress);
+      
+      // Клик по слайдеру StepForward
       if (SectionHeight > 30) and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 10, SLIDER_WIDTH + 25, 40) then
       begin
         Settings.StepForwardSlider.IsDragging := True;
         Exit;
       end;
+      
+      // НОВАЯ ГАЛОЧКА - клик по галочке "Новый угол обзора"
+      if (SectionHeight > 60) and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 50, 180, CHECKBOX_SIZE) then
+      begin
+        Settings.NewViewAngle := not Settings.NewViewAngle;
+        
+        // Применяем или убираем патч в зависимости от состояния MainCamera И NewViewAngle
+        if Settings.MainCamera and Settings.NewViewAngle then
+          ApplyViewAnglePatch
+        else
+          RemoveViewAnglePatch;
+          
+        SaveConfig;
+        Exit;
+      end;
+      
+      // НОВЫЙ СЛАЙДЕР - клик по слайдеру угла обзора
+      if (SectionHeight > 90) and Settings.NewViewAngle and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 70, SLIDER_WIDTH + 25, 40) then
+      begin
+        Settings.ViewAngleSlider.IsDragging := True;
+        Exit;
+      end;
+      
       Inc(ContentY, SectionHeight + MARGIN);
     end;
     
@@ -1834,7 +2061,8 @@ begin
   Settings.SunOrbitRadiusSlider.IsDragging := False;
   Settings.SunHeightSlider.IsDragging := False;
   Settings.MaxVisibleDistanceSlider.IsDragging := False;
-  
+  Settings.ViewAngleSlider.IsDragging := False;      // НОВЫЙ СЛАЙДЕР
+
   // ПРИНУДИТЕЛЬНО применяем все настройки при отпускании мыши
   if Settings.Lighting then
     ApplyLightingSettings;
