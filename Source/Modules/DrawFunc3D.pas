@@ -235,14 +235,14 @@ CustomModelLoaded: Boolean = False;
 CustomModelID: Integer = 0;
 CustomTextureID: Cardinal = 0;
 
-  SystemInitialized: Boolean = False;
+SystemInitialized: Boolean = False;
   
-  // Оптимизация времени
-  LastTimeCheck: Cardinal = 0;
-  TimeCheckInterval: Cardinal = 300; // раз в 100мс
+// Оптимизация времени
+LastTimeCheck: Cardinal = 0;
+TimeCheckInterval: Cardinal = 300; // раз в 100мс
 
-  LastFreecamConfigState: Boolean = False;  // Предыдущее состояние из конфига
-  FreecamConfigStateInitialized: Boolean = False;  // Флаг инициализации
+LastFreecamConfigState: Boolean = False;  // Предыдущее состояние из конфига
+FreecamConfigStateInitialized: Boolean = False;  // Флаг инициализации
 
 StationsList: TStringList;
 StationsLoaded: Boolean = False;
@@ -344,34 +344,34 @@ type
   TExtendedBytes = array[0..9] of Byte;
 
 var
- RenderedTex : GlUint;
- MultyCoordOffset : array [1..5] of array [0..3] of GLfloat;
+  RenderedTex : GlUint;
+  MultyCoordOffset : array [1..5] of array [0..3] of GLfloat;
 
- Meshs : array of TAMesh;
- MeshsCount : cardinal = 0;
- OverAllMeshUsed :cardinal = 0;
+  Meshs : array of TAMesh;
+  MeshsCount : cardinal = 0;
+  OverAllMeshUsed :cardinal = 0;
 
- Scenes : array of TScene;
- ScenesCount : cardinal = 0;
- ScenesOverall : cardinal = 0;
+  Scenes : array of TScene;
+  ScenesCount : cardinal = 0;
+  ScenesOverall : cardinal = 0;
 
- mat_shininess : GLfloat = 0.0;
+  mat_shininess : GLfloat = 0.0;
 
-   LastStationCheck: Cardinal = 0;
+  LastStationCheck: Cardinal = 0;
   StationCheckInterval: Cardinal = 2000; // каждые 2 секунды
   CachedCurrentStation: string = '';
   CachedNextStation: string = '';
 
 
-   KeyDebounceTime: array[0..11] of Cardinal;
+  KeyDebounceTime: array[0..11] of Cardinal;
   DebounceInterval: Cardinal = 50; // 50мс задержка
 
- light_ambient : array [0..3] of GLfloat = ( 0.0, 0.0, 0.0, 1.0 );
- light_diffuse : array [0..3] of GLfloat = ( 1.0, 1.0, 1.0, 1.0 );
- light_specular : array [0..3] of GLfloat = ( 1.0, 1.0, 1.0, 1.0 );
- mat_specular : array [0..3] of GLfloat = ( 0.0, 0.0, 0.0, 1.0 );
+  light_ambient : array [0..3] of GLfloat = ( 0.0, 0.0, 0.0, 1.0 );
+  light_diffuse : array [0..3] of GLfloat = ( 1.0, 1.0, 1.0, 1.0 );
+  light_specular : array [0..3] of GLfloat = ( 1.0, 1.0, 1.0, 1.0 );
+  mat_specular : array [0..3] of GLfloat = ( 0.0, 0.0, 0.0, 1.0 );
 
-   CachedYellowBlockID: Word = 0;
+  CachedYellowBlockID: Word = 0;
   CachedGreenBlockID: Word = 0;
   LightBlockIDsCached: Boolean = False;
 
@@ -380,7 +380,7 @@ var
   TrafficSystemInitialized: Boolean = False;
   HookAddressWritten: Boolean = False;
 
-    LastSignalUpdate: Cardinal = 0;
+  LastSignalUpdate: Cardinal = 0;
   SignalUpdateInterval: Cardinal = 2000; // каждые 500мс
   CachedSignalSequence: string = '';
 
@@ -981,7 +981,7 @@ begin
         DrawSkyLayer(BoosterSunriseSnowTextureID, alpha, modelID);
       end
       
-      // 11:00-15:30: Чистый день (ИЗМЕНЕНО: продлен до 15:30)
+      // 11:00-15:30: Чистый день
       else if (totalMinutes >= 660) and (totalMinutes < 930) then // 11:00-15:30
       begin
         alpha := 255;
@@ -989,7 +989,7 @@ begin
         DrawSkyLayer(BoosterDaySnowTextureID, alpha, modelID);
       end
       
-      // 15:30-16:00: ПЛАВНЫЙ переход день → закат (ИЗМЕНЕНО: было 14:30-15:00)
+      // 15:30-16:00: ПЛАВНЫЙ переход день → закат
       else if (totalMinutes >= 930) and (totalMinutes < 960) then // 15:30-16:00
       begin
         // Новая текстура (закат) плавно появляется
@@ -1001,48 +1001,48 @@ begin
         DrawSkyLayer(BoosterDaySnowTextureID, alpha, modelID);
       end
       
-      // 16:00-18:30: Чистый закат (ИЗМЕНЕНО: было 15:00-17:30)
-      else if (totalMinutes >= 960) and (totalMinutes < 1110) then // 16:00-18:30
+      // 16:00-17:30: Чистый закат
+      else if (totalMinutes >= 960) and (totalMinutes < 1050) then // 16:00-17:30
       begin
         alpha := 255;
         if a1 then alpha := 255;
         DrawSkyLayer(BoosterSunsetSnowTextureID, alpha, modelID);
       end
       
-      // 18:30-19:00: ПЛАВНЫЙ переход закат → сумерки заката (ИЗМЕНЕНО: было 17:30-18:00)
-      else if (totalMinutes >= 1110) and (totalMinutes < 1140) then // 18:30-19:00
+      // 17:30-18:00: ПЛАВНЫЙ переход закат → сумерки заката
+      else if (totalMinutes >= 1050) and (totalMinutes < 1080) then // 17:30-18:00
       begin
         // Новая текстура (сумерки заката) плавно появляется
-        alpha := Round((totalMinutes - 1110) * 255 / 30);
+        alpha := Round((totalMinutes - 1050) * 255 / 30);
         DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, alpha, modelID);
         
         // Старая текстура (закат) плавно исчезает
-        alpha := Round(255 - (totalMinutes - 1110) * 255 / 30);
+        alpha := Round(255 - (totalMinutes - 1050) * 255 / 30);
         DrawSkyLayer(BoosterSunsetSnowTextureID, alpha, modelID);
       end
       
-      // 19:00-20:30: Чистые сумерки заката (ИЗМЕНЕНО: было 18:00-19:30)
-      else if (totalMinutes >= 1140) and (totalMinutes < 1230) then // 19:00-20:30
+      // 18:00-19:30: Чистые сумерки заката
+      else if (totalMinutes >= 1080) and (totalMinutes < 1170) then // 18:00-19:30
       begin
         alpha := 255;
         if a1 then alpha := 255;
         DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, alpha, modelID);
       end
       
-      // 20:30-21:00: ПЛАВНЫЙ переход сумерки заката → ночь (ИЗМЕНЕНО: было 19:30-20:00)
-      else if (totalMinutes >= 1230) and (totalMinutes < 1260) then // 20:30-21:00
+      // 19:30-20:00: ПЛАВНЫЙ переход сумерки заката → ночь
+      else if (totalMinutes >= 1170) and (totalMinutes < 1200) then // 19:30-20:00
       begin
         // Новая текстура (ночь) плавно появляется
-        alpha := Round((totalMinutes - 1230) * 240 / 30); // До 240, не до 255
+        alpha := Round((totalMinutes - 1170) * 240 / 30); // До 240, не до 255
         DrawSkyLayer(BoosterNightSnowTextureID, alpha, modelID);
         
         // Старая текстура (сумерки заката) плавно исчезает
-        alpha := Round(255 - (totalMinutes - 1230) * 255 / 30);
+        alpha := Round(255 - (totalMinutes - 1170) * 255 / 30);
         DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, alpha, modelID);
       end
       
-      // 21:00-6:30: Чистая ночь (ИЗМЕНЕНО: было 20:00-6:30)
-      else if (totalMinutes >= 1260) or (totalMinutes < 390) then // 21:00-6:30
+      // 20:00-6:30: Чистая ночь
+      else if (totalMinutes >= 1200) or (totalMinutes < 390) then // 20:00-6:30
       begin
         alpha := 240; // стандартная ночная яркость
         if a1 then alpha := 255;
@@ -1206,8 +1206,6 @@ begin
     EndObj3D;
   end;
 end;
-
-
 
 procedure PatchDrawSkyCall;
 var
@@ -2214,13 +2212,13 @@ strelkaSkorTimeOffset := 8; // ← Десятичное 12
       
       if (KolparaModelID > 0) and (KolparaTextureID > 0) then
       begin
-        // Колпара модель
-        if (currentLocType = 23152) or (currentLocType = 31714) then
-        begin
-          modelAddr := Pointer(baseStructAddr + $68); // $34 * 2 для 2ЭС5К/ЭП1М
-          AddToLogFile(EngineLog, 'Используем адрес модели для 2ЭС5К/ЭП1М: $' + IntToHex(Cardinal(modelAddr), 8));
-        end
-        else
+//        // Колпара модель
+//        if (currentLocType = 23152) or (currentLocType = 31714) then
+//        begin
+//          modelAddr := Pointer(baseStructAddr + $68); // $34 * 2 для 2ЭС5К/ЭП1М
+//          AddToLogFile(EngineLog, 'Используем адрес модели для 2ЭС5К/ЭП1М: $' + IntToHex(Cardinal(modelAddr), 8));
+//        end
+//        else
         begin
           modelAddr := Pointer(baseStructAddr + $34); // оригинальный
           AddToLogFile(EngineLog, 'Используем стандартный адрес модели: $' + IntToHex(Cardinal(modelAddr), 8));
@@ -2575,36 +2573,36 @@ end;
   end;
   
   // Загружаем все части пантографа
-  if FileExists(pantoPodstavkaPath) then
-  begin
-    AddToLogFile(EngineLog, 'Загружаем подставку пантографа...');
-    try
-      PantoPodstavkaID := LoadModel(pantoPodstavkaPath, 0, False);
-      if PantoPodstavkaID > 0 then
-      begin
-        AddToLogFile(EngineLog, 'Подставка пантографа загружена, ID: ' + IntToStr(PantoPodstavkaID));
-        modelAddr := Pointer(baseStructAddr + pantoPodstavkaOffset);
-        AddToLogFile(EngineLog, 'Адрес подставки: $' + IntToHex(Cardinal(modelAddr), 8) + ' (offset: $' + IntToHex(pantoPodstavkaOffset, 2) + ')');
-        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
-        begin
-          PWord(modelAddr)^ := Word(PantoPodstavkaID);
-          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
-          AddToLogFile(EngineLog, 'Подставка пантографа записана в память');
-        end
-        else
-          AddToLogFile(EngineLog, 'ОШИБКА: Не удалось записать подставку пантографа в память');
-      end
-      else
-        AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить подставку пантографа');
-    except
-      on E: Exception do
-        AddToLogFile(EngineLog, 'ИСКЛЮЧЕНИЕ при загрузке подставки пантографа: ' + E.Message);
-    end;
-  end
-  else
-  begin
-    AddToLogFile(EngineLog, 'Подставка пантографа не найдена');
-  end;
+//  if FileExists(pantoPodstavkaPath) then
+//  begin
+//    AddToLogFile(EngineLog, 'Загружаем подставку пантографа...');
+//    try
+//      PantoPodstavkaID := LoadModel(pantoPodstavkaPath, 0, False);
+//      if PantoPodstavkaID > 0 then
+//      begin
+//        AddToLogFile(EngineLog, 'Подставка пантографа загружена, ID: ' + IntToStr(PantoPodstavkaID));
+//        modelAddr := Pointer(baseStructAddr + pantoPodstavkaOffset);
+//        AddToLogFile(EngineLog, 'Адрес подставки: $' + IntToHex(Cardinal(modelAddr), 8) + ' (offset: $' + IntToHex(pantoPodstavkaOffset, 2) + ')');
+//        if VirtualProtect(modelAddr, SizeOf(Word), PAGE_EXECUTE_READWRITE, OldProtect) then
+//        begin
+//          PWord(modelAddr)^ := Word(PantoPodstavkaID);
+//          VirtualProtect(modelAddr, SizeOf(Word), OldProtect, OldProtect);
+//          AddToLogFile(EngineLog, 'Подставка пантографа записана в память');
+//        end
+//        else
+//          AddToLogFile(EngineLog, 'ОШИБКА: Не удалось записать подставку пантографа в память');
+//      end
+//      else
+//        AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить подставку пантографа');
+//    except
+//      on E: Exception do
+//        AddToLogFile(EngineLog, 'ИСКЛЮЧЕНИЕ при загрузке подставки пантографа: ' + E.Message);
+//    end;
+//  end
+//  else
+//  begin
+//    AddToLogFile(EngineLog, 'Подставка пантографа не найдена');
+//  end;
   
   if FileExists(pantoSkiPath) then
   begin
@@ -8813,7 +8811,7 @@ begin
   BeginObj3D;
     glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
 
-  Position3D(0.8958, 7.4479, 3.6386);
+  Position3D(0.896, 7.4482, 3.641);
   RotateX(-103.0);
   RotateY(34.2);
   RotateZ(-7.0); // Поворот против часовой на 15 градусов
@@ -8828,7 +8826,7 @@ begin
   // Нижняя половина - красная
   BeginObj3D;
       glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-  Position3D(0.8958, 7.4479, 3.6385);
+  Position3D(0.896, 7.4482, 3.641);
   RotateX(-103.0);
   RotateY(34.2);
   RotateZ(-7.0); // Тот же поворот для совпадения

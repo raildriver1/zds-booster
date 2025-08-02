@@ -1,11 +1,11 @@
 ﻿//----------------------------------------------------------------------------//
-//CheatMenu.pas - Простое и рабочее чит-меню (ИСПРАВЛЕНО + ЧУВСТВИТЕЛЬНОСТЬ)  //
+//CheatMenu.pas - Простое и рабочее чит-меню (ИСПРАВЛЕНО + ЧУВСТВИТЕЛЬНОСТЬ + ДОНАТЫ)  //
 //----------------------------------------------------------------------------//
 unit CheatMenu;
 
 interface
 uses 
-  Windows, SysUtils, Variables, DrawFunc2D, DrawFunc3D, EngineUtils;
+  Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils, WinInet, ShellAPI;
 
 type
   TSlider = record
@@ -28,6 +28,13 @@ type
     Title: string;
     Alpha: Single;
     TargetAlpha: Single;
+  end;
+
+  // НОВАЯ СТРУКТУРА ДЛЯ ДОНАТОВ
+  TDonation = record
+    Name: string;
+    Amount: string;
+    Message: string;
   end;
 
   TCheatSettings = record
@@ -89,8 +96,16 @@ implementation
 var
   MenuVisible: Boolean = False;
   Settings: TCheatSettings;
-  RenderWindow, WorldWindow, LocomotiveWindow: TWindow;
+  RenderWindow, WorldWindow, LocomotiveWindow, DonateWindow: TWindow;  // ДОБАВИЛИ DonateWindow
   LastFrameTime: Cardinal = 0;
+  
+  // === НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ДОНАТОВ ===
+  Donations: array[0..9] of TDonation;  // Максимум 10 донатов
+  DonationCount: Integer = 0;
+  DonationScrollOffset: Integer = 0;
+  LastDonationUpdate: Cardinal = 0;
+  DonationUpdateInterval: Cardinal = 300000; // Обновлять каждые 5 минут
+  DonationsLoaded: Boolean = False;
   
   // === ОПТИМИЗАЦИЯ: Ограничение частоты применения настроек ===
   LastApplyTime: Cardinal = 0;
@@ -188,6 +203,193 @@ const
   SLIDER_WIDTH = 190;
   BUTTON_SIZE = 20;
   CHECKBOX_SIZE = 16;
+  DONATION_ITEM_HEIGHT = 45;  // Высота элемента доната
+
+// === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
+function Min(A, B: Integer): Integer;
+begin
+  if A < B then
+    Result := A
+  else
+    Result := B;
+end;
+
+function Max(A, B: Integer): Integer;
+begin
+  if A > B then
+    Result := A
+  else
+    Result := B;
+end;
+
+// === НОВЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С ДОНАТАМИ ===
+
+function UTF8ToAnsi(const UTF8Str: string): string;
+var
+  WStr: WideString;
+  Len: Integer;
+begin
+  Result := UTF8Str; // Fallback
+  if UTF8Str = '' then Exit;
+  
+  try
+    Len := MultiByteToWideChar(CP_UTF8, 0, PAnsiChar(UTF8Str), -1, nil, 0);
+    if Len > 0 then
+    begin
+      SetLength(WStr, Len - 1);
+      MultiByteToWideChar(CP_UTF8, 0, PAnsiChar(UTF8Str), -1, PWideChar(WStr), Len);
+      Result := WStr;
+    end;
+  except
+    Result := UTF8Str; // В случае ошибки возвращаем как есть
+  end;
+end;
+
+function DownloadDonations: string;
+var
+  hSession, hConnect, hRequest: HINTERNET;
+  Buffer: array[0..1023] of AnsiChar;
+  BytesRead: DWORD;
+  RawData: AnsiString;
+  TempStr: AnsiString;
+begin
+  Result := '';
+  RawData := '';
+  
+  hSession := InternetOpen(PChar('ZDS-Booster'), INTERNET_OPEN_TYPE_PRECONFIG, nil, nil, 0);
+  if hSession = nil then Exit;
+  
+  try
+    hConnect := InternetConnect(hSession, PChar('raw.githubusercontent.com'), INTERNET_DEFAULT_HTTPS_PORT, nil, nil, INTERNET_SERVICE_HTTP, 0, 0);
+    if hConnect = nil then Exit;
+    
+    try
+      hRequest := HttpOpenRequest(hConnect, PChar('GET'), PChar('/raildriver1/zds-booster/refs/heads/main/donate.txt'), nil, nil, nil, INTERNET_FLAG_SECURE, 0);
+      if hRequest = nil then Exit;
+      
+      try
+        if HttpSendRequest(hRequest, nil, 0, nil, 0) then
+        begin
+          while InternetReadFile(hRequest, @Buffer, SizeOf(Buffer), BytesRead) and (BytesRead > 0) do
+          begin
+            SetString(TempStr, Buffer, BytesRead);
+            RawData := RawData + TempStr;
+          end;
+          // Конвертируем UTF-8 в нормальную кодировку
+          Result := UTF8ToAnsi(string(RawData));
+        end;
+      finally
+        InternetCloseHandle(hRequest);
+      end;
+    finally
+      InternetCloseHandle(hConnect);
+    end;
+  finally
+    InternetCloseHandle(hSession);
+  end;
+end;
+
+procedure ParseDonations(const Data: string);
+var
+  Lines: TStringList;
+  i, ColonCount: Integer;
+  Line, Name, Amount, Message: string;
+  ColonPos1, ColonPos2: Integer;
+begin
+  DonationCount := 0;
+  
+  if Data = '' then Exit;
+  
+  Lines := TStringList.Create;
+  try
+    Lines.Text := Data;
+    
+    for i := 0 to Lines.Count - 1 do
+    begin
+      if DonationCount >= 10 then Break; // Максимум 10 донатов
+      
+      Line := SysUtils.Trim(Lines[i]);
+      if Line = '' then Continue;
+      
+      // Подсчитываем количество двоеточий
+      ColonCount := 0;
+      ColonPos1 := 0;
+      ColonPos2 := 0;
+      
+      ColonPos1 := Pos(':', Line);
+      if ColonPos1 > 0 then
+      begin
+        Inc(ColonCount);
+        ColonPos2 := Pos(':', Copy(Line, ColonPos1 + 1, Length(Line)));
+        if ColonPos2 > 0 then
+        begin
+          Inc(ColonCount);
+          ColonPos2 := ColonPos1 + ColonPos2;
+        end;
+      end;
+      
+      // Парсим в зависимости от количества двоеточий
+      if ColonCount = 2 then
+      begin
+        // Формат: Имя:Сумма:Сообщение
+        Name := SysUtils.Trim(Copy(Line, 1, ColonPos1 - 1));
+        Amount := SysUtils.Trim(Copy(Line, ColonPos1 + 1, ColonPos2 - ColonPos1 - 1));
+        Message := SysUtils.Trim(Copy(Line, ColonPos2 + 1, Length(Line)));
+      end
+      else if ColonCount = 1 then
+      begin
+        // Формат: Имя:Сумма (без сообщения)
+        Name := SysUtils.Trim(Copy(Line, 1, ColonPos1 - 1));
+        Amount := SysUtils.Trim(Copy(Line, ColonPos1 + 1, Length(Line)));
+        Message := '';
+      end
+      else
+        Continue; // Неправильный формат
+      
+      // Добавляем донат
+      Donations[DonationCount].Name := Name;
+      Donations[DonationCount].Amount := Amount;
+      Donations[DonationCount].Message := Message;
+      Inc(DonationCount);
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
+procedure LoadDonations;
+var
+  Data: string;
+begin
+  try
+    AddToLogFile(EngineLog, 'Загружаем список донатов...');
+    Data := DownloadDonations;
+    if Data <> '' then
+    begin
+      ParseDonations(Data);
+      DonationsLoaded := True;
+      AddToLogFile(EngineLog, 'Загружено донатов: ' + IntToStr(DonationCount));
+    end
+    else
+    begin
+      AddToLogFile(EngineLog, 'Не удалось загрузить список донатов');
+    end;
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'Ошибка при загрузке донатов: ' + E.Message);
+    end;
+  end;
+end;
+
+procedure OpenDonationURL;
+begin
+  try
+    ShellExecute(0, 'open', PChar('https://pay.cloudtips.ru/p/82408b20'), nil, nil, SW_SHOWNORMAL);
+  except
+    // Игнорируем ошибки
+  end;
+end;
 
 function GetFreecamBasespeed: Single; stdcall;
 begin
@@ -550,14 +752,6 @@ begin
   WriteFloatToMemory($48A7B0, Settings.CabinContrastSlider.Value);
   WriteFloatToMemory($48DBC4, Settings.CabinContrastSlider.Value);
   
-  // Остальные настройки (закомментированы)
-  {
-  WriteFloatToMemory($48B9BC, Settings.MainLightIntensitySlider.Value);
-  WriteFloatToMemory($48DBBC, Settings.MainLightIntensitySlider.Value);
-  WriteFloatToMemory($7396D4, Settings.MainLightIntensitySlider.Value);
-  WriteFloatToMemory($7396D8, Settings.AdditionalLightIntensitySlider.Value);
-  }
-  
   WriteFloatToMemory(SunOrbitAddr, Settings.SunOrbitRadiusSlider.Value);
   WriteFloatToMemory(SunHeightAddr, Settings.SunHeightSlider.Value);
   
@@ -663,12 +857,12 @@ begin
     while not EOF(F) do
     begin
       ReadLn(F, Line);
-      Line := Trim(Line);
+      Line := SysUtils.Trim(Line);
       ColonPos := Pos(':', Line);
       if ColonPos > 0 then
       begin
-        Key := Trim(Copy(Line, 1, ColonPos - 1));
-        Value := Trim(Copy(Line, ColonPos + 1, Length(Line)));
+        Key := SysUtils.Trim(Copy(Line, 1, ColonPos - 1));
+        Value := SysUtils.Trim(Copy(Line, ColonPos + 1, Length(Line)));
         
         // Состояния модулей (0/1)
         if Key = 'freecam' then 
@@ -1086,6 +1280,13 @@ begin
   if PendingApply and ((CurrentTime - LastApplyTime) >= ApplyInterval) then
     ApplySettingsThrottled;
   
+  // === ПРОВЕРЯЕМ НУЖНО ЛИ ОБНОВИТЬ ДОНАТЫ ===
+  if (CurrentTime - LastDonationUpdate) >= DonationUpdateInterval then
+  begin
+    LoadDonations;
+    LastDonationUpdate := CurrentTime;
+  end;
+  
   // Анимация окон
   if Abs(RenderWindow.Alpha - RenderWindow.TargetAlpha) > 0.01 then
     RenderWindow.Alpha := RenderWindow.Alpha + (RenderWindow.TargetAlpha - RenderWindow.Alpha) * 5.0 * DeltaTime;
@@ -1093,6 +1294,8 @@ begin
     WorldWindow.Alpha := WorldWindow.Alpha + (WorldWindow.TargetAlpha - WorldWindow.Alpha) * 5.0 * DeltaTime;
   if Abs(LocomotiveWindow.Alpha - LocomotiveWindow.TargetAlpha) > 0.01 then
     LocomotiveWindow.Alpha := LocomotiveWindow.Alpha + (LocomotiveWindow.TargetAlpha - LocomotiveWindow.Alpha) * 5.0 * DeltaTime;
+  if Abs(DonateWindow.Alpha - DonateWindow.TargetAlpha) > 0.01 then
+    DonateWindow.Alpha := DonateWindow.Alpha + (DonateWindow.TargetAlpha - DonateWindow.Alpha) * 5.0 * DeltaTime;
   
   // Анимация секций
   with Settings do
@@ -1321,6 +1524,19 @@ begin
   LocomotiveWindow.Height := 100;
   LocomotiveWindow.Alpha := 0.0;
   LocomotiveWindow.TargetAlpha := 1.0;
+  
+  // === ИНИЦИАЛИЗАЦИЯ ОКНА ДОНАТОВ ===
+  DonateWindow.Title := 'ДОНАТЫ';
+  DonateWindow.X := 350;
+  DonateWindow.Y := 180;
+  DonateWindow.Width := 280;
+  DonateWindow.Height := 350;
+  DonateWindow.Alpha := 0.0;
+  DonateWindow.TargetAlpha := 1.0;
+  
+  // Загружаем донаты при инициализации
+  LoadDonations;
+  LastDonationUpdate := GetTickCount;
 end;
 
 procedure DrawExpandButton(X, Y: Integer; Expanded: Boolean; Alpha: Integer);
@@ -1417,6 +1633,179 @@ begin
     DrawExpandButton(ExpandButtonX, Y + 4, Expanded, Alpha);
 end;
 
+// === НОВАЯ ФУНКЦИЯ: Отрисовка кнопки ===
+procedure DrawButton(X, Y, Width, Height: Integer; Text: string; Alpha: Integer; Highlighted: Boolean = False);
+var
+  BgColor, TextColor: Integer;
+  TextWidth, TextX: Integer;
+begin
+  if Highlighted then
+  begin
+    BgColor := $0088FF;
+    TextColor := $FFFFFF;
+  end
+  else
+  begin
+    BgColor := $404040;
+    TextColor := $CCCCCC;
+  end;
+  
+  DrawRectangle2D(X, Y, Width, Height, BgColor, Alpha, True);
+  DrawRectangle2D(X, Y, Width, Height, $666666, Alpha, False);
+  
+  // Правильно центрируем текст по ширине
+  TextWidth := Length(Text) * 7; // примерно 7 пикселей на символ
+  TextX := X + (Width - TextWidth) div 2;
+  
+  DrawText(TextX - 30, Y + (Height - 20) div 2, Text, TextColor, Alpha);
+end;
+
+// === НОВАЯ ФУНКЦИЯ: Разбивка текста на строки ===
+function WrapText(const Text: string; MaxWidth: Integer): TStringList;
+var
+  CurrentLine: string;
+  i: Integer;
+  CurrentChar: Char;
+  WordBuffer: string;
+begin
+  Result := TStringList.Create;
+  CurrentLine := '';
+  WordBuffer := '';
+  
+  for i := 1 to Length(Text) do
+  begin
+    CurrentChar := Text[i];
+    
+    if CurrentChar = ' ' then
+    begin
+      // Проверяем, поместится ли слово в текущую строку
+      if Length(CurrentLine + ' ' + WordBuffer) <= MaxWidth then
+      begin
+        if CurrentLine = '' then
+          CurrentLine := WordBuffer
+        else
+          CurrentLine := CurrentLine + ' ' + WordBuffer;
+      end
+      else
+      begin
+        // Переносим на новую строку
+        if CurrentLine <> '' then
+          Result.Add(CurrentLine);
+        CurrentLine := WordBuffer;
+      end;
+      WordBuffer := '';
+    end
+    else
+    begin
+      WordBuffer := WordBuffer + CurrentChar;
+    end;
+  end;
+  
+  // Добавляем последнее слово
+  if WordBuffer <> '' then
+  begin
+    if Length(CurrentLine + ' ' + WordBuffer) <= MaxWidth then
+    begin
+      if CurrentLine = '' then
+        CurrentLine := WordBuffer
+      else
+        CurrentLine := CurrentLine + ' ' + WordBuffer;
+    end
+    else
+    begin
+      if CurrentLine <> '' then
+        Result.Add(CurrentLine);
+      CurrentLine := WordBuffer;
+    end;
+  end;
+  
+  // Добавляем последнюю строку
+  if CurrentLine <> '' then
+    Result.Add(CurrentLine);
+end;
+
+// === НОВАЯ ФУНКЦИЯ: Отрисовка элемента доната ===
+procedure DrawDonationItem(X, Y: Integer; const Donation: TDonation; Alpha: Integer);
+var
+  NameColor, AmountColor, MessageColor: Integer;
+  TextY, ItemHeight: Integer;
+  DisplayName: string;
+  MessageLines: TStringList;
+  i: Integer;
+begin
+  NameColor := $FFFFFF;
+  AmountColor := $00DD00;
+  MessageColor := $BBBBBB;
+  
+  // Вычисляем высоту элемента в зависимости от количества строк сообщения
+  ItemHeight := DONATION_ITEM_HEIGHT;
+  MessageLines := nil;
+  
+  if Donation.Message <> '' then
+  begin
+    MessageLines := WrapText(Donation.Message, 25); // ~32 символа на строку
+    // Ограничиваем максимальную высоту (не более 3 строк сообщения)
+    if MessageLines.Count > 3 then
+    begin
+      while MessageLines.Count > 3 do
+        MessageLines.Delete(MessageLines.Count - 1);
+      MessageLines[MessageLines.Count - 1] := MessageLines[MessageLines.Count - 1] + '...';
+    end;
+    ItemHeight := DONATION_ITEM_HEIGHT + (MessageLines.Count - 1) * 15; // добавляем по 15px на строку
+  end;
+  
+  // Фон элемента (динамическая высота)
+  DrawRectangle2D(X, Y, 250, ItemHeight, $252525, Alpha, True);
+  DrawRectangle2D(X, Y, 250, ItemHeight, $404040, Alpha, False);
+  
+  TextY := Y + 3;
+  
+  // Ограничиваем длину имени (максимум 18 символов)
+  DisplayName := Donation.Name;
+  if Length(DisplayName) > 18 then
+    DisplayName := Copy(DisplayName, 1, 15) + '...';
+  
+  // Имя донатера
+  DrawText(X + 8, TextY, DisplayName, NameColor, Alpha);
+  
+  // Сумма доната (справа)
+  DrawText(X + 190, TextY, Donation.Amount, AmountColor, Alpha);
+  
+  // Сообщение (если есть) - многострочное
+  if (MessageLines <> nil) and (MessageLines.Count > 0) then
+  begin
+    Inc(TextY, 18);
+    for i := 0 to MessageLines.Count - 1 do
+    begin
+      DrawText2D(0, X + 8, TextY + i * 15, MessageLines[i], MessageColor, Alpha, 0.7);
+    end;
+    MessageLines.Free;
+  end;
+end;
+
+// === НОВАЯ ФУНКЦИЯ: Отрисовка стрелок прокрутки ===
+procedure DrawScrollArrow(X, Y: Integer; IsUp: Boolean; Alpha: Integer);
+var
+  CenterX, CenterY: Integer;
+begin
+  CenterX := X + 12;
+  CenterY := Y + 10;
+  
+  DrawCircle2D_Fill(CenterX, CenterY, 10, $404040, Alpha);
+  DrawCircle2D(CenterX, CenterY, 10, $666666, Alpha);
+  
+  if IsUp then
+  begin
+    DrawLine2D(CenterX, CenterY - 4, CenterX - 4, CenterY + 2, $CCCCCC, Alpha, 2.0);
+    DrawLine2D(CenterX, CenterY - 4, CenterX + 4, CenterY + 2, $CCCCCC, Alpha, 2.0);
+  end
+  else
+  begin
+    DrawLine2D(CenterX, CenterY + 4, CenterX - 4, CenterY - 2, $CCCCCC, Alpha, 2.0);
+    DrawLine2D(CenterX, CenterY + 4, CenterX + 4, CenterY - 2, $CCCCCC, Alpha, 2.0);
+  end;
+end;
+
 procedure DrawWindow(var Win: TWindow; WindowType: Integer);
 var
   Alpha: Integer;
@@ -1424,6 +1813,7 @@ var
   SectionHeight: Integer;
   ExpandButtonX: Integer;
   TotalHeight: Integer;
+  i, VisibleCount, StartIndex: Integer;
 begin
   Alpha := Round(Win.Alpha * 255);
   if Alpha <= 0 then Exit;
@@ -1459,6 +1849,11 @@ begin
     2: // LOCOMOTIVE окно
     begin
       TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN; // Прямо "Исправления КЛУБ"
+    end;
+    
+    3: // DONATE окно
+    begin
+      TotalHeight := 350; // Фиксированная высота для окна донатов
     end;
   end;
   
@@ -1607,6 +2002,74 @@ begin
       // ПРЯМО "Исправления КЛУБ" без секции
       DrawToggle(Win.X + MARGIN, ContentY, 'Исправления БИЛ-В', Settings.NewClubPositions, Alpha);
     end;
+    
+    3: // DONATE окно
+    begin
+      // Статус загрузки
+      if not DonationsLoaded then
+      begin
+        DrawText(Win.X + MARGIN + 20, ContentY + 10, 'Загрузка донатов...', $FFFF00, Alpha);
+      end
+      else if DonationCount = 0 then
+      begin
+        DrawText(Win.X + MARGIN + 20, ContentY + 10, 'Список донатов пуст', $FF6666, Alpha);
+      end
+      else
+      begin
+        // Вычисляем количество видимых донатов (максимум 4 из-за переменной высоты)
+        VisibleCount := 4;
+        if DonationCount < VisibleCount then
+          VisibleCount := DonationCount;
+        
+        // Ограничиваем скролл
+        if DonationScrollOffset > DonationCount - VisibleCount then
+          DonationScrollOffset := DonationCount - VisibleCount;
+        if DonationScrollOffset < 0 then
+          DonationScrollOffset := 0;
+        
+        // Кнопки прокрутки (только если донатов больше 4)
+        if DonationCount > 4 then
+        begin
+          // Стрелка вверх
+          if DonationScrollOffset > 0 then
+            DrawScrollArrow(Win.X + Win.Width - 35, ContentY + 5, True, Alpha)
+          else
+            DrawScrollArrow(Win.X + Win.Width - 35, ContentY + 5, True, Alpha div 3);
+          
+          // Стрелка вниз  
+          if DonationScrollOffset < DonationCount - 4 then
+            DrawScrollArrow(Win.X + Win.Width - 35, ContentY + 200, False, Alpha)
+          else
+            DrawScrollArrow(Win.X + Win.Width - 35, ContentY + 200, False, Alpha div 3);
+        end;
+        
+        // Отображаем донаты с переменным интервалом
+        StartIndex := DonationScrollOffset;
+        ContentY := ContentY + 5; // Небольшой отступ сверху
+        for i := 0 to VisibleCount - 1 do
+        begin
+          if StartIndex + i < DonationCount then
+          begin
+            DrawDonationItem(Win.X + MARGIN, ContentY, Donations[StartIndex + i], Alpha);
+            
+            // Вычисляем высоту текущего элемента для следующей позиции
+            if Donations[StartIndex + i].Message <> '' then
+            begin
+              // Примерно считаем количество строк в сообщении (макс 3 строки)
+              ContentY := ContentY + DONATION_ITEM_HEIGHT + (Min(3, (Length(Donations[StartIndex + i].Message) div 32) + 1) - 1) * 15 + 8;
+            end
+            else
+            begin
+              ContentY := ContentY + DONATION_ITEM_HEIGHT + 8;
+            end;
+          end;
+        end;
+      end;
+      
+      // Кнопка "Поддержать проект" внизу окна
+      DrawButton(Win.X + MARGIN, Win.Y + Win.Height - 45, Win.Width - MARGIN * 2, 35, 
+                'Поддержать проект', Alpha);
+    end;
   end;
 end;
 
@@ -1632,7 +2095,7 @@ begin
   DrawRectangle2D(BarX, BarY, BarWidth, BarHeight, $6060A0, Alpha, False);
   
   // Текст чуть повыше
-  DrawText(BarX + 8, BarY + 6, InfoText, $FFFFFF, Alpha);
+  DrawText(BarX + 8, BarY + 3, InfoText, $FFFFFF, Alpha);
 end;
 
 procedure DrawCheatMenu; stdcall;
@@ -1658,6 +2121,7 @@ begin
     DrawWindow(RenderWindow, 0);      // RENDER окно
     DrawWindow(WorldWindow, 1);       // WORLD окно  
     DrawWindow(LocomotiveWindow, 2);  // LOCOMOTIVE окно
+    DrawWindow(DonateWindow, 3);      // DONATE окно
     DrawInfoBar;
   finally
     End2D;
@@ -1740,6 +2204,12 @@ begin
     LocomotiveWindow.Y := Y - LocomotiveWindow.DragOffsetY;
   end;
   
+  if DonateWindow.IsDragging then
+  begin
+    DonateWindow.X := X - DonateWindow.DragOffsetX;
+    DonateWindow.Y := Y - DonateWindow.DragOffsetY;
+  end;
+  
   // Обработка драггинга слайдеров
   if Settings.BrightnessSlider.IsDragging then // Слайдер яркости меню (теперь в секции освещения)
     HandleSliderDrag(X, Settings.BrightnessSlider, RenderWindow.X + MARGIN + 20);
@@ -1779,7 +2249,50 @@ var
 begin
   if not MenuVisible then Exit;
   
-  if (RenderWindow.Alpha < 0.1) and (WorldWindow.Alpha < 0.1) and (LocomotiveWindow.Alpha < 0.1) then Exit;
+  if (RenderWindow.Alpha < 0.1) and (WorldWindow.Alpha < 0.1) and (LocomotiveWindow.Alpha < 0.1) and (DonateWindow.Alpha < 0.1) then Exit;
+  
+  // DONATE WINDOW
+  if DonateWindow.Alpha > 0.1 then
+  begin
+    ContentY := DonateWindow.Y + HEADER_HEIGHT + MARGIN;
+    
+    // Заголовок для драггинга
+    if InRect(X, Y, DonateWindow.X, DonateWindow.Y, DonateWindow.Width, HEADER_HEIGHT) then
+    begin
+      DonateWindow.IsDragging := True;
+      DonateWindow.DragOffsetX := X - DonateWindow.X;
+      DonateWindow.DragOffsetY := Y - DonateWindow.Y;
+      Exit;
+    end;
+    
+    // Кнопка "Поддержать проект"
+    if InRect(X, Y, DonateWindow.X + MARGIN, DonateWindow.Y + DonateWindow.Height - 45, 
+              DonateWindow.Width - MARGIN * 2, 35) then
+    begin
+      OpenDonationURL;
+      Exit;
+    end;
+    
+    // Стрелки прокрутки (только если донатов больше 4)
+    if DonationCount > 4 then
+    begin
+      // Стрелка вверх
+      if InRect(X, Y, DonateWindow.X + DonateWindow.Width - 35, ContentY + 5, 25, 20) then
+      begin
+        if DonationScrollOffset > 0 then
+          Dec(DonationScrollOffset);
+        Exit;
+      end;
+      
+      // Стрелка вниз
+      if InRect(X, Y, DonateWindow.X + DonateWindow.Width - 35, ContentY + 200, 25, 20) then
+      begin
+        if DonationScrollOffset < DonationCount - 4 then
+          Inc(DonationScrollOffset);
+        Exit;
+      end;
+    end;
+  end;
   
   // RENDER WINDOW
   if RenderWindow.Alpha > 0.1 then
@@ -2150,6 +2663,7 @@ begin
   RenderWindow.IsDragging := False;
   WorldWindow.IsDragging := False;
   LocomotiveWindow.IsDragging := False;
+  DonateWindow.IsDragging := False;
   
   Settings.BrightnessSlider.IsDragging := False;
   Settings.BasespeedSlider.IsDragging := False;
@@ -2194,6 +2708,8 @@ begin
     WorldWindow.TargetAlpha := 1.0;
     LocomotiveWindow.Alpha := 0.0;
     LocomotiveWindow.TargetAlpha := 1.0;
+    DonateWindow.Alpha := 0.0;
+    DonateWindow.TargetAlpha := 1.0;
     
     // Патчим вызов при открытии меню
     ApplyMenuPatch;
@@ -2204,6 +2720,7 @@ begin
     RenderWindow.TargetAlpha := 0.0;
     WorldWindow.TargetAlpha := 0.0;
     LocomotiveWindow.TargetAlpha := 0.0;
+    DonateWindow.TargetAlpha := 0.0;
     
     // Восстанавливаем вызов при закрытии меню
     RemoveMenuPatch;
