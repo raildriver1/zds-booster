@@ -1,5 +1,7 @@
 # ZDS-Booster
 
+![nslF7moNeUQeEz9qRz0OMe3sGbrpGGdB7kCRRgbIbxyjKgsO2qVDYO3sPJ9uTugC3CQ5a8bptXXbgTXRYy5xeRLB (1)](https://github.com/user-attachments/assets/b6100d33-35af-4a7b-b786-6d65d76c9da1)
+
 Модифицированный движок для ZDSimulator с расширенными возможностями отображения информации, управления камерой и настройки визуальных эффектов.
 
 ## 🚀 Возможности
