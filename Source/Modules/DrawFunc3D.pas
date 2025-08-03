@@ -3609,125 +3609,125 @@ begin
       end;
     end;
     
-    if IsTimeoutExceeded then Exit;
-    
-    // Остальные патчи применяем как раньше
-    try
-      // Скорость X
-      if not IsTimeoutExceeded and SafeVirtualProtect(Pointer(SpeedXAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-      begin
-        try
-          for i := 0 to 3 do
-            PByte(SpeedXAddr + i)^ := NewSpeedXValue[i];
-          SafeVirtualProtect(Pointer(SpeedXAddr), 4, OldProtect, OldProtect);
-        except
-          // Игнорируем ошибки
-        end;
-      end;
-      
-      // Допустимая скорость
-      if not IsTimeoutExceeded and SafeVirtualProtect(Pointer(AllowedSpeedAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-      begin
-        try
-          for i := 0 to 3 do
-            PByte(AllowedSpeedAddr + i)^ := NewAllowedSpeedValue[i];
-          SafeVirtualProtect(Pointer(AllowedSpeedAddr), 4, OldProtect, OldProtect);
-        except
-          // Игнорируем ошибки
-        end;
-      end;
-      
-      // Остальные патчи применяем аналогично
-      if not IsTimeoutExceeded then
-      begin
-        // Маневровый режим
-        if SafeVirtualProtect(Pointer(ShuntingSpeedAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-        begin
-          try
-            for i := 0 to 3 do
-              PByte(ShuntingSpeedAddr + i)^ := NewShuntingSpeedValue[i];
-            SafeVirtualProtect(Pointer(ShuntingSpeedAddr), 4, OldProtect, OldProtect);
-          except
-            // Игнорируем ошибки
-          end;
-        end;
-        
-        // Поездной режим
-        if SafeVirtualProtect(Pointer(TrainSpeedAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-        begin
-          try
-            for i := 0 to 3 do
-              PByte(TrainSpeedAddr + i)^ := NewTrainSpeedValue[i];
-            SafeVirtualProtect(Pointer(TrainSpeedAddr), 4, OldProtect, OldProtect);
-          except
-            // Игнорируем ошибки
-          end;
-        end;
-        
-        // Время
-        if SafeVirtualProtect(Pointer(TimeAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-        begin
-          try
-            for i := 0 to 3 do
-              PByte(TimeAddr + i)^ := NewTimeValue[i];
-            SafeVirtualProtect(Pointer(TimeAddr), 4, OldProtect, OldProtect);
-          except
-            // Игнорируем ошибки
-          end;
-        end;
-        
-        // Номер и ускорение
-        if SafeVirtualProtect(Pointer(NumberAccelAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-        begin
-          try
-            for i := 0 to 3 do
-              PByte(NumberAccelAddr + i)^ := NewNumberAccelValue[i];
-            SafeVirtualProtect(Pointer(NumberAccelAddr), 4, OldProtect, OldProtect);
-          except
-            // Игнорируем ошибки
-          end;
-        end;
-        
-        // Реверс
-        if SafeVirtualProtect(Pointer(ReverseAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-        begin
-          try
-            for i := 0 to 3 do
-              PByte(ReverseAddr + i)^ := NewReverseValue[i];
-            SafeVirtualProtect(Pointer(ReverseAddr), 4, OldProtect, OldProtect);
-          except
-            // Игнорируем ошибки
-          end;
-        end;
-        
-        // Дополнительный параметр
-        if SafeVirtualProtect(Pointer(AdditionalAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-        begin
-          try
-            for i := 0 to 3 do
-              PByte(AdditionalAddr + i)^ := NewAdditionalValue[i];
-            SafeVirtualProtect(Pointer(AdditionalAddr), 4, OldProtect, OldProtect);
-          except
-            // Игнорируем ошибки
-          end;
-        end;
-        
-        // Обнуляем массив радиуса
-        if SafeVirtualProtect(Pointer(RadiusAddr), 10, PAGE_EXECUTE_READWRITE, OldProtect) then
-        begin
-          try
-            for i := 0 to 9 do
-              PByte(RadiusAddr + i)^ := $00;
-            SafeVirtualProtect(Pointer(RadiusAddr), 10, OldProtect, OldProtect);
-          except
-            // Игнорируем ошибки
-          end;
-        end;
-      end;
-      
-    except
-      // Игнорируем любые ошибки в патчинге
-    end;
+    //if IsTimeoutExceeded then Exit;
+//
+//    // Остальные патчи применяем как раньше
+//    try
+//      // Скорость X
+//      if not IsTimeoutExceeded and SafeVirtualProtect(Pointer(SpeedXAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+//      begin
+//        try
+//          for i := 0 to 3 do
+//            PByte(SpeedXAddr + i)^ := NewSpeedXValue[i];
+//          SafeVirtualProtect(Pointer(SpeedXAddr), 4, OldProtect, OldProtect);
+//        except
+//          // Игнорируем ошибки
+//        end;
+//      end;
+//      
+//      // Допустимая скорость
+//      if not IsTimeoutExceeded and SafeVirtualProtect(Pointer(AllowedSpeedAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+//      begin
+//        try
+//          for i := 0 to 3 do
+//            PByte(AllowedSpeedAddr + i)^ := NewAllowedSpeedValue[i];
+//          SafeVirtualProtect(Pointer(AllowedSpeedAddr), 4, OldProtect, OldProtect);
+//        except
+//          // Игнорируем ошибки
+//        end;
+//      end;
+//      
+//      // Остальные патчи применяем аналогично
+//      if not IsTimeoutExceeded then
+//      begin
+//        // Маневровый режим
+//        if SafeVirtualProtect(Pointer(ShuntingSpeedAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+//        begin
+//          try
+//            for i := 0 to 3 do
+//              PByte(ShuntingSpeedAddr + i)^ := NewShuntingSpeedValue[i];
+//            SafeVirtualProtect(Pointer(ShuntingSpeedAddr), 4, OldProtect, OldProtect);
+//          except
+//            // Игнорируем ошибки
+//          end;
+//        end;
+//        
+//        // Поездной режим
+//        if SafeVirtualProtect(Pointer(TrainSpeedAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+//        begin
+//          try
+//            for i := 0 to 3 do
+//              PByte(TrainSpeedAddr + i)^ := NewTrainSpeedValue[i];
+//            SafeVirtualProtect(Pointer(TrainSpeedAddr), 4, OldProtect, OldProtect);
+//          except
+//            // Игнорируем ошибки
+//          end;
+//        end;
+//        
+//        // Время
+//        if SafeVirtualProtect(Pointer(TimeAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+//        begin
+//          try
+//            for i := 0 to 3 do
+//              PByte(TimeAddr + i)^ := NewTimeValue[i];
+//            SafeVirtualProtect(Pointer(TimeAddr), 4, OldProtect, OldProtect);
+//          except
+//            // Игнорируем ошибки
+//          end;
+//        end;
+//        
+//        // Номер и ускорение
+//        if SafeVirtualProtect(Pointer(NumberAccelAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+//        begin
+//          try
+//            for i := 0 to 3 do
+//              PByte(NumberAccelAddr + i)^ := NewNumberAccelValue[i];
+//            SafeVirtualProtect(Pointer(NumberAccelAddr), 4, OldProtect, OldProtect);
+//          except
+//            // Игнорируем ошибки
+//          end;
+//        end;
+//        
+//        // Реверс
+//        if SafeVirtualProtect(Pointer(ReverseAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+//        begin
+//          try
+//            for i := 0 to 3 do
+//              PByte(ReverseAddr + i)^ := NewReverseValue[i];
+//            SafeVirtualProtect(Pointer(ReverseAddr), 4, OldProtect, OldProtect);
+//          except
+//            // Игнорируем ошибки
+//          end;
+//        end;
+//        
+//        // Дополнительный параметр
+//        if SafeVirtualProtect(Pointer(AdditionalAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+//        begin
+//          try
+//            for i := 0 to 3 do
+//              PByte(AdditionalAddr + i)^ := NewAdditionalValue[i];
+//            SafeVirtualProtect(Pointer(AdditionalAddr), 4, OldProtect, OldProtect);
+//          except
+//            // Игнорируем ошибки
+//          end;
+//        end;
+//        
+//        // Обнуляем массив радиуса
+//        if SafeVirtualProtect(Pointer(RadiusAddr), 10, PAGE_EXECUTE_READWRITE, OldProtect) then
+//        begin
+//          try
+//            for i := 0 to 9 do
+//              PByte(RadiusAddr + i)^ := $00;
+//            SafeVirtualProtect(Pointer(RadiusAddr), 10, OldProtect, OldProtect);
+//          except
+//            // Игнорируем ошибки
+//          end;
+//        end;
+//      end;
+//      
+//    except
+//      // Игнорируем любые ошибки в патчинге
+//    end;
     
   except
     on E: Exception do
@@ -8470,8 +8470,8 @@ end;
   begin
     MyModelID := LoadModel('data\loc\klub_bil_v.dmd', 0, False);
     MyTextureID := LoadTextureFromFile('data\loc\klub_bil.bmp', 0, -1);
-    strelka := LoadModel('data\2te10u\0071\strelka_temp.dmd', 0, False);
-  end;   
+    strelka := LoadModel('data\' + GetLocomotiveFolder(GetLocomotiveTypeFromMemory) + '\' + LocNum + '\strelka-m.dmd', 0, False);
+  end;
 
   // Получаем текущую скорость
   try
