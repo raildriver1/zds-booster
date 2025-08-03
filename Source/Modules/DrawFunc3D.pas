@@ -2177,23 +2177,13 @@ strelkaSkorTimeOffset := 8; // ← Десятичное 12
   
   // ===== ЗАГРУЖАЕМ КОЛПАРА =====
   AddToLogFile(EngineLog, '=== ЗАГРУЖАЕМ КОЛПАРА ===');
-  kolparaModelPath := directoryPath + 'loc\kolpara_el.dmd';
-  kolparaTexturePath := directoryPath + 'loc\kolpara_el.bmp';
+  kolparaModelPath := directoryPath + 'loc\kolpara.dmd';
+  kolparaTexturePath := directoryPath + 'loc\kolpara.bmp';
   
   AddToLogFile(EngineLog, 'Проверяем электрический колпара...');
   AddToLogFile(EngineLog, 'Model: ' + kolparaModelPath);
   AddToLogFile(EngineLog, 'Texture: ' + kolparaTexturePath);
 
-
-  if not (FileExists(kolparaModelPath) and FileExists(kolparaTexturePath)) then
-  begin
-    AddToLogFile(EngineLog, 'Электрический колпара не найден, переключаемся на тепловозный');
-    kolparaModelPath := directoryPath + 'loc\kolpara_tepl.dmd';
-    kolparaTexturePath := directoryPath + 'loc\kolpara_tepl.bmp';
-    AddToLogFile(EngineLog, 'Model: ' + kolparaModelPath);
-    AddToLogFile(EngineLog, 'Texture: ' + kolparaTexturePath);
-  end;
-  
   if FileExists(kolparaModelPath) and FileExists(kolparaTexturePath) then
   begin
     AddToLogFile(EngineLog, 'Найдены файлы колпара, загружаем...');

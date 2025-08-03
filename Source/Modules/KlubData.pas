@@ -231,25 +231,7 @@ var
   addr: Cardinal;
   OldDecimalSeparator: Char;
 begin
-  try
-    OldDecimalSeparator := DecimalSeparator;
-    DecimalSeparator := '.';
-    try
-      // Базовый адрес для большинства локомотивов
-      addr := PCardinal(BaseAddress + $8D10D78)^;
-      if addr <> 0 then
-      begin
-        val := PSingle(addr + $68)^;  // ← ВОТ ЭТА СТРОКА
-        Result := FormatFloat('0.00', val);
-      end
-      else
-        Result := '0.00';
-    finally
-      DecimalSeparator := OldDecimalSeparator;
-    end;
-  except
-    Result := 'Err';
-  end;
+  Result := '0.00';
 end;
 
 function GetTrackNumber: string;
