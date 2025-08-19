@@ -1939,6 +1939,10 @@ begin
             WriteHookAddress;
             AddToLogFile(EngineLog, 'Hook activated for locomotive type 822 (CS7)');
           end;
+          812: begin
+            WriteHookAddressCHS8;
+            AddToLogFile(EngineLog, 'Hook activated for locomotive type 812 (CS8)');
+          end;
           885: begin
             AddToLogFile(EngineLog, 'VL85 detected, applying ZDSim patches immediately...');
             ApplyZDSimPatches;  // Вызываем сразу при обнаружении

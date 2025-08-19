@@ -133,6 +133,7 @@ procedure SceneSetObj( SceneIdent, ObjIdent : cardinal; SceneMesh : TSceneMesh )
 function  SceneGetObj( SceneIdent, ObjIdent : cardinal ) : TSceneMesh; stdcall;
 
 procedure WriteHookAddress; stdcall;
+procedure WriteHookAddressCHS8; stdcall;
 function GetCurrentHour: Integer; stdcall;  // если еще нет
 procedure ProcessFreecam; stdcall;
 procedure LoadSettingsAndCustomModels; stdcall;
@@ -3615,130 +3616,69 @@ begin
       end;
     end;
     
-    //if IsTimeoutExceeded then Exit;
-//
-//    // Остальные патчи применяем как раньше
-//    try
-//      // Скорость X
-//      if not IsTimeoutExceeded and SafeVirtualProtect(Pointer(SpeedXAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-//      begin
-//        try
-//          for i := 0 to 3 do
-//            PByte(SpeedXAddr + i)^ := NewSpeedXValue[i];
-//          SafeVirtualProtect(Pointer(SpeedXAddr), 4, OldProtect, OldProtect);
-//        except
-//          // Игнорируем ошибки
-//        end;
-//      end;
-//      
-//      // Допустимая скорость
-//      if not IsTimeoutExceeded and SafeVirtualProtect(Pointer(AllowedSpeedAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-//      begin
-//        try
-//          for i := 0 to 3 do
-//            PByte(AllowedSpeedAddr + i)^ := NewAllowedSpeedValue[i];
-//          SafeVirtualProtect(Pointer(AllowedSpeedAddr), 4, OldProtect, OldProtect);
-//        except
-//          // Игнорируем ошибки
-//        end;
-//      end;
-//      
-//      // Остальные патчи применяем аналогично
-//      if not IsTimeoutExceeded then
-//      begin
-//        // Маневровый режим
-//        if SafeVirtualProtect(Pointer(ShuntingSpeedAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-//        begin
-//          try
-//            for i := 0 to 3 do
-//              PByte(ShuntingSpeedAddr + i)^ := NewShuntingSpeedValue[i];
-//            SafeVirtualProtect(Pointer(ShuntingSpeedAddr), 4, OldProtect, OldProtect);
-//          except
-//            // Игнорируем ошибки
-//          end;
-//        end;
-//        
-//        // Поездной режим
-//        if SafeVirtualProtect(Pointer(TrainSpeedAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-//        begin
-//          try
-//            for i := 0 to 3 do
-//              PByte(TrainSpeedAddr + i)^ := NewTrainSpeedValue[i];
-//            SafeVirtualProtect(Pointer(TrainSpeedAddr), 4, OldProtect, OldProtect);
-//          except
-//            // Игнорируем ошибки
-//          end;
-//        end;
-//        
-//        // Время
-//        if SafeVirtualProtect(Pointer(TimeAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-//        begin
-//          try
-//            for i := 0 to 3 do
-//              PByte(TimeAddr + i)^ := NewTimeValue[i];
-//            SafeVirtualProtect(Pointer(TimeAddr), 4, OldProtect, OldProtect);
-//          except
-//            // Игнорируем ошибки
-//          end;
-//        end;
-//        
-//        // Номер и ускорение
-//        if SafeVirtualProtect(Pointer(NumberAccelAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-//        begin
-//          try
-//            for i := 0 to 3 do
-//              PByte(NumberAccelAddr + i)^ := NewNumberAccelValue[i];
-//            SafeVirtualProtect(Pointer(NumberAccelAddr), 4, OldProtect, OldProtect);
-//          except
-//            // Игнорируем ошибки
-//          end;
-//        end;
-//        
-//        // Реверс
-//        if SafeVirtualProtect(Pointer(ReverseAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-//        begin
-//          try
-//            for i := 0 to 3 do
-//              PByte(ReverseAddr + i)^ := NewReverseValue[i];
-//            SafeVirtualProtect(Pointer(ReverseAddr), 4, OldProtect, OldProtect);
-//          except
-//            // Игнорируем ошибки
-//          end;
-//        end;
-//        
-//        // Дополнительный параметр
-//        if SafeVirtualProtect(Pointer(AdditionalAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-//        begin
-//          try
-//            for i := 0 to 3 do
-//              PByte(AdditionalAddr + i)^ := NewAdditionalValue[i];
-//            SafeVirtualProtect(Pointer(AdditionalAddr), 4, OldProtect, OldProtect);
-//          except
-//            // Игнорируем ошибки
-//          end;
-//        end;
-//        
-//        // Обнуляем массив радиуса
-//        if SafeVirtualProtect(Pointer(RadiusAddr), 10, PAGE_EXECUTE_READWRITE, OldProtect) then
-//        begin
-//          try
-//            for i := 0 to 9 do
-//              PByte(RadiusAddr + i)^ := $00;
-//            SafeVirtualProtect(Pointer(RadiusAddr), 10, OldProtect, OldProtect);
-//          except
-//            // Игнорируем ошибки
-//          end;
-//        end;
-//      end;
-//      
-//    except
-//      // Игнорируем любые ошибки в патчинге
-//    end;
-    
   except
     on E: Exception do
     begin
       // Игнорируем ошибки
+    end;
+  end;
+end;
+
+procedure WriteHookAddressCHS8; stdcall;
+var
+  HookAddr: Cardinal;
+  CallAddress: Cardinal;
+  NewOffset: Integer;
+  OldProtect: DWORD;
+
+  function SafeVirtualProtect(Address: Pointer; Size: Cardinal; NewProtect: DWORD; var OldProtect: DWORD): Boolean;
+  var
+    Attempts: Integer;
+  begin
+    Result := False;
+    Attempts := 0;
+    
+    repeat
+      try
+        Result := VirtualProtect(Address, Size, NewProtect, OldProtect);
+        if Result then Break;
+        
+        Inc(Attempts);
+        if Attempts > 10 then Break;
+          
+      except
+        Inc(Attempts);
+        if Attempts > 5 then Break;
+      end;
+    until False;
+  end;
+
+begin
+  try
+    // Патчим HookKLUB для ЧС8
+    try
+      HookAddr := Cardinal(@HookKLUB);
+      CallAddress := $00400000 + $D5A63; // ← АДРЕС ДЛЯ ЧС8
+      NewOffset := Integer(HookAddr) - Integer(CallAddress + 5);
+      
+      if SafeVirtualProtect(Pointer(CallAddress + 1), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+      begin
+        try
+          PInteger(CallAddress + 1)^ := NewOffset;
+          SafeVirtualProtect(Pointer(CallAddress + 1), 4, OldProtect, OldProtect);
+          AddToLogFile(EngineLog, 'ЧС8: HookKLUB патч применен по адресу $' + IntToHex(CallAddress, 8));
+        except
+          // Игнорируем ошибки записи
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+    
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'Ошибка в WriteHookAddressCHS8: ' + E.Message);
     end;
   end;
 end;
@@ -7526,20 +7466,12 @@ begin
   with StaticData[22] do begin X:=0.874; Y:=7.4638; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$FF0000; FuncType:=28; end;
   with StaticData[23] do begin X:=0.885; Y:=7.4602; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$FF0000; FuncType:=29; end;
 
-  // Элементы 24-27 - Светофорная система АЛС
-  with StaticData[24] do begin X:=1.111; Y:=7.239; Z:=3.729; RotX:=-90; RotY:=40; RotZ:=-90; Scale:=0.015; Text:='|'; Color:=$00FF00; FuncType:=30; end;
-  with StaticData[25] do begin X:=1.113; Y:=7.237; Z:=3.733; RotX:=-90; RotY:=40; RotZ:=-90; Scale:=0.015; Text:='l'; Color:=$00FF00; FuncType:=31; end;
-  with StaticData[26] do begin X:=1.107; Y:=7.243; Z:=3.7283; RotX:=-90; RotY:=30; RotZ:=-55; Scale:=0.009; Text:='l'; Color:=$00FF00; FuncType:=32; end;
-  with StaticData[27] do begin X:=1.108; Y:=7.241; Z:=3.732; RotX:=-90; RotY:=30; RotZ:=-55; Scale:=0.009; Text:='l'; Color:=$00FF00; FuncType:=33; end;
 
-  // Элементы 28-34 - Табло или метки
-  with StaticData[28] do begin X:=0.982; Y:=7.351; Z:=3.558; RotX:=0; RotY:=0; RotZ:=0; Scale:=0.009; Text:='1'; Color:=$FFFFFF; FuncType:=34; end;
-  with StaticData[29] do begin X:=0.985; Y:=7.349; Z:=3.560; RotX:=0; RotY:=0; RotZ:=0; Scale:=0.009; Text:='2'; Color:=$FFFFFF; FuncType:=35; end;
-  with StaticData[30] do begin X:=0.988; Y:=7.347; Z:=3.562; RotX:=0; RotY:=0; RotZ:=0; Scale:=0.009; Text:='3'; Color:=$FFFFFF; FuncType:=36; end;
-  with StaticData[31] do begin X:=0.991; Y:=7.345; Z:=3.564; RotX:=0; RotY:=0; RotZ:=0; Scale:=0.009; Text:='4'; Color:=$FFFFFF; FuncType:=37; end;
-  with StaticData[32] do begin X:=0.995; Y:=7.343; Z:=3.566; RotX:=0; RotY:=0; RotZ:=0; Scale:=0.009; Text:='5'; Color:=$FFFFFF; FuncType:=38; end;
-  with StaticData[33] do begin X:=0.97; Y:=7.311; Z:=3.5585; RotX:=0; RotY:=0; RotZ:=-9; Scale:=0.009; Text:='1111'; Color:=$FFFFFF; FuncType:=39; end;
-  with StaticData[34] do begin X:=0.973; Y:=7.3095; Z:=3.5585; RotX:=0; RotY:=0; RotZ:=-9; Scale:=0.009; Text:='2222'; Color:=$FFFFFF; FuncType:=40; end;
+  // Элементы 30-33 - Задание и расписание
+  with StaticData[30] do begin X:=0.865; Y:=7.3877; Z:=3.547; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.0065; Text:=''; Color:=$FFFFFF; FuncType:=12; end; // Задание
+  with StaticData[31] do begin X:=0.866; Y:=7.3889; Z:=3.538; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.0065; Text:='РАСПИСАНИЕ'; Color:=$FFFFFF; FuncType:=13; end;
+  with StaticData[32] do begin X:=0.87; Y:=7.3883; Z:=3.528; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.0065; Text:=''; Color:=$FFFFFF; FuncType:=14; end; // Текущая станция
+  with StaticData[33] do begin X:=0.871; Y:=7.3896; Z:=3.519; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.0065; Text:=''; Color:=$FFFFFF; FuncType:=15; end; // Следующая станция
 
   initialized := true;
 end;
