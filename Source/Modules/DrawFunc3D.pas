@@ -421,7 +421,7 @@ var
   KlubBilIndBModelID: Integer = 0;  // для klub-bil-ind_b.dmd (|, l, -)
   MyTextureID: cardinal = 0;
   strelka: integer = 0;
-  ImpactFont: Integer = 0;
+  SevenSegmentFont: Integer = 0;
   KLUBUFont: Integer = 0;        // ← ДОБАВИТЬ ЭТУ ПЕРЕМЕННУЮ
 
   LastKeyboardCheck: Cardinal = 0;
@@ -7256,9 +7256,9 @@ begin
     call eax
   end;
   
-  if ImpactFont = 0 then
+  if SevenSegmentFont = 0 then
   begin
-    ImpactFont := CreateFont3D('7-Segment');
+    SevenSegmentFont := CreateFont3D('7-Segment');
   end;
 
   if PSingle(Pointer(FloatValueAddr))^ > 9 then
@@ -7273,7 +7273,7 @@ begin
     Scale3D(0.018);
     SetTexture(0);
     Color3D($0000FF, 255, False, 0);
-    DrawText3D(ImpactFont, GetFloatDigit(1));
+    DrawText3D(SevenSegmentFont, GetFloatDigit(1));
     glEnable(GL_LIGHTING);
     EndObj3D;
   end;
@@ -7289,7 +7289,7 @@ begin
   Scale3D(0.018);
   SetTexture(0);
   Color3D($0000FF, 255, False, 0);
-  DrawText3D(ImpactFont, GetFloatDigit(2));
+  DrawText3D(SevenSegmentFont, GetFloatDigit(2));
   glEnable(GL_LIGHTING);
   EndObj3D;
 end;
@@ -7936,7 +7936,7 @@ begin
   // Выбор шрифта
   if ((ElementIndex >= 14) and (ElementIndex <= 23)) or  // цифры скорости и лимитов
      ((ElementIndex >= 34) and (ElementIndex <= 35)) then // float цифры
-    fontToUse := ImpactFont  // 7-Segment для всех цифр
+    fontToUse := SevenSegmentFont  // 7-Segment для всех цифр
   else
     fontToUse := KLUBUFont;  // KLUBU для остальных
     
@@ -8252,21 +8252,6 @@ end;
 
 begin
 
-//    ProcessFreecam;
-
-//if not HookAddressWritten then
-//begin
-//  WriteHookAddress;  // ← ВОТ ЗДЕСЬ ВЫЗЫВАЕТСЯ
-//  HookAddressWritten := True;
-//end;
-
-//SetLight(5, cos((90.0 - 54254 * 15.0 / 3600.0) * 3.141592653589793238 / 180.0) * 700.0,
- //sin((90.0 - 54254 * 15.0 / 3600.0) * 3.141592653589793238 / 180.0) * 700.0, 200.0, $FFFFFF,
-  //9000.0, False, 10.0);
-
-
-
-
   // ===== ИНИЦИАЛИЗАЦИЯ СВЕТОФОРНОЙ СИСТЕМЫ =====
 if not SystemInitialized then
   begin
@@ -8320,8 +8305,6 @@ end;
     statek137 := True;
     SavedCommand := LastCommand;
     CommandCompleted := False;
-    
-    //AddToLogFile(EngineLog, 'Активируем команду "137"');
 
     if WriteAndVerify($00400000 + $34988C, 52) then
     begin
@@ -8357,8 +8340,7 @@ end;
   // Завершаем команду 137 при повторном нажатии ENTER
   if statek137 and not CommandCompleted and EnterPressed then
   begin
-    //AddToLogFile(EngineLog, 'Завершаем команду "137"');
-    
+
     if WriteAndVerify($00400000 + $34988C, 30) then
     begin
       // ПРОВЕРЯЕМ И СОХРАНЯЕМ ВВЕДЕННОЕ ЧИСЛО В en_chastota
@@ -8383,17 +8365,8 @@ end;
       CommandCompleted := True;
       statek137 := False;
       CommandBuffer := '';
-      
-      ///AddToLogFile(EngineLog, 'ТАБЛИЦА АЛС-ЕН: ' + SavedCommand);
-      //AddToLogFile(EngineLog, 'Сохранено значение частоты: ' + en_chastota);
-      
-  //    AddToLogFile(EngineLog, 'Команда "137" успешно завершена');
       SavedCommand := '';
     end
-    else
-    begin
-      //AddToLogFile(EngineLog, 'ОШИБКА завершения команды "137"');
-    end;
   end;
 
  // ===== ОБРАБОТКА КОМАНДЫ 10 ===== <- НОВЫЙ БЛОК
@@ -8456,8 +8429,8 @@ end;
   initialized := False;
 
   // Создание шрифта Impact
-  if ImpactFont = 0 then
-    ImpactFont := CreateFont3D('7-Segment');
+  if SevenSegmentFont = 0 then
+    SevenSegmentFont := CreateFont3D('7-Segment');
 
   if KLUBUFont = 0 then
     KLUBUFont := CreateFont3D('KLUBU');  // ← ЗАГРУЗКА ШРИФТА KLUBU
@@ -8482,94 +8455,93 @@ end;
   end;
 
   // ======== АНАЛИЗ СВЕТОФОРОВ ========
-if (timeGetTime - LastSignalUpdate) > SignalUpdateInterval then
-begin
-  CachedSignalSequence := GetSignalSequence;
-  LastSignalUpdate := timeGetTime;
-end;
-signalSequence := CachedSignalSequence; // используем кэш
-  
-  // ======== ОТРИСОВКА МОДЕЛЕЙ ========
+  if (timeGetTime - LastSignalUpdate) > SignalUpdateInterval then
+  begin
+    CachedSignalSequence := GetSignalSequence;
+    LastSignalUpdate := timeGetTime;
+  end;
+  signalSequence := CachedSignalSequence; // используем кэш
 
 
+  // Частота ЕН
+  if PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0 then
+  begin
+    glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
+    BeginObj3D;
+    Position3D(angZ - 0.033, z + 0.0340002, y + 0.1210001);
+    // Position3D(1.137, 7.214, 3.553);
+    RotateX(-90.0);
+    RotateY(45.0);
+    Scale3D(0.011);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, en_chastota);
+    EndObj3D;
+    glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
+  end;
 
-// Частота ЕН
-if PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0 then
-begin
-  glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
+
+  try
+    textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + $34);
+    textureID := PWord(textureAddr)^;
+  except
+    textureID := MyTextureID; // fallback
+  end;
+
+  try
+    modelAddr := Pointer(PCardinal(Pointer($00400000 + $8D10D70))^ + $04);
+    modelID := PWord(modelAddr)^;
+  except
+    modelID := MyModelID; // fallback
+  end;
+
+
   BeginObj3D;
-  Position3D(angZ - 0.033, z + 0.0340002, y + 0.1210001);
-  // Position3D(1.137, 7.214, 3.553);
-  RotateX(-90.0);
-  RotateY(45.0);
-  Scale3D(0.011);
-  Color3D(3407667, 255, False, 0.0);
-  SetTexture(0);
-  DrawText3D(0, en_chastota);
+  //Position3D(1.17, 7.1799998, 3.4319999);
+  Position3D(angZ, z, y);
+  RotateZ(x);
+  SetTexture(textureID);
+  DrawModel(modelID, 0, False);
   EndObj3D;
-   glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
-end;
 
-
-try
-  textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + $34);
-  textureID := PWord(textureAddr)^;
-except
-  textureID := MyTextureID; // fallback
-end;
-
-try
-  modelAddr := Pointer(PCardinal(Pointer($00400000 + $8D10D70))^ + $04);
-  modelID := PWord(modelAddr)^;
-except
-  modelID := MyModelID; // fallback
-end;
-
-
-BeginObj3D;
-//Position3D(1.17, 7.1799998, 3.4319999);
-Position3D(angZ, z, y);
-RotateZ(x);
-SetTexture(textureID);
-DrawModel(modelID, 0, False);
-EndObj3D;
-
-
-
-
-// ======== ЛОГИКА ОТОБРАЖЕНИЯ СВЕТОФОРОВ (ДВЕ СИСТЕМЫ) ========
-
- if (als_en_state) and (PByte($905B754)^ <> 0) and (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
-begin
-  if KlubBilIndPModelID > 0 then
+  // Отображение элементов УСАВПП при включенном КЛУБ
+  if (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
   begin
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(0, 0, 0);
-    Color3D($00FF00, 255, False, 0.0);
-    SetTexture(0);
-    DrawModel(KlubBilIndPModelID, 0, False);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
+    for i := 0 to 35 do
+      DrawObject(StaticData[i], i);
   end;
-end
-else if (als_en_state) then
-begin
-  if KlubBilIndPModelID > 0 then
-  begin
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(0, 0, 0);
-    Color3D($00FF00, 255, False, 0.0);
-    SetTexture(0);
-    DrawModel(KlubBilIndPModelID, 0, False);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-  end;
-end;
 
-BeginObj3D;
-//SETTEXTURE($1A);
+  // ======== ЛОГИКА ОТОБРАЖЕНИЯ МОДЕЛЕЙ ОТКЛОНЕНИЯ ========
+  if (als_en_state) and (PByte($905B754)^ <> 0) and (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
+  begin
+    if KlubBilIndPModelID > 0 then
+    begin
+      BeginObj3D;
+      glDisable(GL_LIGHTING);
+      Position3D(0, 0, 0);
+      Color3D($00FF00, 255, False, 0.0);
+      SetTexture(0);
+      DrawModel(KlubBilIndPModelID, 0, False);
+      glEnable(GL_LIGHTING);
+      EndObj3D;
+    end;
+  end
+  else if (als_en_state) then
+  begin
+    if KlubBilIndPModelID > 0 then
+    begin
+      BeginObj3D;
+      glDisable(GL_LIGHTING);
+      Position3D(0, 0, 0);
+      Color3D($00FF00, 255, False, 0.0);
+      SetTexture(0);
+      DrawModel(KlubBilIndPModelID, 0, False);
+      glEnable(GL_LIGHTING);
+      EndObj3D;
+    end;
+  end;
+
+  BeginObj3D;
 
   // Получаем состояние основного светофора
   mainTrafficLight := PByte(Pointer($400000 + $8C07ECC))^;
@@ -8619,181 +8591,136 @@ BeginObj3D;
 
 
 
-    // ======== СИСТЕМА КЛУБ (старые координаты) ========
+    // ======== СИСТЕМА КЛУБ ========
     if visibleSignalCount > 0 then
     begin
       // Нижний блок - желтый
       BeginObj3D;
-        glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-      Position3D(1.17, 7.1799998, 3.4319999);
+      glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
+      Position3D(1.17, 7.1799998, 3.4319999);   //
       RotateZ(x);
       Position3D(-0.086499996, 0.0, 0.223);
       Scale3D(0.88999999);
       DrawModel(yellowBlockModelID, 0, False); // Читаем из памяти
-        glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
-
+      glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
       EndObj3D;
 
       // Остальные блоки выше - зеленые
       for i := 1 to visibleSignalCount - 1 do
       begin
         BeginObj3D;
-                glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
+        glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
         Position3D(1.17, 7.1799998, 3.4319999);
         RotateZ(x);
         Position3D(-0.086499996, 0.0, 0.223 + i * 0.013);
         Scale3D(0.88999999);
         DrawModel(greenBlockModelID, 0, False); // Читаем из памяти
-                glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
+        glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
         EndObj3D;
 
         if i >= 4 then Break; // Ограничиваем максимум 5 блоков
       end;
     end;
 
-    //SetLight(5, cos((90.0 - 54254 * 15.0 / 3600.0) * 3.141592653589793238 / 180.0) * 700.0,
-     //sin((90.0 - 54254 * 15.0 / 3600.0) * 3.141592653589793238 / 180.0) * 700.0, 200.0, $FFFFFF,
-      //9000.0, False, 10.0);
-
-    // ======== СИСТЕМА BIL POM (старые координаты) ========
+    // ======== СИСТЕМА BIL POM ========
     if visibleSignalCount > 0 then
     begin
       // Нижний блок - желтый
       BeginObj3D;
-        glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
+      glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
       Position3D(0.0020000001, 7.5500002, 3.5699999);
       RotateZ(0);
       RotateX(-30.0);
       Position3D(0.0, 0.0, 0.07);
-      //Scale3D(0.88999999);
       DrawModel(yellowBlockModelID, 0, False); // Читаем из памяти
-        glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
-
+      glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
       EndObj3D;
 
       // Остальные блоки выше - зеленые
       for i := 1 to visibleSignalCount - 1 do
       begin
         BeginObj3D;
-                glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
+        glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
         Position3D(0.0020000001, 7.5500002, 3.5699999);
         RotateZ(0);
         RotateX(-30.0);
-        Position3D(0.0, 0.0, 0.085 + i * 0.014);
-        //Scale3D(0.88999999);
+        Position3D(0.0, 0.0, 0.07 + i * 0.014);
         DrawModel(greenBlockModelID, 0, False); // Читаем из памяти
-                glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
+        glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
         EndObj3D;
 
-        if i >= 3 then Break; // Ограничиваем максимум 5 блоков
+        if i >= 4 then Break; // Ограничиваем максимум 5 блоков
       end;
     end;
   end;
 
   EndObj3D;
 
-if not MemoryWritten then
-begin
-  WriteAndVerify($00400000 + $349898, 255);
-  MemoryWritten := True;
-end;
-
-  // Дополнительный элемент
-//  BeginObj3D;
-//  Position3D(1.17, 0.223, 3.4319999);
-//  Color3D($FFFFFF, 254, False, 0.0);
-//  Scale3D(-0.086499996);
-//  SetTexture(50);
-//  DrawModel(38, 0, False);
-//  DrawCube(0.3, 0.3, 0.3);
-//  EndObj3D;
-
 
 
   // ===== ОТРИСОВКА СТРЕЛКИ С НОВЫМИ ПАРАМЕТРАМИ =====
+  if Config_BGSD and (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
+  begin
+    if StrToFloat(GetSpeed) <= 90 then
+      ArrowKoef := 1.58
+    else
+      ArrowKoef := 1.68;
 
-if Config_BGSD and (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
-begin
-  if StrToFloat(GetSpeed) <= 90 then
-     ArrowKoef := 1.58
-  else
-    ArrowKoef := 1.68;
+    speedAngle := 155 - GetSpeedValue2 * ArrowKoef;
 
-  speedAngle := 155 - GetSpeedValue2 * ArrowKoef;
-
-  BeginObj3D;
+    BeginObj3D;
     glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-
-  Position3D(0.8972, 7.448, 3.6407);
-  RotateX(-10.4);
-  RotateY(0);
-  RotateZ(x + -10.0);
-  SetTexture(0);
-  Color3D($ffffffff, 255, False, 0.0);
-  RotateY(speedAngle);
-  Scale3D(1.61);
-  DrawModel(strelka, 0, False);
+    Position3D(0.8972, 7.448, 3.6407);
+    RotateX(-10.4);
+    RotateY(0);
+    RotateZ(x + -10.0);
+    SetTexture(0);
+    Color3D($ffffffff, 255, False, 0.0);
+    RotateY(speedAngle);
+    Scale3D(1.61);
+    DrawModel(strelka, 0, False);
     glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
+    EndObj3D;
+  end;
 
-  EndObj3D;
-end;
-//
-//  InitializeAllConfigs;
-//
-//  speedAngle := ArrowAngle - ArrowCurrentSpeed * ArrowKoef;
-//
-//  BeginObj3D;
-//  Position3D(ArrowX, ArrowY, ArrowZ);
-//  RotateX(ArrowRotateX);
-//  RotateY(ArrowRotateY);
-//  RotateZ(x + ArrowRotateZ);
-//  SetTexture(0);
-//  Color3D($ffffffff, 255, False, 0.0);
-//  RotateY(speedAngle);
-//  Scale3D(ArrowScale);
-//  DrawModel(strelka, 0, False);
-//  EndObj3D;
+  if Config_BGSD then
+  begin
+    // Получаем значение ALS
+    alsValue := GetALS;
 
-if Config_BGSD then  // ← ДОБАВИЛИ ПРОВЕРКУ
-begin
-  // Получаем значение ALS
-  alsValue := GetALS;
-  
-if alsValue = 3 then
-begin
-  glDisable(GL_LIGHTING);
-  
-  // Верхняя половина - желтая
-  BeginObj3D;
+  if alsValue = 3 then
+  begin
+    glDisable(GL_LIGHTING);
+
+    // Верхняя половина - желтая
+    BeginObj3D;
     glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-
-  Position3D(0.896, 7.4482, 3.641);
-  RotateX(-103.0);
-  RotateY(34.2);
-  RotateZ(-7.0); // Поворот против часовой на 15 градусов
-  Scale3D(0.002);
-  Color3D($00FFFF, 255, False, 0.0); // Желтый
-  SetTexture(0);
-  Draw3DSemiCircle(5.2, 0, 180);
+    Position3D(0.896, 7.4482, 3.641);
+    RotateX(-103.0);
+    RotateY(34.2);
+    RotateZ(-7.0); // Поворот против часовой на 15 градусов
+    Scale3D(0.002);
+    Color3D($00FFFF, 255, False, 0.0); // Желтый
+    SetTexture(0);
+    Draw3DSemiCircle(5.2, 0, 180);
     glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
+    EndObj3D;
 
-  EndObj3D;
-
-  // Нижняя половина - красная
-  BeginObj3D;
-      glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-  Position3D(0.896, 7.4482, 3.641);
-  RotateX(-103.0);
-  RotateY(34.2);
-  RotateZ(-7.0); // Тот же поворот для совпадения
-  Scale3D(0.002);
-  Color3D($0000FF, 255, False, 0.0); // Красный
-  SetTexture(0);
-  Draw3DSemiCircle(5.2, 180, 360);
-      glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
-  EndObj3D;
+    // Нижняя половина - красная
+    BeginObj3D;
+    glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
+    Position3D(0.896, 7.4482, 3.641);
+    RotateX(-103.0);
+    RotateY(34.2);
+    RotateZ(-7.0); // Тот же поворот для совпадения
+    Scale3D(0.002);
+    Color3D($0000FF, 255, False, 0.0); // Красный
+    SetTexture(0);
+    Draw3DSemiCircle(5.2, 180, 360);
+    glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
+    EndObj3D;
   
-end
+  end
   else
   begin
     // Обычный одноцветный диск
@@ -8806,7 +8733,7 @@ end
     end;
     
     BeginObj3D;
-          glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
+    glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
     Position3D(0.896, 7.4482, 3.641);
     RotateX(-103.0);
     RotateY(34.2);
@@ -8819,65 +8746,7 @@ end
   end;
 end;
 
-  // ======== ТЕКСТОВЫЕ 3D-ОБЪЕКТЫ ========
-if debug then
-begin
-  // Проверяем значение по адресу Launcher.exe+8C07ECC (1 byte)
-  if (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
-  begin
-    for i := 0 to 35 do
-      DrawObject(StaticData[i], i);
-  end;
-end;
-//
-//    if signalSequence <> '' then
-//    begin
-//      BeginObj3D;
-//        glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-//
-//      Position3D(1.0, 7.0, 3.75);
-//      RotateX(-90);
-//      Scale3D(0.01);
-//      SetTexture(0);
-//      Color3D($00FF00, 255, False, 0);
-//      DrawText3D(0, 'SIG: ' + signalSequence);
-//        glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
-//
-//      EndObj3D;
-//    end;
 
-  // ======== ОТЛАДОЧНАЯ ИНФОРМАЦИЯ ========
-  if not debug then
-  begin
-    if CommandBuffer <> '' then
-    begin
-      BeginObj3D;
-              glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-      Position3D(1.0, 7.0, 3.8);
-      RotateX(-90);
-      Scale3D(0.01);
-      SetTexture(0);
-      Color3D($FF0000, 255, False, 0);
-      DrawText3D(0, 'CMD: ' + CommandBuffer);
-              glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
-      EndObj3D;
-    end;
-    
-    // Отображаем текущую последовательность сигналов
-    if signalSequence <> '' then
-    begin
-      BeginObj3D;
-                    glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-      Position3D(1.0, 7.0, 3.75);
-      RotateX(-90);
-      Scale3D(0.01);
-      SetTexture(0);
-      Color3D($00FF00, 255, False, 0);
-      DrawText3D(0, 'SIG: ' + signalSequence);
-                    glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
-      EndObj3D;
-    end;
-  end;
 end;
 
 
