@@ -8655,71 +8655,37 @@ BeginObj3D;
      //sin((90.0 - 54254 * 15.0 / 3600.0) * 3.141592653589793238 / 180.0) * 700.0, 200.0, $FFFFFF,
       //9000.0, False, 10.0);
 
-    // ======== СИСТЕМА БИЛ ПОМЕ (новые координаты) ========
+    // ======== СИСТЕМА BIL POM (старые координаты) ========
     if visibleSignalCount > 0 then
     begin
-      // Желтый блок (нижний по Z=3.631)
-        glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-
+      // Нижний блок - желтый
       BeginObj3D;
-      Position3D(0.002, 7.515, 3.631);
-      RotateX(-30);
-      Scale3D(1.0);
+        glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
+      Position3D(0.0020000001, 7.5500002, 3.5699999);
+      RotateZ(0);
+      RotateX(-30.0);
+      Position3D(0.0, 0.0, 0.07);
+      //Scale3D(0.88999999);
       DrawModel(yellowBlockModelID, 0, False); // Читаем из памяти
         glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
 
       EndObj3D;
 
-      // Зеленый блок 1
-      if visibleSignalCount > 1 then
+      // Остальные блоки выше - зеленые
+      for i := 1 to visibleSignalCount - 1 do
       begin
         BeginObj3D;
                 glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-        Position3D(0.002, 7.508, 3.6438);
-        RotateX(-30);
-        Scale3D(1.0);
-        DrawModel(CachedGreenBlockID, 0, False); // Читаем из памяти
+        Position3D(0.0020000001, 7.5500002, 3.5699999);
+        RotateZ(0);
+        RotateX(-30.0);
+        Position3D(0.0, 0.0, 0.085 + i * 0.014);
+        //Scale3D(0.88999999);
+        DrawModel(greenBlockModelID, 0, False); // Читаем из памяти
                 glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
         EndObj3D;
-      end;
-      
-      // Зеленый блок 2  
-      if visibleSignalCount > 2 then
-      begin
-        BeginObj3D;
-                        glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-        Position3D(0.00160, 7.5, 3.6576);
-        RotateX(-30);
-        Scale3D(1.0);
-        DrawModel(greenBlockModelID, 0, True); // Читаем из памяти
-                        glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
-        EndObj3D;
-      end;
 
-      // Зеленый блок 3
-      if visibleSignalCount > 3 then
-      begin
-        BeginObj3D;
-                                glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-        Position3D(0.00160, 7.492, 3.67);
-        RotateX(-30);
-        Scale3D(1.0);
-        DrawModel(greenBlockModelID, 0, True); // Читаем из памяти
-                                glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
-        EndObj3D;
-      end;
-      
-      // Зеленый блок 4
-      if visibleSignalCount > 4 then
-      begin
-        BeginObj3D;
-                                        glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-        Position3D(0.00160, 7.4847, 3.684);
-        RotateX(-30);
-        Scale3D(1.0);
-        DrawModel(greenBlockModelID, 0, True); // Читаем из памяти
-                                        glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
-        EndObj3D;
+        if i >= 3 then Break; // Ограничиваем максимум 5 блоков
       end;
     end;
   end;
