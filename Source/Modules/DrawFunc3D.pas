@@ -519,6 +519,12 @@ var
   strelkaSkorTextureID: Cardinal;
   strelkaSkorTimeTextureID: Cardinal;
 
+  bilpom_x: Single;
+  bilpom_y: Single;
+  bilpom_z: Single;
+  bilpom_AngZ: Single;
+  bilpom_AngX: Single;
+
 procedure SyncConfigFromMenu(Freecam, MainCamera, MaxDistance, NewSky: Boolean); stdcall;
 begin
   
@@ -7429,7 +7435,7 @@ end;
 procedure InitializeStaticData;
 begin
   if initialized then Exit;
-  
+
   // Элементы 0-13 - основные данные (обновленные координаты)
   with StaticData[0] do begin X:=1.0268; Y:=7.3762; Z:=3.558; RotX:=-105; RotY:=35; RotZ:=-8.5; Scale:=0.013; Text:='222'; Color:=$FFFFFF; FuncType:=11; end;
   with StaticData[1] do begin X:=1.029; Y:=7.37896; Z:=3.538; RotX:=-105; RotY:=35; RotZ:=-8.5; Scale:=0.01; Text:='2222'; Color:=$FFFFFF; FuncType:=2; end;
@@ -7482,6 +7488,60 @@ begin
   with StaticData[35] do begin X:=0.1533; Y:=7.48; Z:=3.162; RotX:=-57.3; RotY:=0.0; RotZ:=0.0; Scale:=0.016; Text:='3'; Color:=$0000FF; FuncType:=35; end; // 2-я позиция float
 
   initialized := True;
+end;
+
+procedure InitializeStaticData2;
+begin
+  if initialized then Exit;
+
+  // Элементы 0-13 - основные данные (обновленные координаты)
+  with StaticData[0] do begin X:=1.0268; Y:=7.272; Z:=3.558; RotX:=-105; RotY:=35; RotZ:=-8.5; Scale:=0.013; Text:='222'; Color:=$FFFFFF; FuncType:=11; end;
+  with StaticData[1] do begin X:=1.029; Y:=7.2747; Z:=3.538; RotX:=-105; RotY:=35; RotZ:=-8.5; Scale:=0.01; Text:='2222'; Color:=$FFFFFF; FuncType:=2; end;
+  with StaticData[2] do begin X:=1.0305; Y:=7.2765; Z:=3.525; RotX:=-105; RotY:=35; RotZ:=-8.5; Scale:=0.0055; Text:='25.05.25'; Color:=$FFFFFF; FuncType:=3; end;
+  with StaticData[3] do begin X:=1.031; Y:=7.2775; Z:=3.519; RotX:=-105; RotY:=35; RotZ:=-8.5; Scale:=0.0055; Text:='22:47:00'; Color:=$FFFFFF; FuncType:=4; end;
+  with StaticData[4] do begin X:=0.854; Y:=7.399; Z:=3.528; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.0065; Text:='8.01'; Color:=$FFFFFF; FuncType:=5; end;
+  with StaticData[5] do begin X:=0.855; Y:=7.400; Z:=3.519; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.0065; Text:='8.02'; Color:=$FFFFFF; FuncType:=0; end;
+  with StaticData[6] do begin X:=0.853; Y:=7.3975; Z:=3.538; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.0065; Text:='8.03'; Color:=$FFFFFF; FuncType:=6; end;
+  with StaticData[7] do begin X:=0.852; Y:=7.396; Z:=3.548; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.0065; Text:='8.04'; Color:=$FFFFFF; FuncType:=7; end;
+  with StaticData[8] do begin X:=0.87; Y:=7.3799; Z:=3.566; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.0065; Text:='2.05'; Color:=$008000; FuncType:=8; end;
+  with StaticData[9] do begin X:=0.893; Y:=7.3652; Z:=3.560; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.015; Text:='222'; Color:=$FFFFFF; FuncType:=1; end;
+  with StaticData[10] do begin X:=0.992; Y:=7.2945; Z:=3.566; RotX:=-105; RotY:=34; RotZ:=-8.0; Scale:=0.007; Text:='12312311'; Color:=$FFFFFF; FuncType:=9; end;
+  with StaticData[11] do begin X:=1.019; Y:=7.2539; Z:=3.665; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.008; Text:='Путь'; Color:=$FFFFFF; FuncType:=0; end;
+  with StaticData[12] do begin X:=1.022; Y:=7.2539; Z:=3.656; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.008; Text:='n'; Color:=$FFFFFF; FuncType:=10; end;
+  with StaticData[13] do begin X:=1.01; Y:=7.28; Z:=3.575; RotX:=-105; RotY:=34; RotZ:=-8.0; Scale:=0.008; Text:='222'; Color:=$FFFFFF; FuncType:=11; end;
+
+  // Элементы 14-16 - Скорость (желтый, 3 позиции)
+  with StaticData[14] do begin X:=0.9235; Y:=7.455; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$00FFFF; FuncType:=20; end;
+  with StaticData[15] do begin X:=0.935; Y:=7.451; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$00FFFF; FuncType:=21; end;
+  with StaticData[16] do begin X:=0.9465; Y:=7.447; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$00FFFF; FuncType:=22; end;
+
+  // Элементы 17-19 - Допустимая скорость (красный, 3 позиции)
+  with StaticData[17] do begin X:=0.922; Y:=7.450; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$FF0000; FuncType:=23; end;
+  with StaticData[18] do begin X:=0.9335; Y:=7.446; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='5'; Color:=$FF0000; FuncType:=24; end;
+  with StaticData[19] do begin X:=0.945; Y:=7.442; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='6'; Color:=$FF0000; FuncType:=25; end;
+
+  // Элементы 20-23 - Расстояние до цели (красный, 4 позиции)
+  with StaticData[20] do begin X:=0.852; Y:=7.471; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$FF0000; FuncType:=26; end;
+  with StaticData[21] do begin X:=0.863; Y:=7.4674; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$FF0000; FuncType:=27; end;
+  with StaticData[22] do begin X:=0.874; Y:=7.4638; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$FF0000; FuncType:=28; end;
+  with StaticData[23] do begin X:=0.885; Y:=7.4602; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$FF0000; FuncType:=29; end;
+
+  // Элементы 24-27 - Светофорная система АЛС
+  with StaticData[24] do begin X:=1.111; Y:=7.239; Z:=3.729; RotX:=-90; RotY:=40; RotZ:=-90; Scale:=0.015; Text:='|'; Color:=$00FF00; FuncType:=30; end;
+  with StaticData[25] do begin X:=1.113; Y:=7.237; Z:=3.733; RotX:=-90; RotY:=40; RotZ:=-90; Scale:=0.015; Text:='l'; Color:=$00FF00; FuncType:=31; end;
+  with StaticData[26] do begin X:=1.107; Y:=7.243; Z:=3.7283; RotX:=-90; RotY:=30; RotZ:=-55; Scale:=0.009; Text:='l'; Color:=$00FF00; FuncType:=32; end;
+  with StaticData[27] do begin X:=1.108; Y:=7.241; Z:=3.732; RotX:=-90; RotY:=30; RotZ:=-55; Scale:=0.009; Text:='l'; Color:=$00FF00; FuncType:=33; end;
+
+  // Элементы 28-34 - Табло или метки
+  with StaticData[28] do begin X:=0.982; Y:=7.351; Z:=3.558; RotX:=0; RotY:=0; RotZ:=0; Scale:=0.009; Text:='1'; Color:=$FFFFFF; FuncType:=34; end;
+  with StaticData[29] do begin X:=0.985; Y:=7.349; Z:=3.560; RotX:=0; RotY:=0; RotZ:=0; Scale:=0.009; Text:='2'; Color:=$FFFFFF; FuncType:=35; end;
+  with StaticData[30] do begin X:=0.988; Y:=7.347; Z:=3.562; RotX:=0; RotY:=0; RotZ:=0; Scale:=0.009; Text:='3'; Color:=$FFFFFF; FuncType:=36; end;
+  with StaticData[31] do begin X:=0.991; Y:=7.345; Z:=3.564; RotX:=0; RotY:=0; RotZ:=0; Scale:=0.009; Text:='4'; Color:=$FFFFFF; FuncType:=37; end;
+  with StaticData[32] do begin X:=0.995; Y:=7.343; Z:=3.566; RotX:=0; RotY:=0; RotZ:=0; Scale:=0.009; Text:='5'; Color:=$FFFFFF; FuncType:=38; end;
+  with StaticData[33] do begin X:=0.97; Y:=7.311; Z:=3.5585; RotX:=0; RotY:=0; RotZ:=-9; Scale:=0.009; Text:='1111'; Color:=$FFFFFF; FuncType:=39; end;
+  with StaticData[34] do begin X:=0.973; Y:=7.3095; Z:=3.5585; RotX:=0; RotY:=0; RotZ:=-9; Scale:=0.009; Text:='2222'; Color:=$FFFFFF; FuncType:=40; end;
+
+  initialized := true;
 end;
 
 // Добавьте эту функцию в начало implementation секции:
@@ -8253,7 +8313,7 @@ end;
 begin
 
   // ===== ИНИЦИАЛИЗАЦИЯ СВЕТОФОРНОЙ СИСТЕМЫ =====
-if not SystemInitialized then
+  if not SystemInitialized then
   begin
     InitializeTrafficLightSystem;
     LoadBoosterConfig;
@@ -8269,7 +8329,6 @@ if not SystemInitialized then
     end;
     SystemInitialized := True;
   end;
-  //LoadYellowBlockParams;
 
   if not LightBlockIDsCached then
   begin
@@ -8291,11 +8350,11 @@ if not SystemInitialized then
 
 
   // ===== ОБРАБОТКА КЛАВИАТУРЫ =====
-if (timeGetTime - LastKeyboardCheck) > KeyboardCheckInterval then
-begin
-  NewCommandReceived := ProcessKeyboard;
-  LastKeyboardCheck := timeGetTime;
-end;
+  if (timeGetTime - LastKeyboardCheck) > KeyboardCheckInterval then
+  begin
+    NewCommandReceived := ProcessKeyboard;
+    LastKeyboardCheck := timeGetTime;
+  end;
 
   // ===== ОБРАБОТКА КОМАНДЫ 137 =====
   
@@ -8321,20 +8380,22 @@ end;
   end;
 
   // Отображаем интерфейс команды 137
-if statek137 and not CommandCompleted and (PByte(Pointer($00400000 + $34988C))^ = 53) then
-begin
-  glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-  BeginObj3D;
-  Position3D(1.137 - 0.012, 7.214 + 0.006, 3.553 + 0.021);
-  RotateX(-90.0);
-  RotateY(45.0);
-  Scale3D(0.011);
-  Color3D(3407667, 255, False, 0.0);
-  SetTexture(0);
-  DrawText3D(0, 'ТАБЛИЦА АЛС-ЕН');
-  EndObj3D;
-  glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
-end;
+  // 1.17, 7.1799998, 3.4319999
+  // angZ - 0.033, z + 0.0340002, y + 0.1210001
+  if statek137 and not CommandCompleted and (PByte(Pointer($00400000 + $34988C))^ = 53) then
+  begin
+    glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
+    BeginObj3D;
+    Position3D(angZ - 0.045, z + 0.0400002, y + 0.1420001);
+    RotateX(-90.0);
+    RotateY(45.0);
+    Scale3D(0.011);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, 'ТАБЛИЦА АЛС-ЕН');
+    EndObj3D;
+    glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
+  end;
 
 
   // Завершаем команду 137 при повторном нажатии ENTER
@@ -8344,21 +8405,21 @@ end;
     if WriteAndVerify($00400000 + $34988C, 30) then
     begin
       // ПРОВЕРЯЕМ И СОХРАНЯЕМ ВВЕДЕННОЕ ЧИСЛО В en_chastota
-try
-  if (CommandBuffer <> '') and (StrToInt(CommandBuffer) <= 3) and (StrToInt(CommandBuffer) > 0) then
-  begin
-    en_chastota := CommandBuffer + 'ЕН';
-    als_en_state := True;
-  end
-  else
-  begin
-    en_chastota := 'x';
-    als_en_state := False;
-  end;
-except
-  en_chastota := 'x'; // На случай ошибки преобразования
-  als_en_state := False;
-end;
+    try
+      if (CommandBuffer <> '') and (StrToInt(CommandBuffer) <= 3) and (StrToInt(CommandBuffer) > 0) then
+      begin
+        en_chastota := CommandBuffer + 'ЕН';
+        als_en_state := True;
+      end
+      else
+      begin
+        en_chastota := 'x';
+        als_en_state := False;
+      end;
+    except
+      en_chastota := 'x'; // На случай ошибки преобразования
+      als_en_state := False;
+    end;
 
 
       
@@ -8368,8 +8429,6 @@ end;
       SavedCommand := '';
     end
   end;
-
- // ===== ОБРАБОТКА КОМАНДЫ 10 ===== <- НОВЫЙ БЛОК
   
   // Проверяем новую команду "10" только если она еще не активна
   if NewCommandReceived and (LastCommand = '10') and not statek10 then
@@ -8390,41 +8449,6 @@ end;
     end;
   end;
 
-  // Отображаем интерфейс команды 10
-  if statek10 and not CommandCompleted then
-  begin
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(1.125, 7.22, 3.574);
-    RotateX(-90.0);
-    RotateY(45.0);
-    Scale3D(0.011);
-    Color3D(3407667, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, 'K:raildriver');  // <- ДРУГОЙ ТЕКСТ
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-  end;
-
-  // Завершаем команду 10 при повторном нажатии ENTER
-  if statek10 and not CommandCompleted and EnterPressed then
-  begin
-    if WriteAndVerify($00400000 + $34988C, 30) then
-    begin
-      CommandCompleted := True;
-      statek10 := False;
-      CommandBuffer := '';
-      
-      AddToLogFile(EngineLog, 'Команда "10" успешно завершена');
-      SavedCommand := '';
-    end
-    else
-    begin
-      //AddToLogFile(EngineLog, 'ОШИБКА завершения команды "10"');
-    end;
-  end;
-  // ===== КОНЕЦ НОВОГО БЛОКА =====
-
   // ======== ИНИЦИАЛИЗАЦИЯ ========
   initialized := False;
 
@@ -8436,7 +8460,11 @@ end;
     KLUBUFont := CreateFont3D('KLUBU');  // ← ЗАГРУЗКА ШРИФТА KLUBU
 
   // Инициализация данных
-  InitializeStaticData;
+  if GetLocomotiveFolder(GetLocomotiveTypeFromSettings) = 'chs8' then
+    InitializeStaticData2
+  else
+    InitializeStaticData;
+
   
   // Загрузка моделей
   if MyModelID = 0 then
@@ -8597,7 +8625,8 @@ end;
       // Нижний блок - желтый
       BeginObj3D;
       glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-      Position3D(1.17, 7.1799998, 3.4319999);   //
+      // angZ, z, y 1.17, 7.1799998, 3.4319999
+      Position3D(angZ, z, y);
       RotateZ(x);
       Position3D(-0.086499996, 0.0, 0.223);
       Scale3D(0.88999999);
@@ -8610,7 +8639,8 @@ end;
       begin
         BeginObj3D;
         glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-        Position3D(1.17, 7.1799998, 3.4319999);
+        // angZ, z, y
+        Position3D(angZ, z, y);
         RotateZ(x);
         Position3D(-0.086499996, 0.0, 0.223 + i * 0.013);
         Scale3D(0.88999999);
@@ -8628,6 +8658,9 @@ end;
       // Нижний блок - желтый
       BeginObj3D;
       glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
+
+      // DRAWKLUBLS Single x, Single y, Single z, Single AngZ, Single AngX
+      // AngX AngZ z
       Position3D(0.0020000001, 7.5500002, 3.5699999);
       RotateZ(0);
       RotateX(-30.0);
@@ -8641,6 +8674,8 @@ end;
       begin
         BeginObj3D;
         glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
+        // DRAWKLUBLS Single x, Single y, Single z, Single AngZ, Single AngX
+        // AngX AngZ z
         Position3D(0.0020000001, 7.5500002, 3.5699999);
         RotateZ(0);
         RotateX(-30.0);
