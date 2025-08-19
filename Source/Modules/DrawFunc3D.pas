@@ -8652,6 +8652,25 @@ begin
       end;
     end;
 
+
+    if GetLocomotiveFolder(GetLocomotiveTypeFromSettings) = 'chs8' then
+    begin
+      bilpom_x := 32.0;
+      bilpom_y := 0.0;
+      bilpom_z := 3.572;
+      bilpom_AngZ := 7.467;
+      bilpom_AngX := 0.0020000001;
+    end
+    else
+    begin
+      bilpom_x := 30.0;
+      bilpom_y := 0.0;
+      bilpom_z := 3.5699999;
+      bilpom_AngZ := 7.5500002;
+      bilpom_AngX := 0.0020000001;
+    end;
+
+
     // ======== СИСТЕМА BIL POM ========
     if visibleSignalCount > 0 then
     begin
@@ -8661,9 +8680,9 @@ begin
 
       // DRAWKLUBLS Single x, Single y, Single z, Single AngZ, Single AngX
       // AngX AngZ z
-      Position3D(0.0020000001, 7.5500002, 3.5699999);
-      RotateZ(0);
-      RotateX(-30.0);
+      Position3D(bilpom_AngX, bilpom_AngZ, bilpom_z);
+      RotateZ(bilpom_y);
+      RotateX(-bilpom_x);
       Position3D(0.0, 0.0, 0.07);
       DrawModel(yellowBlockModelID, 0, False); // Читаем из памяти
       glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
@@ -8676,9 +8695,9 @@ begin
         glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
         // DRAWKLUBLS Single x, Single y, Single z, Single AngZ, Single AngX
         // AngX AngZ z
-        Position3D(0.0020000001, 7.5500002, 3.5699999);
-        RotateZ(0);
-        RotateX(-30.0);
+        Position3D(bilpom_AngX, bilpom_AngZ, bilpom_z);
+        RotateZ(bilpom_y);
+        RotateX(-bilpom_x);
         Position3D(0.0, 0.0, 0.07 + i * 0.014);
         DrawModel(greenBlockModelID, 0, False); // Читаем из памяти
         glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
