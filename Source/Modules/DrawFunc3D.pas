@@ -7126,18 +7126,6 @@ var
   PosLine, ColorLine: string;
   F: TextFile;
 
-
-procedure HookKLUBED4M(
- x: Single;
-        y: Single;
-        z: Single;
-        AngX: Single;
-        AngZ: Single
-); stdcall; export;
-begin
-  
-end;
-
 procedure HookSkorostemerViaKLUB(  x: Single;
   y: Single;
   z: Single;
@@ -7276,7 +7264,9 @@ var
   i: Integer;
   initialized: Boolean;
   NewCommandReceived: Boolean;
-  
+
+  currentLocType: Integer;
+  locFolder: string;
   // Переменные для светофоров
   signalSequence: string;
   signalChar: Char;
@@ -8269,9 +8259,7 @@ begin
       CachedYellowBlockID := PWord(Pointer(baseStructAddr + $1A))^;
       CachedGreenBlockID := PWord(Pointer(baseStructAddr + $1C))^;
       LightBlockIDsCached := True;
-      
-   //   AddToLogFile(EngineLog, Format('Кэшированы ID: Желтый=%d, Зеленый=%d',
-   //     [CachedYellowBlockID, CachedGreenBlockID]));
+
     except
       // При ошибке используем значения по умолчанию
       CachedYellowBlockID := 13;
@@ -8281,6 +8269,7 @@ begin
   end;
 
 
+  
   // ===== ОБРАБОТКА КЛАВИАТУРЫ =====
   if (timeGetTime - LastKeyboardCheck) > KeyboardCheckInterval then
   begin
@@ -8381,38 +8370,6 @@ begin
     end;
   end;
 
-  // ======== ИНИЦИАЛИЗАЦИЯ ========
-  initialized := False;
-
-  // Создание шрифта Impact
-  if SevenSegmentFont = 0 then
-    SevenSegmentFont := CreateFont3D('7-Segment');
-
-  if KLUBUFont = 0 then
-    KLUBUFont := CreateFont3D('KLUBU');  // ← ЗАГРУЗКА ШРИФТА KLUBU
-
-  // Инициализация данных
-  if GetLocomotiveFolder(GetLocomotiveTypeFromSettings) = 'chs8' then
-    InitializeStaticData2
-  else
-    InitializeStaticData;
-
-  
-  // Загрузка моделей
-  if MyModelID = 0 then
-  begin
-    MyModelID := LoadModel('data\loc\klub_bil_v.dmd', 0, False);
-    MyTextureID := LoadTextureFromFile('data\loc\klub_bil.bmp', 0, -1);
-    strelka := LoadModel('data\' + GetLocomotiveFolder(GetLocomotiveTypeFromMemory) + '\' + LocNum + '\strelka-m.dmd', 0, False);
-  end;
-
-  // Получаем текущую скорость
-  try
-    currentSpeed := PSingle(BaseAddress + $4F8C28C)^;
-    currentSpeed := Abs(currentSpeed);
-  except
-    currentSpeed := 0;
-  end;
 
   // ======== АНАЛИЗ СВЕТОФОРОВ ========
   if (timeGetTime - LastSignalUpdate) > SignalUpdateInterval then
@@ -8440,36 +8397,6 @@ begin
     glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
   end;
 
-
-  try
-    textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + $34);
-    textureID := PWord(textureAddr)^;
-  except
-    textureID := MyTextureID; // fallback
-  end;
-
-  try
-    modelAddr := Pointer(PCardinal(Pointer($00400000 + $8D10D70))^ + $04);
-    modelID := PWord(modelAddr)^;
-  except
-    modelID := MyModelID; // fallback
-  end;
-
-
-  BeginObj3D;
-  //Position3D(1.17, 7.1799998, 3.4319999);
-  Position3D(angZ, z, y);
-  RotateZ(x);
-  SetTexture(textureID);
-  DrawModel(modelID, 0, False);
-  EndObj3D;
-
-  // Отображение элементов УСАВПП при включенном КЛУБ
-  if (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
-  begin
-    for i := 0 to 35 do
-      DrawObject(StaticData[i], i);
-  end;
 
   // ======== ЛОГИКА ОТОБРАЖЕНИЯ МОДЕЛЕЙ ОТКЛОНЕНИЯ ========
   if (als_en_state) and (PByte($905B754)^ <> 0) and (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
@@ -8502,6 +8429,32 @@ begin
   end;
 
   BeginObj3D;
+
+
+
+
+  try
+    textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + $34);
+    textureID := PWord(textureAddr)^;
+  except
+    textureID := MyTextureID; // fallback
+  end;
+
+  try
+    modelAddr := Pointer(PCardinal(Pointer($00400000 + $8D10D70))^ + $04);
+    modelID := PWord(modelAddr)^;
+  except
+    modelID := MyModelID; // fallback
+  end;
+
+
+  BeginObj3D;
+  //Position3D(1.17, 7.1799998, 3.4319999);
+  Position3D(angZ, z, y);
+  RotateZ(x);
+  SetTexture(textureID);
+  DrawModel(modelID, 0, False);
+  EndObj3D;
 
   // Получаем состояние основного светофора
   mainTrafficLight := PByte(Pointer($400000 + $8C07ECC))^;
@@ -8550,7 +8503,7 @@ begin
     end;
 
 
-
+    SetTexture(textureID);
     // ======== СИСТЕМА КЛУБ ========
     if visibleSignalCount > 0 then
     begin
@@ -8593,13 +8546,21 @@ begin
       bilpom_AngZ := 7.467;
       bilpom_AngX := 0.0020000001;
     end
-    else
+    else if GetLocomotiveFolder(GetLocomotiveTypeFromSettings) = 'chs7' then
     begin
       bilpom_x := 30.0;
       bilpom_y := 0.0;
       bilpom_z := 3.5699999;
       bilpom_AngZ := 7.5500002;
       bilpom_AngX := 0.0020000001;
+    end
+    else if GetLocomotiveFolder(GetLocomotiveTypeFromSettings) = 'ed4m' then
+    begin
+      bilpom_x := 5.0;
+      bilpom_y := 0.0;
+      bilpom_z := 3.1059999;
+      bilpom_AngZ := 10.087;
+      bilpom_AngX := -0.0089999996;
     end;
 
 
@@ -8641,6 +8602,59 @@ begin
   end;
 
   EndObj3D;
+
+  // ======== ИНИЦИАЛИЗАЦИЯ ========
+  initialized := False;
+
+  // Загрузка моделей
+  if MyModelID = 0 then
+  begin
+    MyModelID := LoadModel('data\loc\klub_bil_v.dmd', 0, False);
+    MyTextureID := LoadTextureFromFile('data\loc\klub_bil.bmp', 0, -1);
+    strelka := LoadModel('data\' + GetLocomotiveFolder(GetLocomotiveTypeFromMemory) + '\' + LocNum + '\strelka-m.dmd', 0, False);
+  end;
+
+
+  currentLocType := GetLocomotiveTypeFromMemory;
+  locFolder := GetLocomotiveFolder(currentLocType);
+
+  if not ((currentLocType = 812) or (currentLocType = 822) or
+          (locFolder = 'chs8') or (locFolder = 'chs7')) then
+  begin
+    Exit; // Выходим из процедуры
+  end;
+
+
+  // Создание шрифта Impact
+  if SevenSegmentFont = 0 then
+    SevenSegmentFont := CreateFont3D('7-Segment');
+
+  if KLUBUFont = 0 then
+    KLUBUFont := CreateFont3D('KLUBU');  // ← ЗАГРУЗКА ШРИФТА KLUBU
+
+  // Инициализация данных
+  if GetLocomotiveFolder(GetLocomotiveTypeFromSettings) = 'chs8' then
+    InitializeStaticData2
+  else
+    InitializeStaticData;
+
+
+  // Получаем текущую скорость
+  try
+    currentSpeed := PSingle(BaseAddress + $4F8C28C)^;
+    currentSpeed := Abs(currentSpeed);
+  except
+    currentSpeed := 0;
+  end;
+
+
+  // Отображение элементов УСАВПП при включенном КЛУБ
+  if (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
+  begin
+    for i := 0 to 35 do
+      DrawObject(StaticData[i], i);
+  end;
+
 
 
 
