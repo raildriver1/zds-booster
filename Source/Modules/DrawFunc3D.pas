@@ -134,6 +134,7 @@ function  SceneGetObj( SceneIdent, ObjIdent : cardinal ) : TSceneMesh; stdcall;
 
 procedure WriteHookAddress; stdcall;
 procedure WriteHookAddressCHS8; stdcall;
+procedure WriteHookAddressED4M; stdcall;
 function GetCurrentHour: Integer; stdcall;  // если еще нет
 procedure ProcessFreecam; stdcall;
 procedure LoadSettingsAndCustomModels; stdcall;
@@ -3682,6 +3683,67 @@ begin
     end;
   end;
 end;
+
+
+procedure WriteHookAddressED4M; stdcall;
+var
+  HookAddr: Cardinal;
+  CallAddress: Cardinal;
+  NewOffset: Integer;
+  OldProtect: DWORD;
+
+  function SafeVirtualProtect(Address: Pointer; Size: Cardinal; NewProtect: DWORD; var OldProtect: DWORD): Boolean;
+  var
+    Attempts: Integer;
+  begin
+    Result := False;
+    Attempts := 0;
+    
+    repeat
+      try
+        Result := VirtualProtect(Address, Size, NewProtect, OldProtect);
+        if Result then Break;
+        
+        Inc(Attempts);
+        if Attempts > 10 then Break;
+          
+      except
+        Inc(Attempts);
+        if Attempts > 5 then Break;
+      end;
+    until False;
+  end;
+
+begin
+  try
+    // Патчим HookKLUB для ЧС8
+    try
+      HookAddr := Cardinal(@HookKLUB);
+      CallAddress := $006296F6; // ← АДРЕС ДЛЯ ЭД4М
+      NewOffset := Integer(HookAddr) - Integer(CallAddress + 5);
+      
+      if SafeVirtualProtect(Pointer(CallAddress + 1), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+      begin
+        try
+          PInteger(CallAddress + 1)^ := NewOffset;
+          SafeVirtualProtect(Pointer(CallAddress + 1), 4, OldProtect, OldProtect);
+          AddToLogFile(EngineLog, 'ЭД4М: HookKLUB патч применен по адресу $' + IntToHex(CallAddress, 8));
+        except
+          // Игнорируем ошибки записи
+        end;
+      end;
+    except
+      // Игнорируем ошибки
+    end;
+    
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'Ошибка в WriteHookAddressCHS8: ' + E.Message);
+    end;
+  end;
+end;
+
 
 {System------------------------------------------------------------------------}
 function vertex(x,y,z : single) : TVertex; inline;
