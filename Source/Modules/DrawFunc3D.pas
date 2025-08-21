@@ -8732,7 +8732,7 @@ begin
 
     BeginObj3D;
     glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-    Position3D(0.8972, 7.448, 3.6407);
+    Position3D(0.8972, 7.448-0.1042, 3.6407);
     RotateX(-10.4);
     RotateY(0);
     RotateZ(x + -10.0);
@@ -8757,7 +8757,10 @@ begin
     // Верхняя половина - желтая
     BeginObj3D;
     glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-    Position3D(0.896, 7.4482, 3.641);
+    if GetLocomotiveTypeFromMemory = 812 then
+      Position3D(0.896, 7.4482-0.1042, 3.641)
+    else
+      Position3D(0.896, 7.4482, 3.641);
     RotateX(-103.0);
     RotateY(34.2);
     RotateZ(-7.0); // Поворот против часовой на 15 градусов
@@ -8771,7 +8774,10 @@ begin
     // Нижняя половина - красная
     BeginObj3D;
     glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-    Position3D(0.896, 7.4482, 3.641);
+    if GetLocomotiveTypeFromMemory = 812 then
+      Position3D(0.896, 7.4482-0.1042, 3.641)
+    else
+      Position3D(0.896, 7.4482, 3.641);
     RotateX(-103.0);
     RotateY(34.2);
     RotateZ(-7.0); // Тот же поворот для совпадения
@@ -8796,10 +8802,13 @@ begin
     
     BeginObj3D;
     glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-    Position3D(0.896, 7.4482, 3.641);
+    if GetLocomotiveTypeFromMemory = 812 then
+      Position3D(0.8965, 7.4482-0.1042, 3.64)
+    else
+      Position3D(0.896, 7.4482, 3.641);
     RotateX(-103.0);
     RotateY(34.2);
-    Scale3D(0.0002);
+    Scale3D(0.00017);
     Color3D(diskColor, 255, False, 0.0);
     SetTexture(0);
     Draw3DDisk(52);
