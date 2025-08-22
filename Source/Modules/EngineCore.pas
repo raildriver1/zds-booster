@@ -1937,12 +1937,18 @@ begin
     end;
     
         case LocType of
+          524, 880, 2070, 21014, 1462, 811, 882: begin
+            ApplyKPD3Patch();
+            AddToLogFile(EngineLog, 'KPD-3 patch applied for locomotive type: ' + IntToStr(LocType));
+          end;
           822: begin
             WriteHookAddress;
+            ApplyKPD3Patch();
             AddToLogFile(EngineLog, 'Hook activated for locomotive type 822 (CS7)');
           end;
           812: begin
             WriteHookAddressCHS8;
+            ApplyKPD3Patch();
             AddToLogFile(EngineLog, 'Hook activated for locomotive type 812 (CS8)');
           end;
           3154: begin
@@ -1954,6 +1960,7 @@ begin
             ApplyZDSimPatches;  // Вызываем сразу при обнаружении
             AddToLogFile(EngineLog, 'ZDSim patches activation completed for locomotive type 885 (VL85)');
           end;
+
           else
             AddToLogFile(EngineLog, 'Hook not supported for locomotive type: ' + IntToStr(LocType));
         end;

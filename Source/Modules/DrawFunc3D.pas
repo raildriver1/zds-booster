@@ -132,6 +132,8 @@ procedure SceneSetObjActive( SceneIdent, ObjIdent : cardinal; Active : boolean )
 procedure SceneSetObj( SceneIdent, ObjIdent : cardinal; SceneMesh : TSceneMesh ); stdcall;
 function  SceneGetObj( SceneIdent, ObjIdent : cardinal ) : TSceneMesh; stdcall;
 
+function ApplyKPD3Patch: Boolean;
+
 procedure WriteHookAddress; stdcall;
 procedure WriteHookAddressCHS8; stdcall;
 procedure WriteHookAddressED4M; stdcall;
@@ -139,6 +141,8 @@ function GetCurrentHour: Integer; stdcall;  // если еще нет
 procedure ProcessFreecam; stdcall;
 procedure LoadSettingsAndCustomModels; stdcall;
 procedure ProcessDayNightSystem; stdcall;
+
+
 
 var
   ConfigLoaded: Boolean;
@@ -1845,12 +1849,12 @@ begin
   begin
     Exit;
   end;
-  
+
   // Читаем настройки
   LocNum := '068';
   LocomotiveType := 822;
   AddToLogFile(EngineLog, 'Установлены значения по умолчанию: LocNum=' + LocNum + ', LocomotiveType=' + IntToStr(LocomotiveType));
-  
+
   if FileExists('settings.ini') then
   begin
     AddToLogFile(EngineLog, 'Найден файл settings.ini, читаем настройки...');
@@ -1862,13 +1866,13 @@ begin
         ReadLn(f, line);
         line := Trim(line);
         if (line = '') or (line[1] = '#') or (line[1] = ';') then Continue;
-        
+
         equalPos := Pos('=', line);
         if equalPos > 0 then
         begin
           paramName := LowerCase(Trim(Copy(line, 1, equalPos - 1)));
           paramValue := Trim(Copy(line, equalPos + 1, Length(line)));
-          
+
           if paramName = 'locnum' then
           begin
             LocNum := paramValue;
@@ -1895,7 +1899,7 @@ begin
   begin
     AddToLogFile(EngineLog, 'Файл settings.ini не найден, используем значения по умолчанию');
   end;
-  
+
   // Загружаем индикаторы
   AddToLogFile(EngineLog, 'Загружаем индикаторные модели...');
   if KlubBilIndPModelID = 0 then
@@ -3518,7 +3522,6 @@ var
   NewOffset2: Integer;
   OldProtect: DWORD;
   i: Integer;
-  StartTime: Cardinal;
   ConditionValue: Byte;
 
   // Адреса для замены PUSH инструкций
@@ -3568,13 +3571,7 @@ var
     until False;
   end;
 
-  function IsTimeoutExceeded: Boolean;
-  begin
-    Result := (GetTickCount - StartTime) > 3000; // 3 секунды тайм-аут
-  end;
-
 begin
-  StartTime := GetTickCount;
 
   try
     // Читаем условие из адреса 007498A8
@@ -7298,33 +7295,302 @@ begin
   EndObj3D;
 end;
 
+function GetLocNum: string;
+var
+  f: TextFile;
+  line, paramName, paramValue: string;
+  equalPos: Integer;
+  LocNum: string;
+  LocomotiveType: Integer;
+begin
+  // Значения по умолчанию
+  LocNum := '068';
+  LocomotiveType := 822;
+  AddToLogFile(EngineLog, 'Установлены значения по умолчанию: LocNum=' + LocNum + ', LocomotiveType=' + IntToStr(LocomotiveType));
+
+  if FileExists('settings.ini') then
+  begin
+    AddToLogFile(EngineLog, 'Найден файл settings.ini, читаем настройки...');
+    try
+      AssignFile(f, 'settings.ini');
+      Reset(f);
+      while not Eof(f) do
+      begin
+        ReadLn(f, line);
+        line := Trim(line);
+        if (line = '') or (line[1] = '#') or (line[1] = ';') then Continue;
+
+        equalPos := Pos('=', line);
+        if equalPos > 0 then
+        begin
+          paramName := LowerCase(Trim(Copy(line, 1, equalPos - 1)));
+          paramValue := Trim(Copy(line, equalPos + 1, Length(line)));
+
+          if paramName = 'locnum' then
+          begin
+            LocNum := paramValue;
+            AddToLogFile(EngineLog, 'Прочитан LocNum: ' + LocNum);
+          end
+          else if paramName = 'locomotivetype' then
+          begin
+            LocomotiveType := StrToIntDef(paramValue, LocomotiveType);
+            AddToLogFile(EngineLog, 'Прочитан LocomotiveType: ' + IntToStr(LocomotiveType));
+          end;
+        end;
+      end;
+      CloseFile(f);
+      AddToLogFile(EngineLog, 'settings.ini успешно прочитан');
+    except
+      on E: Exception do
+      begin
+        AddToLogFile(EngineLog, 'Ошибка чтения settings.ini: ' + E.Message);
+        try CloseFile(f); except end;
+      end;
+    end;
+  end
+  else
+  begin
+    AddToLogFile(EngineLog, 'Файл settings.ini не найден, используем значения по умолчанию');
+  end;
+
+  // Возвращаем итоговое значение LocNum
+  Result := LocNum;
+end;
+
+
 var
   // Глобальные переменные для моделей и текстур
   KPD3ModelID, ArrowModelID: Integer;
   KPD3TextureID: Integer;
   KPD3Initialized: Boolean = False;
 
-procedure InitKPD3Models;
+// Функция получения адреса патча для KPD-3 по типу локомотива
+function GetKPD3PatchOffset(locType: Integer): Cardinal;
 begin
-  if not KPD3Initialized then
-  begin
-    KPD3ModelID := LoadModel('data\vl85\167\kpd-3\kpd3.dmd', 0, False);
-    KPD3TextureID := LoadTextureFromFile('data\vl85\167\kpd-3\kpd3.bmp', 0, -1);
-    ArrowModelID := LoadModel('data\vl85\167\kpd-3\strelka.dmd', 0, False);
-    KPD3Initialized := True;
+  case locType of
+    524: Result := $1254F4;   // ЧС4КВР
+    822: Result := $27795A;   // ЧС7
+    812: Result := $D5A85;    // ЧС8
+    811: Result := $2BB937;   // ВЛ11М
+    882: Result := $1461D5;   // ВЛ82М
+    880: Result := $18D236;   // ВЛ80Т
+    2070: Result := $281156;  // ТЭП70
+    21014: Result := $20F90F; // 2ТЭ10У
+    1462: Result := $1C842B;  // М62
+    else
+      Result := 0; // Неподдерживаемый тип
   end;
 end;
 
+// Функция проверки наличия KPD-3 файлов
+function CheckKPD3FilesExist(locType: Integer; locNum: string): Boolean;
+var
+  locFolder, kpdPath: string;
+  kpdModelPath, kpdTexturePath, arrowModelPath: string;
+begin
+  Result := False;
+  
+  try
+    locFolder := GetLocomotiveFolder(locType);
+    kpdPath := 'data\' + locFolder + '\' + GetLocNum + '\kpd-3\';
+    
+    // Проверяем существование папки
+    if not DirectoryExists(kpdPath) then
+    begin
+      AddToLogFile(EngineLog, 'KPD-3 папка не найдена: ' + kpdPath);
+      Exit;
+    end;
+    
+    // Проверяем наличие необходимых файлов
+    kpdModelPath := kpdPath + 'kpd3.dmd';
+    kpdTexturePath := kpdPath + 'kpd3.bmp';
+    arrowModelPath := kpdPath + 'strelka.dmd';
+    
+    Result := FileExists(kpdModelPath) and 
+              FileExists(kpdTexturePath) and 
+              FileExists(arrowModelPath);
+              
+    if Result then
+      AddToLogFile(EngineLog, 'KPD-3 файлы найдены для ' + locFolder + ' ' + locNum)
+    else
+      AddToLogFile(EngineLog, 'KPD-3 файлы неполные для ' + locFolder + ' ' + locNum);
+      
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'Ошибка проверки KPD-3 файлов: ' + E.Message);
+      Result := False;
+    end;
+  end;
+end;
+
+// Обновленная функция инициализации KPD-3 моделей
+procedure InitKPD3Models;
+var
+  currentLocType: Integer;
+  locFolder, kpdPath: string;
+  kpdModelPath, kpdTexturePath, arrowModelPath: string;
+begin
+  if KPD3Initialized then Exit;
+  
+  try
+    currentLocType := GetLocomotiveTypeFromMemory;
+    locFolder := GetLocomotiveFolder(currentLocType);
+    kpdPath := 'data\' + locFolder + '\' + GetLocNum + '\kpd-3\';
+    
+    AddToLogFile(EngineLog, '=== ИНИЦИАЛИЗАЦИЯ KPD-3 ===');
+    AddToLogFile(EngineLog, 'Тип локомотива: ' + IntToStr(currentLocType));
+    AddToLogFile(EngineLog, 'Папка локомотива: ' + locFolder);
+    AddToLogFile(EngineLog, 'Номер: ' + LocNum);
+    AddToLogFile(EngineLog, 'Путь KPD-3: ' + kpdPath);
+    
+    // Формируем пути к файлам
+    kpdModelPath := kpdPath + 'kpd3.dmd';
+    kpdTexturePath := kpdPath + 'kpd3.bmp';
+    arrowModelPath := kpdPath + 'strelka.dmd';
+    
+    // Загружаем модели и текстуры
+    KPD3ModelID := LoadModel(kpdModelPath, 0, False);
+    if KPD3ModelID > 0 then
+      AddToLogFile(EngineLog, 'KPD-3 модель загружена, ID: ' + IntToStr(KPD3ModelID))
+    else
+    begin
+      AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить KPD-3 модель: ' + kpdModelPath);
+      Exit;
+    end;
+    
+    KPD3TextureID := LoadTextureFromFile(kpdTexturePath, 0, -1);
+    if KPD3TextureID > 0 then
+      AddToLogFile(EngineLog, 'KPD-3 текстура загружена, ID: ' + IntToStr(KPD3TextureID))
+    else
+    begin
+      AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить KPD-3 текстуру: ' + kpdTexturePath);
+      Exit;
+    end;
+    
+    ArrowModelID := LoadModel(arrowModelPath, 0, False);
+    if ArrowModelID > 0 then
+      AddToLogFile(EngineLog, 'KPD-3 стрелка загружена, ID: ' + IntToStr(ArrowModelID))
+    else
+    begin
+      AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить стрелку KPD-3: ' + arrowModelPath);
+      Exit;
+    end;
+    
+    KPD3Initialized := True;
+    AddToLogFile(EngineLog, 'KPD-3 инициализация завершена успешно');
+    
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'КРИТИЧЕСКАЯ ОШИБКА инициализации KPD-3: ' + E.Message);
+      KPD3Initialized := False;
+    end;
+  end;
+end;
+
+// Функция применения патча KPD-3
+function ApplyKPD3Patch: Boolean;
+var
+  currentLocType: Integer;
+  patchOffset: Cardinal;
+  patchAddress: Cardinal;
+  drawKPD3Address: Cardinal;
+  newOffset: Integer;
+  OldProtect: DWORD;
+begin
+  Result := False;
+  
+  try
+    currentLocType := GetLocomotiveTypeFromMemory;
+    
+    // Проверяем, поддерживается ли этот тип локомотива
+    patchOffset := GetKPD3PatchOffset(currentLocType);
+    if patchOffset = 0 then
+    begin
+      AddToLogFile(EngineLog, 'KPD-3 патч не поддерживается для типа локомотива: ' + IntToStr(currentLocType));
+      Exit;
+    end;
+    
+    // Проверяем наличие KPD-3 файлов
+    if not CheckKPD3FilesExist(currentLocType, LocNum) then
+    begin
+      AddToLogFile(EngineLog, 'KPD-3 файлы не найдены, патч не применяется');
+      Exit;
+    end;
+    
+    // Инициализируем модели KPD-3
+    InitKPD3Models;
+    if not KPD3Initialized then
+    begin
+      AddToLogFile(EngineLog, 'Не удалось инициализировать KPD-3, патч не применяется');
+      Exit;
+    end;
+    
+    // Применяем патч
+    patchAddress := $00400000 + patchOffset;
+    drawKPD3Address := Cardinal(@DrawKPD3);
+    newOffset := Integer(drawKPD3Address) - Integer(patchAddress + 5);
+    
+    AddToLogFile(EngineLog, Format('Применяем KPD-3 патч для %s:', [GetLocomotiveFolder(currentLocType)]));
+    AddToLogFile(EngineLog, Format('Адрес патча: $%X', [patchAddress]));
+    AddToLogFile(EngineLog, Format('Адрес DrawKPD3: $%X', [drawKPD3Address]));
+    AddToLogFile(EngineLog, Format('Новый offset: $%X', [newOffset]));
+    
+    if VirtualProtect(Pointer(patchAddress + 1), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+    begin
+      try
+        PInteger(patchAddress + 1)^ := newOffset;
+        VirtualProtect(Pointer(patchAddress + 1), 4, OldProtect, OldProtect);
+        Result := True;
+        AddToLogFile(EngineLog, 'KPD-3 патч применен успешно');
+      except
+        on E: Exception do
+        begin
+          AddToLogFile(EngineLog, 'ОШИБКА записи KPD-3 патча: ' + E.Message);
+          Result := False;
+        end;
+      end;
+    end
+    else
+    begin
+      AddToLogFile(EngineLog, 'ОШИБКА: Не удалось изменить защиту памяти для KPD-3 патча');
+      Result := False;
+    end;
+    
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'ИСКЛЮЧЕНИЕ при применении KPD-3 патча: ' + E.Message);
+      Result := False;
+    end;
+  end;
+end;
+
+// Функция для вызова из основного кода (например, в InitEng или другом месте)
+procedure InitializeKPD3System;
+begin
+  if ApplyKPD3Patch then
+    AddToLogFile(EngineLog, 'KPD-3 система инициализирована успешно')
+  else
+    AddToLogFile(EngineLog, 'KPD-3 система не была инициализирована');
+end;
 // Вспомогательная процедура для отрисовки цифры
 procedure DrawDigit3D(x, y, z: Single; digit: string);
 begin
+
+  if SevenSegmentFont = 0 then
+  begin
+    SevenSegmentFont := CreateFont3D('7-Segment');
+  end;
+
   BeginObj3D;
     Position3D(x, y, z);
     RotateX(-90);
     Scale3D(0.017);
     Color3D(3407667, 255, False, 0.0);
     SetTexture(0);
-    DrawText3D(1, digit);
+    DrawText3D(SevenSegmentFont, digit);
   EndObj3D;
 end;
 
