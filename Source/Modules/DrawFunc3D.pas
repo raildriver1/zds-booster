@@ -191,8 +191,16 @@ procedure HookSkorostemerCHS7(
   AngZ: Single
 ); stdcall; export;
 
+procedure DrawKPD3(
+  x: Single;
+  y: Single;
+  z: Single;
+  AngZ: Single;
+  AngPrivod: Single
+); stdcall; export;
+
 exports
-  HookKLUB, DrawSky, DrawSkorostemer, HookSkorostemerViaKLUB, DrawKLUB, HookSkorostemerCHS7;
+  HookKLUB, DrawSky, DrawSkorostemer, HookSkorostemerViaKLUB, DrawKLUB, HookSkorostemerCHS7, DrawKPD3;
 procedure FreeEng;
 procedure InitEng;
 
@@ -7290,6 +7298,110 @@ begin
   EndObj3D;
 end;
 
+var
+  // Глобальные переменные для моделей и текстур
+  KPD3ModelID, ArrowModelID: Integer;
+  KPD3TextureID: Integer;
+  KPD3Initialized: Boolean = False;
+
+procedure InitKPD3Models;
+begin
+  if not KPD3Initialized then
+  begin
+    KPD3ModelID := LoadModel('data\vl85\167\kpd-3\kpd3.dmd', 0, False);
+    KPD3TextureID := LoadTextureFromFile('data\vl85\167\kpd-3\kpd3.bmp', 0, -1);
+    ArrowModelID := LoadModel('data\vl85\167\kpd-3\strelka.dmd', 0, False);
+    KPD3Initialized := True;
+  end;
+end;
+
+// Вспомогательная процедура для отрисовки цифры
+procedure DrawDigit3D(x, y, z: Single; digit: string);
+begin
+  BeginObj3D;
+    Position3D(x, y, z);
+    RotateX(-90);
+    Scale3D(0.017);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(1, digit);
+  EndObj3D;
+end;
+
+// Процедура отрисовки цифрового дисплея
+procedure DrawDigitalDisplay(speed: Integer);
+const
+  DISPLAY_Y = -0.03;
+  DISPLAY_Z = -0.03;
+  DIGIT_POSITIONS: array[0..2] of Single = (-0.016, -0.004, 0.008);
+var
+  hundreds, tens, units: Integer;
+  speedStr: string;
+begin
+  glDisable(GL_LIGHTING);
+  try
+    // Ограничиваем скорость до 999
+    if speed > 999 then speed := 999;
+    if speed < 0 then speed := 0;
+    
+    // Разбиваем число на цифры
+    hundreds := speed div 100;
+    tens := (speed mod 100) div 10;
+    units := speed mod 10;
+    
+    // Отображаем цифры в зависимости от значения
+    if speed >= 100 then
+      DrawDigit3D(DIGIT_POSITIONS[0], DISPLAY_Y, DISPLAY_Z, IntToStr(hundreds));
+      
+    if speed >= 10 then
+      DrawDigit3D(DIGIT_POSITIONS[1], DISPLAY_Y, DISPLAY_Z, IntToStr(tens));
+      
+    // Единицы отображаем всегда (даже для 0)
+    DrawDigit3D(DIGIT_POSITIONS[2], DISPLAY_Y, DISPLAY_Z, IntToStr(units));
+  finally
+    glEnable(GL_LIGHTING);
+  end;
+end;
+
+procedure DrawKPD3(
+  x, y, z: Single;           // x не используется, можно убрать
+  AngZ, AngPrivod: Single
+); stdcall; export;
+const
+  ARROW_BASE_ANGLE = 119.0;
+  SPEED_MULTIPLIER = 1.5;
+var
+  ArrowTexID: GLuint;
+begin
+  // Инициализируем модели если еще не инициализированы
+  InitKPD3Models;
+  
+  // Основной объект KPD3
+  BeginObj3D();
+  try
+    Position3D(AngPrivod, AngZ, z);
+    RotateZ(y);
+    
+    // Отрисовка цифрового дисплея
+    DrawDigitalDisplay(Round(GetSpeedValue2));
+    
+    // Отрисовка основной модели
+    SetTexture(KPD3TextureID);
+    DrawModel(KPD3ModelID, 0, True);
+    
+    // Отрисовка стрелки
+    BeginObj3D();
+    try
+      RotateY(ARROW_BASE_ANGLE - GetSpeedValue2 * SPEED_MULTIPLIER);
+      SetTexture(ArrowTexID);
+      DrawModel(ArrowModelID, 0, True);
+    finally
+      EndObj3D();
+    end;
+  finally
+    EndObj3D();
+  end;
+end;
 procedure HookKLUB(
   x: Single;
   y: Single;
@@ -8311,6 +8423,10 @@ begin
       CachedGreenBlockID := 14;
       LightBlockIDsCached := True;
     end;
+
+    //InitializeBoosterKeyboard;
+    //SetBoosterKeyboardCallback(@MyKeyHandler);
+
     SystemInitialized := True;
   end;
 
@@ -8330,7 +8446,8 @@ begin
     end;
   end;
 
-
+  //UpdateBoosterKeyboard;
+  //RenderBoosterKeyboard;
   
   // ===== ОБРАБОТКА КЛАВИАТУРЫ =====
   if (timeGetTime - LastKeyboardCheck) > KeyboardCheckInterval then
