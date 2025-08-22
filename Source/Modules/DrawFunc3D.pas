@@ -8732,14 +8732,18 @@ begin
 
     BeginObj3D;
     glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
-    Position3D(0.8972, 7.448-0.1042, 3.6407);
+    if GetLocomotiveTypeFromMemory = 812 then
+      Position3D(0.8972, 7.448-0.1042, 3.6407)
+    else
+      Position3D(0.8972, 7.448, 3.6407);
     RotateX(-10.4);
     RotateY(0);
     RotateZ(x + -10.0);
     SetTexture(0);
     Color3D($ffffffff, 255, False, 0.0);
     RotateY(speedAngle);
-    Scale3D(1.61);
+    Position3D(0.8972, 7.448-0.1042, 3.6407);
+    Scale3D(1.61);                            
     DrawModel(strelka, 0, False);
     glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
     EndObj3D;
@@ -8781,7 +8785,10 @@ begin
     RotateX(-103.0);
     RotateY(34.2);
     RotateZ(-7.0); // Тот же поворот для совпадения
-    Scale3D(0.002);
+    if GetLocomotiveTypeFromMemory = 812 then
+      Scale3D(0.00017)
+    else
+      Scale3D(0.0002);
     Color3D($0000FF, 255, False, 0.0); // Красный
     SetTexture(0);
     Draw3DSemiCircle(5.2, 180, 360);
@@ -8808,7 +8815,10 @@ begin
       Position3D(0.896, 7.4482, 3.641);
     RotateX(-103.0);
     RotateY(34.2);
-    Scale3D(0.00017);
+    if GetLocomotiveTypeFromMemory = 812 then
+      Scale3D(0.00017)
+    else
+      Scale3D(0.0002);
     Color3D(diskColor, 255, False, 0.0);
     SetTexture(0);
     Draw3DDisk(52);

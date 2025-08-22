@@ -23,7 +23,7 @@ unit EngineCore;
 interface
 uses SysUtils, Windows, Messages, Variables, OpenGl, DrawFunc2D, Textures,
 EngineUtils, DrawFunc3D, Console, Sound, DPC_packages, Advanced3D, Net,
-IniFile, CheatMenu; // <-- Добавить эту строку
+IniFile, CheatMenu, DiscordRPC;
 
 {$R DGLEngine.res}
 {$R Logo.res}
@@ -707,6 +707,8 @@ CurrentTime := GetTimer;
     ProcessAllModules;
     LastConfigReadTime := CurrentTime;
   end;
+
+  UpdateDiscordRPC; // Обновляем Discord Rich Presence
 
      if ShowLogo and (LogoA<>0) then LogoA:=LogoA-1;
      if @ProcessGame<>nil then ProcessGame;
@@ -1977,6 +1979,14 @@ end;
 
   InitCheatMenu;
 
+ try
+    InitDiscordRPC;
+    AddToLogFile(EngineLog, 'Discord RPC initialized successfully');
+  except
+    on E: Exception do
+      AddToLogFile(EngineLog, 'Discord RPC init failed: ' + E.Message);
+  end;
+
   Result := True;
 end;
 {------------------------------------------------------------------}
@@ -1988,6 +1998,8 @@ var
   flag : boolean;
 begin
   StartQuitingEngine := False;
+
+  ShutdownDiscordRPC; // Завершаем Discord RPC
 
   if not glCreateWnd(InitResX, InitResY, InitFullscreen, InitPDepth, InitFrequency ,InitVsync) then
   begin
