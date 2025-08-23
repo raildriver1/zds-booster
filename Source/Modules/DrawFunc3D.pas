@@ -202,6 +202,13 @@ procedure DrawKPD3VL85(
   AngZ: Single
 ); stdcall; export;
 
+procedure DrawBLOCK(
+  x: Single;
+  y: Single;
+  z: Single;
+  AngZ: Single
+); stdcall; export;
+
 procedure DrawKPD3(
   x: Single;
   y: Single;
@@ -211,7 +218,7 @@ procedure DrawKPD3(
 ); stdcall; export;
 
 exports
-  HookKLUB, DrawSky, DrawSkorostemer, HookSkorostemerViaKLUB, DrawKLUB, HookSkorostemerCHS7, DrawKPD3, DrawKPD3VL85;
+  HookKLUB, DrawSky, DrawSkorostemer, HookSkorostemerViaKLUB, DrawKLUB, HookSkorostemerCHS7, DrawKPD3, DrawKPD3VL85, DrawBLOCK;
 procedure FreeEng;
 procedure InitEng;
 
@@ -7820,6 +7827,249 @@ procedure DrawKPD3VL85(
 );
 begin
   DrawKPD3(25.0, 25, 3.50, 10.346, 1.34);
+end;
+
+
+var
+  // Глобальные переменные для BLOCK системы
+  BLOCKModelID: Integer = 0;
+  BLOCKTextureID: Integer = 0;
+  BLOCKInitialized: Boolean = False;
+  BLOCKPatchApplied: Boolean = False;
+
+procedure DrawBLOCK(
+  x: Single;
+  y: Single;
+  z: Single;
+  AngZ: Single
+);
+
+  // Внутренняя функция проверки файлов
+  function CheckBLOCKFiles: Boolean;
+  var
+    currentLocType: Integer;
+    locFolder, blockPath: string;
+    blockModelPath, blockTexturePath: string;
+  begin
+    Result := False;
+    try
+      currentLocType := GetLocomotiveTypeFromMemory;
+      locFolder := GetLocomotiveFolder(currentLocType);
+      blockPath := 'data\' + locFolder + '\' + GetLocNum + '\block\';
+      
+      if not DirectoryExists(blockPath) then
+      begin
+        AddToLogFile(EngineLog, 'BLOCK папка не найдена: ' + blockPath);
+        Exit;
+      end;
+      
+      blockModelPath := blockPath + 'BI-BLOK.dmd';
+      blockTexturePath := blockPath + 'blok.bmp';
+      
+      Result := FileExists(blockModelPath) and FileExists(blockTexturePath);
+      
+      if Result then
+        AddToLogFile(EngineLog, 'BLOCK файлы найдены для ' + locFolder + ' ' + GetLocNum)
+      else
+        AddToLogFile(EngineLog, 'BLOCK файлы неполные для ' + locFolder + ' ' + GetLocNum);
+        
+    except
+      on E: Exception do
+      begin
+        AddToLogFile(EngineLog, 'Ошибка проверки BLOCK файлов: ' + E.Message);
+        Result := False;
+      end;
+    end;
+  end;
+
+  // Внутренняя функция инициализации моделей
+  procedure InitBLOCKModels;
+  var
+    currentLocType: Integer;
+    locFolder, blockPath: string;
+    blockModelPath, blockTexturePath: string;
+  begin
+    if BLOCKInitialized then Exit;
+    
+    try
+      currentLocType := GetLocomotiveTypeFromMemory;
+      locFolder := GetLocomotiveFolder(currentLocType);
+      blockPath := 'data\' + locFolder + '\' + GetLocNum + '\block\';
+      
+      AddToLogFile(EngineLog, '=== ИНИЦИАЛИЗАЦИЯ BLOCK ===');
+      AddToLogFile(EngineLog, 'Тип локомотива: ' + IntToStr(currentLocType));
+      AddToLogFile(EngineLog, 'Папка локомотива: ' + locFolder);
+      AddToLogFile(EngineLog, 'Номер: ' + GetLocNum);
+      AddToLogFile(EngineLog, 'Путь BLOCK: ' + blockPath);
+      
+      blockModelPath := blockPath + 'BI-BLOK.dmd';
+      blockTexturePath := blockPath + 'blok.bmp';
+      
+      if not CheckBLOCKFiles then
+      begin
+        AddToLogFile(EngineLog, 'BLOCK файлы не найдены, инициализация отменена');
+        Exit;
+      end;
+      
+      // Загружаем модель
+      BLOCKModelID := LoadModel(blockModelPath, 0, False);
+      if BLOCKModelID > 0 then
+        AddToLogFile(EngineLog, 'BLOCK модель загружена, ID: ' + IntToStr(BLOCKModelID))
+      else
+      begin
+        AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить BLOCK модель: ' + blockModelPath);
+        Exit;
+      end;
+      
+      // Загружаем текстуру
+      BLOCKTextureID := LoadTextureFromFile(blockTexturePath, 0, -1);
+      if BLOCKTextureID > 0 then
+        AddToLogFile(EngineLog, 'BLOCK текстура загружена, ID: ' + IntToStr(BLOCKTextureID))
+      else
+      begin
+        AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить BLOCK текстуру: ' + blockTexturePath);
+        Exit;
+      end;
+      
+      BLOCKInitialized := True;
+      AddToLogFile(EngineLog, 'BLOCK инициализация завершена успешно');
+      
+    except
+      on E: Exception do
+      begin
+        AddToLogFile(EngineLog, 'КРИТИЧЕСКАЯ ОШИБКА инициализации BLOCK: ' + E.Message);
+        BLOCKInitialized := False;
+      end;
+    end;
+  end;
+
+  // Внутренняя функция применения NOP патча
+  function ApplyNOPPatch(patchAddress: Cardinal; size: Integer): Boolean;
+  var
+    OldProtect: DWORD;
+    i: Integer;
+  begin
+    Result := False;
+    
+    if VirtualProtect(Pointer(patchAddress), size, PAGE_EXECUTE_READWRITE, OldProtect) then
+    begin
+      try
+        for i := 0 to size - 1 do
+          PByte(patchAddress + i)^ := $90;
+          
+        VirtualProtect(Pointer(patchAddress), size, OldProtect, OldProtect);
+        Result := True;
+        AddToLogFile(EngineLog, 'NOP патч применен успешно');
+      except
+        on E: Exception do
+        begin
+          AddToLogFile(EngineLog, 'ОШИБКА применения NOP патча: ' + E.Message);
+          Result := False;
+        end;
+      end;
+    end
+    else
+    begin
+      AddToLogFile(EngineLog, 'ОШИБКА: Не удалось изменить защиту памяти для NOP патча');
+      Result := False;
+    end;
+  end;
+
+  // Внутренняя функция применения патча
+  procedure ApplyBLOCKPatch;
+  var
+    currentLocType: Integer;
+    patchAddress: Cardinal;
+  begin
+    if BLOCKPatchApplied then Exit;
+    
+    try
+      currentLocType := GetLocomotiveTypeFromMemory;
+      
+      // Проверяем поддерживаемые типы локомотивов
+      case currentLocType of
+        822: // ЧС7
+        begin
+          patchAddress := $00677AB3; // Прямой адрес
+          AddToLogFile(EngineLog, '=== ПРИМЕНЕНИЕ BLOCK ПАТЧА ===');
+          AddToLogFile(EngineLog, 'Тип локомотива: ЧС7 (822)');
+          AddToLogFile(EngineLog, 'Адрес патча: $' + IntToHex(patchAddress, 8));
+          AddToLogFile(EngineLog, 'Тип патча: NOP call sub_484AB4');
+          
+          if ApplyNOPPatch(patchAddress, 5) then
+          begin
+            BLOCKPatchApplied := True;
+            AddToLogFile(EngineLog, 'BLOCK патч для ЧС7 применен успешно');
+          end
+          else
+            AddToLogFile(EngineLog, 'ОШИБКА применения BLOCK патча для ЧС7');
+        end;
+        
+        // Здесь можно добавить другие локомотивы
+        // 811: // ВЛ11М
+        // begin
+        //   // Логика для ВЛ11М
+        // end;
+        
+        else
+          AddToLogFile(EngineLog, 'BLOCK патч не поддерживается для типа локомотива: ' + IntToStr(currentLocType));
+      end;
+      
+    except
+      on E: Exception do
+        AddToLogFile(EngineLog, 'ИСКЛЮЧЕНИЕ при применении BLOCK патча: ' + E.Message);
+    end;
+  end;
+
+begin
+  // Применяем патч при первом вызове
+  ApplyBLOCKPatch;
+  
+  // Инициализируем модели если еще не инициализированы
+  if not BLOCKInitialized then
+    InitBLOCKModels;
+    
+  // Если инициализация не удалась, выходим
+  if not BLOCKInitialized then
+  begin
+    AddToLogFile(EngineLog, 'BLOCK не инициализирован, отрисовка отменена');
+    Exit;
+  end;
+  
+  // Отрисовываем BLOCK
+  try
+    BeginObj3D();
+    Position3D(AngZ, z, y);
+    RotateZ(x);
+    SetTexture(BLOCKTextureID);
+    DrawModel(BLOCKModelID, 0, True);
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.022, 0, 0.247);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetCurrentTime);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+    
+    EndObj3D();
+  except
+    on E: Exception do
+      AddToLogFile(EngineLog, 'Ошибка отрисовки BLOCK: ' + E.Message);
+  end;
+end;
+
+// Дополнительная функция для принудительной переинициализации (опционально)
+procedure ReinitializeBLOCK;
+begin
+  BLOCKInitialized := False;
+  BLOCKPatchApplied := False;
+  BLOCKModelID := 0;
+  BLOCKTextureID := 0;
+  AddToLogFile(EngineLog, 'BLOCK система сброшена для переинициализации');
 end;
 
 procedure HookKLUB(
