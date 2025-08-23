@@ -17,6 +17,9 @@ function GetAcceleration: string;  // Ускорение
 function GetTrafficLightsSequence: string;  // Последовательность светофоров
 function GetLimitSpeedValue: integer;  // Последовательность светофоров
 function GetSpeedValue2 : Single;
+function GetCurrentStation: string;   // Текущая станция
+function GetChannel: string;
+function GetTrackWithDirection: string;
 
 function GetSpeedValue: Integer;     // Скорость как число
 function GetDistanceValue: Integer; // Расстояние как число
@@ -81,6 +84,123 @@ end;
 function Min(A, B: Integer): Integer;
 begin
   if A < B then Result := A else Result := B;
+end;
+
+function GetChannel: string;
+begin
+  try
+    Result := IntToStr(PByte(BaseAddress + $3498A4)^);
+  except
+    Result := 'Err';
+  end;
+end;
+
+function GetTrackWithDirection: string;
+var
+  byte1: Byte;
+  totalValue: Integer;
+  checkValue: Byte;
+  suffix: string;
+begin
+  try
+    // Читаем первый байт по адресу BaseAddress + $4F8D958
+    byte1 := PByte(BaseAddress + $4F8D958)^;
+    
+    // Складываем два байта
+    totalValue := byte1;
+    
+    // Проверяем значение по адресу BaseAddress + $349890
+    checkValue := PByte(BaseAddress + $349890)^;
+    
+    // Определяем суффикс
+    if checkValue = 0 then
+      suffix := 'НП'
+    else
+      suffix := 'ПР';
+    
+    // Формируем результирующую строку
+    Result := IntToStr(totalValue) + suffix;
+    
+  except
+    Result := 'Err';
+  end;
+end;
+
+function GetCurrentStation: string;
+var
+  baseStationAddress: Cardinal;
+  stationsCount: Byte;
+  currentPiket: Integer;
+  i: Integer;
+  nameAddress, piketAddress: Cardinal;
+  stationName: string;
+  stationPiket: Integer;
+  buffer: array[0..63] of Char;
+  nameLength: Byte;
+  minDistance, distance: Integer;
+  bestMatch: string;
+begin
+  Result := '';
+  
+  try
+    // Получаем текущий пикет
+    currentPiket := PWord(BaseAddress + $8C08054)^;
+    
+    // Получаем базовый адрес станций
+    baseStationAddress := PCardinal(BaseAddress + $403AEC)^ - $04;
+    stationsCount := PByte(Pointer(baseStationAddress))^;
+    
+    if stationsCount = 0 then Exit;
+    
+    minDistance := MaxInt;
+    bestMatch := '';
+    
+    // Читаем все станции и ищем ближайшую
+    for i := 0 to stationsCount - 1 do
+    begin
+      try
+        // Читаем имя станции
+        nameAddress := PCardinal(BaseAddress + $403AEC)^ + $70 + i * $48;
+        
+        // Читаем длину строки
+        nameLength := PByte(Pointer(nameAddress))^;
+        if nameLength > 63 then nameLength := 63;
+        
+        // Очищаем буфер
+        FillChar(buffer, SizeOf(buffer), 0);
+        
+        // Читаем строку
+        if nameLength > 0 then
+          Move(Pointer(nameAddress + 1)^, buffer, nameLength);
+        
+        stationName := Trim(UpperCase(string(buffer)));
+        
+        // Читаем пикет станции
+        piketAddress := PCardinal(BaseAddress + $403AEC)^ + $48 + i * $48;
+        stationPiket := PInteger(Pointer(piketAddress))^;
+        
+        // Вычисляем расстояние
+        distance := Abs(currentPiket - stationPiket);
+        
+        // Ищем станцию с погрешностью ±50 и минимальным расстоянием
+        if (distance <= 50) and (distance < minDistance) and (stationName <> '') then
+        begin
+          minDistance := distance;
+          bestMatch := stationName;
+        end;
+        
+      except
+        // Пропускаем ошибки чтения отдельных станций
+        Continue;
+      end;
+    end;
+    
+    if bestMatch <> '' then
+      Result := bestMatch;
+      
+  except
+    Result := 'Err';
+  end;
 end;
 
 function GetSpeed: string;

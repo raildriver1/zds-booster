@@ -7829,10 +7829,10 @@ begin
   DrawKPD3(25.0, 25, 3.50, 10.346, 1.34);
 end;
 
-
 var
   // Глобальные переменные для BLOCK системы
   BLOCKModelID: Integer = 0;
+  BLOCKDisplayModelID: Integer = 0;  // Добавлена переменная для модели дисплея
   BLOCKTextureID: Integer = 0;
   BLOCKInitialized: Boolean = False;
   BLOCKPatchApplied: Boolean = False;
@@ -7849,7 +7849,7 @@ procedure DrawBLOCK(
   var
     currentLocType: Integer;
     locFolder, blockPath: string;
-    blockModelPath, blockTexturePath: string;
+    blockModelPath, blockDisplayModelPath, blockTexturePath: string;
   begin
     Result := False;
     try
@@ -7864,9 +7864,10 @@ procedure DrawBLOCK(
       end;
       
       blockModelPath := blockPath + 'BI-BLOK.dmd';
+      blockDisplayModelPath := blockPath + 'BI-blok-displ.dmd';  // Добавлен путь к модели дисплея
       blockTexturePath := blockPath + 'blok.bmp';
       
-      Result := FileExists(blockModelPath) and FileExists(blockTexturePath);
+      Result := FileExists(blockModelPath) and FileExists(blockDisplayModelPath) and FileExists(blockTexturePath);
       
       if Result then
         AddToLogFile(EngineLog, 'BLOCK файлы найдены для ' + locFolder + ' ' + GetLocNum)
@@ -7887,7 +7888,7 @@ procedure DrawBLOCK(
   var
     currentLocType: Integer;
     locFolder, blockPath: string;
-    blockModelPath, blockTexturePath: string;
+    blockModelPath, blockDisplayModelPath, blockTexturePath: string;
   begin
     if BLOCKInitialized then Exit;
     
@@ -7903,6 +7904,7 @@ procedure DrawBLOCK(
       AddToLogFile(EngineLog, 'Путь BLOCK: ' + blockPath);
       
       blockModelPath := blockPath + 'BI-BLOK.dmd';
+      blockDisplayModelPath := blockPath + 'BI-blok-displ.dmd';  // Добавлен путь к модели дисплея
       blockTexturePath := blockPath + 'blok.bmp';
       
       if not CheckBLOCKFiles then
@@ -7911,13 +7913,23 @@ procedure DrawBLOCK(
         Exit;
       end;
       
-      // Загружаем модель
+      // Загружаем основную модель
       BLOCKModelID := LoadModel(blockModelPath, 0, False);
       if BLOCKModelID > 0 then
         AddToLogFile(EngineLog, 'BLOCK модель загружена, ID: ' + IntToStr(BLOCKModelID))
       else
       begin
         AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить BLOCK модель: ' + blockModelPath);
+        Exit;
+      end;
+      
+      // Загружаем модель дисплея
+      BLOCKDisplayModelID := LoadModel(blockDisplayModelPath, 0, False);
+      if BLOCKDisplayModelID > 0 then
+        AddToLogFile(EngineLog, 'BLOCK модель дисплея загружена, ID: ' + IntToStr(BLOCKDisplayModelID))
+      else
+      begin
+        AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить BLOCK модель дисплея: ' + blockDisplayModelPath);
         Exit;
       end;
       
@@ -8042,8 +8054,40 @@ begin
     Position3D(AngZ, z, y);
     RotateZ(x);
     SetTexture(BLOCKTextureID);
+    
+    // Отрисовываем основную модель
     DrawModel(BLOCKModelID, 0, True);
 
+    glDisable(GL_LIGHTING);
+    // Отрисовываем модель дисплея с той же текстурой
+    DrawModel(BLOCKDisplayModelID, 0, True);
+    glEnable(GL_LIGHTING);
+
+    // Координаты
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.11, 0, 0.247);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetCoordinatesFormatted);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Станция
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.07, 0, 0.247);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetCurrentStation);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Время
     BeginObj3D;
     glDisable(GL_LIGHTING);
     Position3D(-0.022, 0, 0.247);
@@ -8054,7 +8098,67 @@ begin
     DrawText3D(0, GetCurrentTime);
     glEnable(GL_LIGHTING);
     EndObj3D;
-    
+
+    // Канал
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.11, 0, 0.233);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetChannel);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Номер пути
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.095, 0, 0.233);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetTrackWithDirection);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Ускорение
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.105, 0, 0.216);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetAcceleration);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Расстояние до цели САУТ
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.105, 0, 0.199);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetDistance);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Расстояние до цели САУТ
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.105, 0, 0.182);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, '0.67');
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
     EndObj3D();
   except
     on E: Exception do
