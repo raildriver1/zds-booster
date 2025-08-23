@@ -7709,6 +7709,48 @@ begin
   finally
     EndObj3D();
   end;
+
+  if GetLocomotiveTypeFromMemory = 822 then
+  begin
+ if SevenSegmentFont = 0 then
+  begin
+    SevenSegmentFont := CreateFont3D('7-Segment');
+  end;
+
+  if PSingle(Pointer(FloatValueAddr))^ > 9 then
+  begin
+    // Отрисовываем цифру на позиции 34
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(0.142, 7.48, 3.162);
+    RotateX(-57.3);
+    RotateY(0.0);
+    RotateZ(0.0);
+    Scale3D(0.018);
+    SetTexture(0);
+    Color3D($0000FF, 255, False, 0);
+    DrawText3D(SevenSegmentFont, GetFloatDigit(1));
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+  end;
+
+
+    // Отрисовываем цифру на позиции 35
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(0.1533, 7.48, 3.162);
+    RotateX(-57.3);
+    RotateY(0.0);
+    RotateZ(0.0);
+    Scale3D(0.018);
+    SetTexture(0);
+    Color3D($0000FF, 255, False, 0);
+    DrawText3D(SevenSegmentFont, GetFloatDigit(2));
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+  end;
+  
+
 end;
 
 procedure DrawKPD3VL85(
@@ -9116,8 +9158,7 @@ begin
   currentLocType := GetLocomotiveTypeFromMemory;
   locFolder := GetLocomotiveFolder(currentLocType);
 
-  if not ((currentLocType = 812) or (currentLocType = 822) or
-          (locFolder = 'chs8') or (locFolder = 'chs7')) then
+  if not ((currentLocType = 812) or (currentLocType = 822)) then
   begin
     Exit; // Выходим из процедуры
   end;
