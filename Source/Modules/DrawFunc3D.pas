@@ -195,6 +195,13 @@ procedure HookSkorostemerCHS7(
   AngZ: Single
 ); stdcall; export;
 
+procedure DrawKPD3VL85(
+  x: Single;
+  y: Single;
+  z: Single;
+  AngZ: Single
+); stdcall; export;
+
 procedure DrawKPD3(
   x: Single;
   y: Single;
@@ -204,7 +211,7 @@ procedure DrawKPD3(
 ); stdcall; export;
 
 exports
-  HookKLUB, DrawSky, DrawSkorostemer, HookSkorostemerViaKLUB, DrawKLUB, HookSkorostemerCHS7, DrawKPD3;
+  HookKLUB, DrawSky, DrawSkorostemer, HookSkorostemerViaKLUB, DrawKLUB, HookSkorostemerCHS7, DrawKPD3, DrawKPD3VL85;
 procedure FreeEng;
 procedure InitEng;
 
@@ -7506,11 +7513,12 @@ begin
     
     // Проверяем, поддерживается ли этот тип локомотива
     patchOffset := GetKPD3PatchOffset(currentLocType);
-    if patchOffset = 0 then
+    if (patchOffset = 0) and (currentLocType <> 885) then
     begin
       AddToLogFile(EngineLog, 'KPD-3 патч не поддерживается для типа локомотива: ' + IntToStr(currentLocType));
       Exit;
     end;
+
     
     // Проверяем наличие KPD-3 файлов
     if not CheckKPD3FilesExist(currentLocType, LocNum) then
@@ -7518,9 +7526,42 @@ begin
       AddToLogFile(EngineLog, 'KPD-3 файлы не найдены, патч не применяется');
       Exit;
     end;
-    
+
     // Инициализируем модели KPD-3
     InitKPD3Models;
+
+    if currentLocType = 885 then
+    begin
+      patchAddress := $6C2FBB;
+      drawKPD3Address := Cardinal(@DrawKPD3VL85);
+      newOffset := Integer(drawKPD3Address) - Integer(patchAddress + 5);
+      AddToLogFile(EngineLog, 'ВЛ85 был пропатчен :)');
+
+      if VirtualProtect(Pointer(patchAddress + 1), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+      begin
+        try
+          PInteger(patchAddress + 1)^ := newOffset;
+          VirtualProtect(Pointer(patchAddress + 1), 4, OldProtect, OldProtect);
+          Result := True;
+          AddToLogFile(EngineLog, 'KPD-3 патч применен успешно');
+        except
+          on E: Exception do
+          begin
+            AddToLogFile(EngineLog, 'ОШИБКА записи KPD-3 патча: ' + E.Message);
+            Result := False;
+          end;
+        end;
+      end
+      else
+      begin
+        AddToLogFile(EngineLog, 'ОШИБКА: Не удалось изменить защиту памяти для KPD-3 патча');
+        Result := False;
+      end;
+
+        Exit;
+      end;
+    
+
     if not KPD3Initialized then
     begin
       AddToLogFile(EngineLog, 'Не удалось инициализировать KPD-3, патч не применяется');
@@ -7575,6 +7616,7 @@ begin
   else
     AddToLogFile(EngineLog, 'KPD-3 система не была инициализирована');
 end;
+
 // Вспомогательная процедура для отрисовки цифры
 procedure DrawDigit3D(x, y, z: Single; digit: string);
 begin
@@ -7668,6 +7710,17 @@ begin
     EndObj3D();
   end;
 end;
+
+procedure DrawKPD3VL85(
+  x: Single;
+  y: Single;
+  z: Single;
+  AngZ: Single
+);
+begin
+  DrawKPD3(25.0, 25, 3.50, 10.346, 1.34);
+end;
+
 procedure HookKLUB(
   x: Single;
   y: Single;

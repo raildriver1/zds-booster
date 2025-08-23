@@ -1958,6 +1958,7 @@ begin
           885: begin
             AddToLogFile(EngineLog, 'VL85 detected, applying ZDSim patches immediately...');
             ApplyZDSimPatches;  // Вызываем сразу при обнаружении
+            ApplyKPD3Patch();
             AddToLogFile(EngineLog, 'ZDSim patches activation completed for locomotive type 885 (VL85)');
           end;
 
