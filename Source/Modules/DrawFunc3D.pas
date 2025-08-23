@@ -9178,7 +9178,6 @@ begin
     SetTexture(0);
     Color3D($ffffffff, 255, False, 0.0);
     RotateY(speedAngle);
-    Position3D(0.8972, 7.448-0.1042, 3.6407);
     Scale3D(1.61);                            
     DrawModel(strelka, 0, False);
     glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
