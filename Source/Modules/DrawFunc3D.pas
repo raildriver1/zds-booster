@@ -7680,9 +7680,25 @@ const
   SPEED_MULTIPLIER = 1.5;
 var
   ArrowTexID: GLuint;
+  CurrentTime: string;
+  Hours, Minutes: Integer;
+  HourDigit1, HourDigit2, MinuteDigit1, MinuteDigit2: string;
 begin
   // Инициализируем модели если еще не инициализированы
   InitKPD3Models;
+  
+  // Получаем текущее время
+  CurrentTime := GetCurrentTime; // Формат "HH:MM:SS"
+  
+  // Извлекаем часы и минуты
+  Hours := StrToInt(Copy(CurrentTime, 1, 2));   // Первые 2 символа - часы
+  Minutes := StrToInt(Copy(CurrentTime, 4, 2)); // 4-5 символы - минуты
+  
+  // Разбиваем на отдельные цифры
+  HourDigit1 := IntToStr(Hours div 10);        // Десятки часов
+  HourDigit2 := IntToStr(Hours mod 10);        // Единицы часов
+  MinuteDigit1 := IntToStr(Minutes div 10);    // Десятки минут
+  MinuteDigit2 := IntToStr(Minutes mod 10);    // Единицы минут
   
   // Основной объект KPD3
   BeginObj3D();
@@ -7697,6 +7713,54 @@ begin
     SetTexture(KPD3TextureID);
     DrawModel(KPD3ModelID, 0, True);
     
+    // 1 семисегмент часа (десятки)
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.022, -0.033, -0.063);
+    RotateX(-90);
+    Scale3D(0.017);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(SevenSegmentFont, HourDigit1);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+    
+    // 2 семисегмент часа (единицы)
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.011, -0.033, -0.063);
+    RotateX(-90);
+    Scale3D(0.017);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(SevenSegmentFont, HourDigit2 + '.');
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+    
+    // 3 семисегмент минуты (десятки)
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(0, -0.033, -0.063);
+    RotateX(-90);
+    Scale3D(0.017);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(SevenSegmentFont, MinuteDigit1);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+    
+    // 4 семисегмент минуты (единицы)
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(0.011, -0.033, -0.063);
+    RotateX(-90);
+    Scale3D(0.017);
+    Color3D(3407667, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(SevenSegmentFont, MinuteDigit2);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+    
     // Отрисовка стрелки
     BeginObj3D();
     try
@@ -7709,32 +7773,29 @@ begin
   finally
     EndObj3D();
   end;
-
+  
   if GetLocomotiveTypeFromMemory = 822 then
   begin
- if SevenSegmentFont = 0 then
-  begin
-    SevenSegmentFont := CreateFont3D('7-Segment');
-  end;
-
-  if PSingle(Pointer(FloatValueAddr))^ > 9 then
-  begin
-    // Отрисовываем цифру на позиции 34
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(0.142, 7.48, 3.162);
-    RotateX(-57.3);
-    RotateY(0.0);
-    RotateZ(0.0);
-    Scale3D(0.018);
-    SetTexture(0);
-    Color3D($0000FF, 255, False, 0);
-    DrawText3D(SevenSegmentFont, GetFloatDigit(1));
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-  end;
-
-
+    if SevenSegmentFont = 0 then
+    begin
+      SevenSegmentFont := CreateFont3D('7-Segment');
+    end;
+    if PSingle(Pointer(FloatValueAddr))^ > 9 then
+    begin
+      // Отрисовываем цифру на позиции 34
+      BeginObj3D;
+      glDisable(GL_LIGHTING);
+      Position3D(0.142, 7.48, 3.162);
+      RotateX(-57.3);
+      RotateY(0.0);
+      RotateZ(0.0);
+      Scale3D(0.018);
+      SetTexture(0);
+      Color3D($0000FF, 255, False, 0);
+      DrawText3D(SevenSegmentFont, GetFloatDigit(1));
+      glEnable(GL_LIGHTING);
+      EndObj3D;
+    end;
     // Отрисовываем цифру на позиции 35
     BeginObj3D;
     glDisable(GL_LIGHTING);
@@ -7749,8 +7810,6 @@ begin
     glEnable(GL_LIGHTING);
     EndObj3D;
   end;
-  
-
 end;
 
 procedure DrawKPD3VL85(
