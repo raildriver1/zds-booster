@@ -7966,9 +7966,12 @@ begin
       EndObj3D;
     end;
 
-    // === СТРЕЛКА (треугольная, ВЫНЕСЕНА ВПЕРЕД) ===
+    // === СТРЕЛКА (исправленная - всегда видимая) ===
     needleAngle := (START_ANGLE - (speed / maxSpeed) * SPEED_RANGE) * (Pi / 180.0);
 
+    // Отключаем depth test для стрелки чтобы она всегда была видна
+    glDisable(GL_DEPTH_TEST);
+    
     BeginObj3D;
     Position3D(-0.01, 0, 0.18);
     RotateX(-90);
@@ -7986,16 +7989,37 @@ begin
 
     SetTexture(0);
 
+    // Рисуем стрелку с правильным основанием (перпендикулярно направлению)
     glBegin(GL_TRIANGLES);
-      glVertex3f(-6, 0, 0.25); // <<— вынесено вперед
-      glVertex3f( 6, 0, 0.25);
-      glVertex3f((BASE_RADIUS - 3) * cos(needleAngle),
-                 (BASE_RADIUS - 3) * sin(needleAngle),
-                 0.25);
+      // Вычисляем перпендикулярный угол для основания стрелки (делаем уже)
+      // Левая точка основания
+      glVertex3f(4 * cos(needleAngle + Pi/2), 4 * sin(needleAngle + Pi/2), 0.5);
+      // Правая точка основания  
+      glVertex3f(4 * cos(needleAngle - Pi/2), 4 * sin(needleAngle - Pi/2), 0.5);
+      // Кончик стрелки (делаем острее - ближе к краю)
+      glVertex3f((BASE_RADIUS - 1) * cos(needleAngle),
+                 (BASE_RADIUS - 1) * sin(needleAngle),
+                 0.5);
     glEnd;
+    
+    // Дополнительно рисуем тонкую линию от центра к кончику
+    glLineWidth(2);
+    glBegin(GL_LINES);
+      glVertex3f(0, 0, 0.5);
+      glVertex3f((BASE_RADIUS - 1) * cos(needleAngle),
+                 (BASE_RADIUS - 1) * sin(needleAngle),
+                 0.5);
+    glEnd;
+    glLineWidth(1);
+    
     EndObj3D;
 
+    // Включаем depth test обратно
+    glEnable(GL_DEPTH_TEST);
+
     // === ЦЕНТРАЛЬНЫЙ КРУГ (над стрелкой) ===
+    glDisable(GL_DEPTH_TEST); // Также отключаем для центрального круга
+    
     BeginObj3D;
     Position3D(-0.01, 0, 0.18);
     RotateX(-90);
@@ -8015,16 +8039,20 @@ begin
 
     segments := 30;
     glBegin(GL_TRIANGLE_FAN);
-      glVertex3f(0, 0, 0.26); // <<— чуть выше стрелки
+      glVertex3f(0, 0, 0.6); // Еще выше чем стрелка
       for i := 0 to segments do
       begin
         angle := (i * 2 * Pi / segments);
-        glVertex3f(12 * cos(angle), 12 * sin(angle), 0.26);
+        glVertex3f(12 * cos(angle), 12 * sin(angle), 0.6);
       end;
     glEnd;
     EndObj3D;
 
+    glEnable(GL_DEPTH_TEST); // Включаем обратно
+
     // === ОБВОДКА ЦЕНТРА ===
+    glDisable(GL_DEPTH_TEST);
+    
     BeginObj3D;
     Position3D(-0.01, 0, 0.18);
     RotateX(-90);
@@ -8038,18 +8066,20 @@ begin
       for i := 0 to segments do
       begin
         angle := (i * 2 * Pi / segments);
-        glVertex3f(12 * cos(angle), 12 * sin(angle), 0.26);
+        glVertex3f(12 * cos(angle), 12 * sin(angle), 0.6);
       end;
     glEnd;
     glLineWidth(1);
     EndObj3D;
+    
+    glEnable(GL_DEPTH_TEST);
 
     // === ТЕКСТ СКОРОСТИ ===
-    speedText := Format('%03d', [Trunc(speed)]);
+    speedText := FormatFloat('000', Trunc(speed));
     BeginObj3D;
-    Position3D(-0.01, 0, 0.18);
+    Position3D(-0.019, 0, 0.177); // Выдвигаем вперед
     RotateX(-90);
-    Scale3D(0.0009);
+    Scale3D(0.012); // Чуть увеличиваем размер текста
 
     if (speed > speedLimit - 3) and (speedLimit > 0) and (speed > 0) and blinkState then
       Color3D($FF6600, 255, False, 0.0)
@@ -8057,19 +8087,19 @@ begin
       Color3D($FFFFFF, 255, False, 0.0);
 
     SetTexture(0);
-    DrawText3D(SevenSegmentFont, speedText);
+    DrawText3D(0, speedText);
     EndObj3D;
 
     // === ТЕКСТ ОГРАНИЧЕНИЯ ===
     if speedLimit > 0 then
     begin
       BeginObj3D;
-      Position3D(-0.01, 0, 0.18);
+      Position3D(-0.019, 0, 0.157); // Выдвигаем вперед
       RotateX(-90);
-      Scale3D(0.0009);
+      Scale3D(0.012); // Чуть увеличиваем размер текста
       Color3D($0000FF, 255, False, 0.0);
       SetTexture(0);
-      DrawText3D(SevenSegmentFont, Format('%03d', [Trunc(speedLimit)]));
+      DrawText3D(0, FormatFloat('000', Trunc(speedLimit)));
       EndObj3D;
     end;
 
@@ -8131,11 +8161,11 @@ begin
     on E: Exception do
     begin
       glEnable(GL_LIGHTING);
+      glEnable(GL_DEPTH_TEST); // Убеждаемся что depth test включен в случае ошибки
       AddToLogFile(EngineLog, 'Ошибка отрисовки 3D спидометра: ' + E.Message);
     end;
   end;
 end;
-
 
 var
   // Глобальные переменные для BLOCK системы
