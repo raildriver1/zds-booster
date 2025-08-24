@@ -20,6 +20,7 @@ function GetSpeedValue2 : Single;
 function GetCurrentStation: string;   // Текущая станция
 function GetChannel: string;
 function GetTrackWithDirection: string;
+function GetTargetType: string;
 
 function GetSpeedValue: Integer;     // Скорость как число
 function GetDistanceValue: Integer; // Расстояние как число
@@ -92,6 +93,186 @@ begin
     Result := IntToStr(PByte(BaseAddress + $3498A4)^);
   except
     Result := 'Err';
+  end;
+end;
+
+function GetTargetType: string;
+var
+  CurrentPiket: Integer;
+  RoutePath: string;
+  BasePath: string;
+  FileName: string;
+  FilePath: string;
+  ObjFile: TextFile;
+  SettingsFile: TextFile;
+  Line: string;
+  Parts: array[0..10] of string;
+  PartCount: Integer;
+  i, SpacePos: Integer;
+  PicketStr: string;
+  PicketNum: Integer;
+  ObjectFile: string;
+  Direction: Byte;
+begin
+  Result := '';
+  
+  try
+    // Получаем текущий пикет (для версии 55)
+    try
+      CurrentPiket := PWord(BaseAddress + $8C08054)^;
+    except
+      Exit;
+    end;
+    
+    // Читаем RoutePath из settings.ini
+    RoutePath := '';
+    try
+      AssignFile(SettingsFile, ExtractFilePath(ParamStr(0)) + 'settings.ini');
+      
+      if not FileExists(ExtractFilePath(ParamStr(0)) + 'settings.ini') then
+        Exit;
+        
+      Reset(SettingsFile);
+      try
+        while not Eof(SettingsFile) do
+        begin
+          ReadLn(SettingsFile, Line);
+          Line := Trim(Line);
+          if Pos('RoutePath=', Line) = 1 then
+          begin
+            RoutePath := Copy(Line, 11, Length(Line) - 10);
+            Break;
+          end;
+        end;
+      finally
+        CloseFile(SettingsFile);
+      end;
+    except
+      Exit;
+    end;
+    
+    if RoutePath = '' then
+      Exit;
+    
+    // Формируем базовый путь
+    BasePath := ExtractFilePath(ParamStr(0)) + 'routes\' + RoutePath;
+    
+    // Определяем направление и файл
+    try
+      Direction := PByte(BaseAddress + $749818)^;
+      if Direction = 1 then
+        FileName := 'Info_Obj_Tuda.txt'
+      else
+        FileName := 'Info_Obj_Obratno.txt';
+    except
+      FileName := 'Info_Obj_Tuda.txt'; // По умолчанию
+    end;
+    
+    FilePath := BasePath + '\' + FileName;
+    
+    // Ищем объекты в файле
+    if not FileExists(FilePath) then
+    begin
+      // Пробуем альтернативный файл
+      if FileName = 'Info_Obj_Tuda.txt' then
+        FileName := 'Info_Obj_Obratno.txt'
+      else
+        FileName := 'Info_Obj_Tuda.txt';
+      FilePath := BasePath + '\' + FileName;
+      
+      if not FileExists(FilePath) then
+        Exit;
+    end;
+    
+    try
+      AssignFile(ObjFile, FilePath);
+      Reset(ObjFile);
+      try
+        while not Eof(ObjFile) do
+        begin
+          ReadLn(ObjFile, Line);
+          Line := Trim(Line);
+          
+          if Line = '' then
+            Continue;
+          
+          // Парсим строку по пробелам
+          PartCount := 0;
+          i := 1;
+          while (i <= Length(Line)) and (PartCount < 10) do
+          begin
+            // Пропускаем пробелы
+            while (i <= Length(Line)) and (Line[i] = ' ') do
+              Inc(i);
+            
+            if i > Length(Line) then
+              Break;
+            
+            // Читаем слово
+            SpacePos := i;
+            while (SpacePos <= Length(Line)) and (Line[SpacePos] <> ' ') do
+              Inc(SpacePos);
+            
+            Parts[PartCount] := Copy(Line, i, SpacePos - i);
+            Inc(PartCount);
+            i := SpacePos;
+          end;
+          
+          if PartCount >= 2 then
+          begin
+            PicketStr := Parts[0];
+            ObjectFile := LowerCase(Parts[1]);
+            
+            // Извлекаем только цифры из номера пикета
+            PicketNum := 0;
+            for i := 1 to Length(PicketStr) do
+            begin
+              if PicketStr[i] in ['0'..'9'] then
+              begin
+                PicketNum := PicketNum * 10 + (Ord(PicketStr[i]) - Ord('0'));
+              end;
+            end;
+            
+            // Проверяем диапазон [PicketNum, PicketNum+2]
+            if (CurrentPiket >= PicketNum) and (CurrentPiket <= PicketNum + 2) then
+            begin
+              if ObjectFile = 'station.mp3' then
+                Result := 'Станция'
+              else if ObjectFile = 'signal.mp3' then
+                Result := 'Светофор'
+              else if ObjectFile = 'platform.mp3' then
+                Result := 'Платформа'
+              else if (ObjectFile = 'pereezd.mp3') or (ObjectFile = 'peereezd.mp3') then
+                Result := 'Переезд'
+              else if ObjectFile = 'most.mp3' then
+                Result := 'Мост'
+              else if ObjectFile = 'puteprovod.mp3' then
+                Result := 'Путепровод'
+              else if ObjectFile = 'ktsm.mp3' then
+                Result := 'КТСМ'
+              else if ObjectFile = 'uksps.mp3' then
+                Result := 'УКСПС'
+              else if ObjectFile = 'neyt_vstavka.mp3' then
+                Result := 'Нейтральная вставка'
+              else if ObjectFile = 'perehod.mp3' then
+                Result := 'Переход'
+              else if ObjectFile = 'gazoprovod.mp3' then
+                Result := 'Газопровод';
+              
+              if Result <> '' then
+                Break; // Останавливаемся на первом найденном объекте
+            end;
+          end;
+        end;
+      finally
+        CloseFile(ObjFile);
+      end;
+    except
+      Result := '';
+    end;
+    
+  except
+    Result := '';
   end;
 end;
 
