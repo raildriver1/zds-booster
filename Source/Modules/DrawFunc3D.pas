@@ -7829,11 +7829,10 @@ begin
   DrawKPD3(25.0, 25, 3.50, 10.346, 1.34);
 end;
 
-
 procedure DrawSpeedometer3D;
 var
-  i, j: Integer;
-  angle, needleAngle, limitAngle, redZoneRange, whiteEndAngle, whiteRange: Single;  // Добавлены переменные
+  i: Integer;
+  angle, needleAngle: Single;
   speed, speedLimit, maxSpeed: Single;
   tc, tm, ur: Single;
   speedText: string;
@@ -7844,99 +7843,84 @@ var
 const
   MIN_SPEED = 0;
   MAX_SPEED = 300;
-  START_ANGLE = 180;   // 0 км/ч слева
-  END_ANGLE = 0;       // 300 км/ч справа
-  SPEED_RANGE = 180;   // 180 градусов дуги (полукруг сверху)
-  BASE_RADIUS = 60;    // Увеличен радиус
+  START_ANGLE = 225;
+  END_ANGLE = -45;
+  SPEED_RANGE = 270;
+  BASE_RADIUS = 60;
 begin
   try
-    // Получаем данные
     speed := GetSpeedValue2;
     speedLimit := GetLimitSpeedValue;
     maxSpeed := MAX_SPEED;
     tc := StrToFloatDef(GetPressureTC, 0);
     tm := StrToFloatDef(GetPressureTM, 0);
     ur := StrToFloatDef(GetPressureUR, 0);
-    
-    // Ограничиваем значения
+
     if speed > maxSpeed then speed := maxSpeed;
     if speedLimit > maxSpeed then speedLimit := maxSpeed;
-    
+
     blinkState := (Trunc(GetTickCount / 500) mod 2 = 0);
-    
+
     glDisable(GL_LIGHTING);
-    
-    // === ОСНОВНАЯ ДУГА СПИДОМЕТРА (БЕЛАЯ - ТОЛЬКО ДО ОГРАНИЧЕНИЯ) ===
-    innerRadius := BASE_RADIUS - 2;  // Уменьшена толщина
-    outerRadius := BASE_RADIUS + 2;  // Уменьшена толщина
-    
+
+    // === БЕЛАЯ ДУГА ===
+    innerRadius := BASE_RADIUS - 1;
+    outerRadius := BASE_RADIUS + 1;
+
     BeginObj3D;
-    Position3D(0.02, 0, 0.15);  // Сместил направо и вверх
+    Position3D(-0.01, 0, 0.18);
     RotateX(-90);
-    Scale3D(0.001);
+    Scale3D(0.0009);
     Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
-    
-    // Определяем конец белой дуги
-    whiteEndAngle := END_ANGLE;  // По умолчанию до конца
+
     if speedLimit > 0 then
-      whiteEndAngle := START_ANGLE - (speedLimit / maxSpeed) * SPEED_RANGE;
-      
-    whiteRange := START_ANGLE - whiteEndAngle;
-    segments := Round(whiteRange);
-    
-    if segments > 0 then
+      segments := Round((speedLimit / maxSpeed) * SPEED_RANGE)
+    else
+      segments := SPEED_RANGE;
+
+    glBegin(GL_TRIANGLE_STRIP);
+    for i := 0 to segments do
     begin
-      glBegin(GL_TRIANGLE_STRIP);
-      for i := 0 to segments do
-      begin
-        angle := (START_ANGLE - (i * whiteRange / segments)) * (Pi / 180.0);
-        
-        // Внешняя точка
-        x := outerRadius * cos(angle);
-        y := outerRadius * sin(angle);
-        glVertex3f(x, y, 0);
-        
-        // Внутренняя точка
-        x := innerRadius * cos(angle);
-        y := innerRadius * sin(angle);
-        glVertex3f(x, y, 0);
-      end;
-      glEnd;
+      if speedLimit > 0 then
+        angle := (START_ANGLE - (i * (speedLimit / maxSpeed) * SPEED_RANGE / segments)) * (Pi / 180.0)
+      else
+        angle := (START_ANGLE - (i * SPEED_RANGE / segments)) * (Pi / 180.0);
+
+      x := outerRadius * cos(angle);
+      y := outerRadius * sin(angle);
+      glVertex3f(x, y, 0);
+
+      x := innerRadius * cos(angle);
+      y := innerRadius * sin(angle);
+      glVertex3f(x, y, 0);
     end;
+    glEnd;
     EndObj3D;
-    
+
     // === КРАСНАЯ ЗОНА ===
     if speedLimit > 0 then
     begin
-      // Красная зона начинается от ограничения скорости и идет до максимума
-      limitAngle := START_ANGLE - (speedLimit / maxSpeed) * SPEED_RANGE;
-      redZoneRange := limitAngle - END_ANGLE;
-      
       BeginObj3D;
-      Position3D(0.02, 0, 0.15);
+      Position3D(-0.01, 0, 0.18);
       RotateX(-90);
-      Scale3D(0.001);
-      Color3D($0000FF, 255, False, 0.0); // Красный
+      Scale3D(0.0009);
+      Color3D($0000FF, 255, False, 0.0);
       SetTexture(0);
-      
-      segments := Round(redZoneRange);
-      if (segments > 0) and (redZoneRange > 0) then
+
+      segments := Round(((maxSpeed - speedLimit) / maxSpeed) * SPEED_RANGE);
+
+      if segments > 0 then
       begin
         glBegin(GL_TRIANGLE_STRIP);
         for i := 0 to segments do
         begin
-          if segments > 0 then
-            angle := (limitAngle - (i * redZoneRange / segments)) * (Pi / 180.0)
-          else
-            angle := limitAngle * (Pi / 180.0);
-          
-          // Внешняя точка (чуть выше по Z)
+          angle := (START_ANGLE - (speedLimit / maxSpeed) * SPEED_RANGE - (i * ((maxSpeed - speedLimit) / maxSpeed) * SPEED_RANGE / segments)) * (Pi / 180.0);
+
           x := outerRadius * cos(angle);
           y := outerRadius * sin(angle);
           glVertex3f(x, y, 0.1);
-          
-          // Внутренняя точка (чуть выше по Z)
+
           x := innerRadius * cos(angle);
           y := innerRadius * sin(angle);
           glVertex3f(x, y, 0.1);
@@ -7945,51 +7929,51 @@ begin
       end;
       EndObj3D;
     end;
-    
-    // === ДЕЛЕНИЯ ШКАЛЫ ===
-    for i := 0 to 15 do // 0, 20, 40, 60, 80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300
+
+    // === ДЕЛЕНИЯ + ЦИФРЫ ===
+    for i := 0 to 15 do
     begin
-      angle := (START_ANGLE - (i * 20 / maxSpeed) * SPEED_RANGE) * (Pi / 180.0);  // Изменено направление
-      
+      angle := (START_ANGLE - (i * 20 / maxSpeed) * SPEED_RANGE) * (Pi / 180.0);
+
+      // Деление
       BeginObj3D;
-      Position3D(0.02, 0, 0.15);  // Сместил направо и вверх
+      Position3D(-0.01, 0, 0.18);
       RotateX(-90);
-      Scale3D(0.001);
+      Scale3D(0.0009);
       Color3D($FFFFFF, 255, False, 0.0);
       SetTexture(0);
-      
-      // Деление
-      glLineWidth(3);  // Уменьшена толщина
+
+      glLineWidth(2);
       glBegin(GL_LINES);
-        glVertex3f((BASE_RADIUS - 6) * cos(angle), (BASE_RADIUS - 6) * sin(angle), 0);
-        glVertex3f((BASE_RADIUS + 6) * cos(angle), (BASE_RADIUS + 6) * sin(angle), 0);
+        glVertex3f((BASE_RADIUS + 0) * cos(angle), (BASE_RADIUS + 0) * sin(angle), 0);
+        glVertex3f((BASE_RADIUS + 5) * cos(angle), (BASE_RADIUS + 5) * sin(angle), 0);
       glEnd;
       glLineWidth(1);
       EndObj3D;
-      
-      // Цифры на делениях (снаружи дуги, только каждое 2-е деление для читаемости)
-      if (i mod 2 = 0) then
-      begin
-        BeginObj3D;
-        Position3D(0.02 + (BASE_RADIUS + 18) * cos(angle) * 0.001, 0, 0.15 + (BASE_RADIUS + 18) * sin(angle) * 0.001);  // Сместил направо и вверх
-        RotateX(-90);
-        Scale3D(0.005);  // Уменьшен размер текста
-        Color3D($FFFFFF, 255, False, 0.0);
-        SetTexture(0);
-        DrawText3D(SevenSegmentFont, IntToStr(i * 20));
-        EndObj3D;
-      end;
+
+      // Цифры
+      BeginObj3D;
+        Position3D(
+          -0.017 + (BASE_RADIUS - 6) * cos(angle) * 0.0008,
+          0,
+          0.18 + (BASE_RADIUS - 6) * sin(angle) * 0.0008
+        );
+      RotateX(-90);
+      Scale3D(0.008);
+      Color3D($FFFFFF, 255, False, 0.0);
+      SetTexture(0);
+      DrawText3D(0, IntToStr(i * 20));
+      EndObj3D;
     end;
-    
-    // === СТРЕЛКА СКОРОСТИ ===
-    needleAngle := (START_ANGLE - (speed / maxSpeed) * SPEED_RANGE) * (Pi / 180.0);  // Изменено направление
-    
+
+    // === СТРЕЛКА (треугольная, ВЫНЕСЕНА ВПЕРЕД) ===
+    needleAngle := (START_ANGLE - (speed / maxSpeed) * SPEED_RANGE) * (Pi / 180.0);
+
     BeginObj3D;
-    Position3D(0.02, 0, 0.15);  // Сместил направо и вверх
+    Position3D(-0.01, 0, 0.18);
     RotateX(-90);
-    Scale3D(0.001);
-    
-    // Цвет стрелки
+    Scale3D(0.0009);
+
     if (speed > speedLimit - 3) and (speedLimit > 0) and (speed > 0) then
     begin
       if blinkState then
@@ -7999,25 +7983,24 @@ begin
     end
     else
       Color3D($FF6600, 255, False, 0.0);
-      
+
     SetTexture(0);
-    
-    // Стрелка
-    glLineWidth(5);  // Уменьшена толщина
-    glBegin(GL_LINES);
-      glVertex3f(0, 0, 0);
-      glVertex3f((BASE_RADIUS - 8) * cos(needleAngle), (BASE_RADIUS - 8) * sin(needleAngle), 0);
+
+    glBegin(GL_TRIANGLES);
+      glVertex3f(-6, 0, 0.25); // <<— вынесено вперед
+      glVertex3f( 6, 0, 0.25);
+      glVertex3f((BASE_RADIUS - 3) * cos(needleAngle),
+                 (BASE_RADIUS - 3) * sin(needleAngle),
+                 0.25);
     glEnd;
-    glLineWidth(1);
     EndObj3D;
-    
-    // === ЦЕНТРАЛЬНЫЙ КРУГ ===
+
+    // === ЦЕНТРАЛЬНЫЙ КРУГ (над стрелкой) ===
     BeginObj3D;
-    Position3D(0.02, 0, 0.15);  // Сместил направо и вверх
+    Position3D(-0.01, 0, 0.18);
     RotateX(-90);
-    Scale3D(0.001);
-    
-    // Цвет центра
+    Scale3D(0.0009);
+
     if (speed > speedLimit - 3) and (speedLimit > 0) and (speed > 0) then
     begin
       if blinkState then
@@ -8027,78 +8010,76 @@ begin
     end
     else
       Color3D($FF6600, 255, False, 0.0);
-      
+
     SetTexture(0);
-    
+
     segments := 30;
     glBegin(GL_TRIANGLE_FAN);
-      glVertex3f(0, 0, 0);
+      glVertex3f(0, 0, 0.26); // <<— чуть выше стрелки
       for i := 0 to segments do
       begin
         angle := (i * 2 * Pi / segments);
-        glVertex3f(12 * cos(angle), 12 * sin(angle), 0);  // Уменьшен размер
+        glVertex3f(12 * cos(angle), 12 * sin(angle), 0.26);
       end;
     glEnd;
     EndObj3D;
-    
-    // === БЕЛАЯ ОБВОДКА ЦЕНТРАЛЬНОГО КРУГА ===
+
+    // === ОБВОДКА ЦЕНТРА ===
     BeginObj3D;
-    Position3D(0.02, 0, 0.15);  // Сместил направо и вверх
+    Position3D(-0.01, 0, 0.18);
     RotateX(-90);
-    Scale3D(0.001);
+    Scale3D(0.0009);
     Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
-    
+
     segments := 30;
-    glLineWidth(2);  // Уменьшена толщина
+    glLineWidth(2);
     glBegin(GL_LINE_LOOP);
       for i := 0 to segments do
       begin
         angle := (i * 2 * Pi / segments);
-        glVertex3f(12 * cos(angle), 12 * sin(angle), 0);  // Уменьшен размер
+        glVertex3f(12 * cos(angle), 12 * sin(angle), 0.26);
       end;
     glEnd;
     glLineWidth(1);
     EndObj3D;
-    
-    // === ТЕКСТ СКОРОСТИ В ЦЕНТРЕ ===
+
+    // === ТЕКСТ СКОРОСТИ ===
     speedText := Format('%03d', [Trunc(speed)]);
     BeginObj3D;
-    Position3D(0.02, 0, 0.15);  // Сместил направо и вверх
+    Position3D(-0.01, 0, 0.18);
     RotateX(-90);
-    Scale3D(0.006);  // Уменьшен размер
-    
-    // Цвет текста
+    Scale3D(0.0009);
+
     if (speed > speedLimit - 3) and (speedLimit > 0) and (speed > 0) and blinkState then
       Color3D($FF6600, 255, False, 0.0)
     else
       Color3D($FFFFFF, 255, False, 0.0);
-      
+
     SetTexture(0);
     DrawText3D(SevenSegmentFont, speedText);
     EndObj3D;
-    
-    // === ТЕКСТ ОГРАНИЧЕНИЯ СКОРОСТИ (внизу под центром) ===
+
+    // === ТЕКСТ ОГРАНИЧЕНИЯ ===
     if speedLimit > 0 then
     begin
       BeginObj3D;
-      Position3D(0.02, 0, 0.095);  // Сместил направо и отодвинул вниз
+      Position3D(-0.01, 0, 0.18);
       RotateX(-90);
-      Scale3D(0.004);  // Уменьшен размер
+      Scale3D(0.0009);
       Color3D($0000FF, 255, False, 0.0);
       SetTexture(0);
       DrawText3D(SevenSegmentFont, Format('%03d', [Trunc(speedLimit)]));
       EndObj3D;
     end;
-    
-    // === ИНДИКАТОРЫ ДАВЛЕНИЯ (внизу под спидометром) ===
-    // TC
+
+    // === ИНДИКАТОРЫ ДАВЛЕНИЯ ===
     if tc > 0 then
     begin
       BeginObj3D;
-      Position3D(-0.04, 0, 0.07);  // Сместил и отодвинул вниз
+      Position3D(-0.01, 0, 0.18);
       RotateX(-90);
-      Scale3D(0.0008);  // Уменьшен размер
+      Scale3D(0.0009);
       Color3D($0101F8, 200, False, 0.0);
       SetTexture(0);
       glBegin(GL_QUADS);
@@ -8109,14 +8090,13 @@ begin
       glEnd;
       EndObj3D;
     end;
-    
-    // TM
+
     if tm > 0 then
     begin
       BeginObj3D;
-      Position3D(0.02, 0, 0.07);  // Сместил и отодвинул вниз
+      Position3D(-0.01, 0, 0.18);
       RotateX(-90);
-      Scale3D(0.0008);  // Уменьшен размер
+      Scale3D(0.0009);
       Color3D($0101F8, 200, False, 0.0);
       SetTexture(0);
       glBegin(GL_QUADS);
@@ -8127,14 +8107,13 @@ begin
       glEnd;
       EndObj3D;
     end;
-    
-    // UR
+
     if ur > 0 then
     begin
       BeginObj3D;
-      Position3D(0.08, 0, 0.07);  // Сместил и отодвинул вниз
+      Position3D(-0.01, 0, 0.18);
       RotateX(-90);
-      Scale3D(0.0008);  // Уменьшен размер
+      Scale3D(0.0009);
       Color3D($0101F8, 200, False, 0.0);
       SetTexture(0);
       glBegin(GL_QUADS);
@@ -8145,9 +8124,9 @@ begin
       glEnd;
       EndObj3D;
     end;
-    
+
     glEnable(GL_LIGHTING);
-    
+
   except
     on E: Exception do
     begin
@@ -8156,6 +8135,7 @@ begin
     end;
   end;
 end;
+
 
 var
   // Глобальные переменные для BLOCK системы
@@ -8397,7 +8377,7 @@ begin
     Position3D(-0.11, 0, 0.247);
     RotateX(-90);
     Scale3D(0.007);
-    Color3D(3407667, 255, False, 0.0);
+    Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, GetCoordinatesFormatted);
     glEnable(GL_LIGHTING);
@@ -8409,7 +8389,7 @@ begin
     Position3D(-0.07, 0, 0.247);
     RotateX(-90);
     Scale3D(0.007);
-    Color3D(3407667, 255, False, 0.0);
+    Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, GetCurrentStation);
     glEnable(GL_LIGHTING);
@@ -8421,7 +8401,7 @@ begin
     Position3D(-0.022, 0, 0.247);
     RotateX(-90);
     Scale3D(0.007);
-    Color3D(3407667, 255, False, 0.0);
+    Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, GetCurrentTime);
     glEnable(GL_LIGHTING);
@@ -8433,7 +8413,7 @@ begin
     Position3D(-0.11, 0, 0.233);
     RotateX(-90);
     Scale3D(0.007);
-    Color3D(3407667, 255, False, 0.0);
+    Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, GetChannel);
     glEnable(GL_LIGHTING);
@@ -8445,7 +8425,7 @@ begin
     Position3D(-0.095, 0, 0.233);
     RotateX(-90);
     Scale3D(0.007);
-    Color3D(3407667, 255, False, 0.0);
+    Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, GetTrackWithDirection);
     glEnable(GL_LIGHTING);
@@ -8457,7 +8437,7 @@ begin
     Position3D(-0.105, 0, 0.216);
     RotateX(-90);
     Scale3D(0.007);
-    Color3D(3407667, 255, False, 0.0);
+    Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, GetAcceleration);
     glEnable(GL_LIGHTING);
@@ -8469,7 +8449,7 @@ begin
     Position3D(-0.105, 0, 0.199);
     RotateX(-90);
     Scale3D(0.007);
-    Color3D(3407667, 255, False, 0.0);
+    Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, GetDistance);
     glEnable(GL_LIGHTING);
@@ -8481,7 +8461,7 @@ begin
     Position3D(-0.105, 0, 0.182);
     RotateX(-90);
     Scale3D(0.007);
-    Color3D(3407667, 255, False, 0.0);
+    Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, '0.67');
     glEnable(GL_LIGHTING);
@@ -8493,7 +8473,7 @@ begin
     Position3D(-0.105, 0, 0.182);
     RotateX(-90);
     Scale3D(0.007);
-    Color3D(3407667, 255, False, 0.0);
+    Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, GetTargetType);
     glEnable(GL_LIGHTING);
