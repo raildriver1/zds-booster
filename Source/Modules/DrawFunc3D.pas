@@ -21,7 +21,7 @@
 unit DrawFunc3D;
 interface
 uses OpenGL, Variables, Windows, TFrustumClass, EngineUtils, SysUtils, DMD_MultyMesh,
-     Textures, DPC_Packages, Classes, KlubData, KlubProcessor, Math, TlHelp32, MMSystem;
+     Textures, DPC_Packages, Classes, KlubData, KlubProcessor, Math, TlHelp32, MMSystem, IniFiles;
 
 
 type TVertex3D = record X,Y,Z : single; Color, Alpha : integer; TexX, TexY : single; end;
@@ -8175,6 +8175,203 @@ var
   BLOCKInitialized: Boolean = False;
   BLOCKPatchApplied: Boolean = False;
 
+// Глобальные переменные для анимации клавиатуры БЛОК
+var
+  BlockKeyboardTexture: Cardinal = 0;
+  BlockKeyboardCurrentOffset: Single = 0;
+  BlockKeyboardTargetOffset: Single = 0;
+  BlockKeyboardInitialized: Boolean = False;
+  BlockKeyboardFileExists: Boolean = False;
+  ScreenWidth: Integer = 1920;
+  ScreenHeight: Integer = 1080;
+  // Константы для расчета (в процентах от ширины экрана)
+  PanelWidthPercent: Single = 0.24;  // 24% от ширины экрана (примерно 340px при 1400px)
+  VisibleEdgePercent: Single = 0.03; // 3% видимой части при скрытии (примерно 30px при 1000px)
+
+// Основная функция отрисовки клавиатуры БЛОК
+procedure DrawBlockKeyboard;
+var
+  keyboardX, keyboardY: Integer;
+  isMouseOver: Boolean;
+  mousePos: TPoint;
+  texturePath: string;
+  settingsPath: string;
+  difference: Single;
+  triggerX, triggerY: Integer;
+  // Переменные для парсинга settings.ini
+  settingsFile: TextFile;
+  line: string;
+  equalPos: Integer;
+  paramName, paramValue: string;
+  // Пропорциональные размеры
+  panelWidth, visibleEdge: Integer;
+begin
+  // Инициализация при первом вызове
+  if not BlockKeyboardInitialized then
+  begin
+    try
+      // Читаем настройки экрана из settings.ini простым парсингом
+      settingsPath := ExtractFilePath(ParamStr(0)) + 'settings.ini';
+      if FileExists(settingsPath) then
+      begin
+        AssignFile(settingsFile, settingsPath);
+        Reset(settingsFile);
+        try
+          while not Eof(settingsFile) do
+          begin
+            ReadLn(settingsFile, line);
+            line := Trim(line);
+            
+            if (line <> '') and (line[1] <> ';') and (line[1] <> '#') then
+            begin
+              equalPos := Pos('=', line);
+              if equalPos > 0 then
+              begin
+                paramName := Trim(Copy(line, 1, equalPos - 1));
+                paramValue := Trim(Copy(line, equalPos + 1, Length(line)));
+                
+                if paramName = 'ScreenWidth' then
+                  ScreenWidth := StrToIntDef(paramValue, 1920);
+                if paramName = 'ScreenHeight' then
+                  ScreenHeight := StrToIntDef(paramValue, 1080);
+              end;
+            end;
+          end;
+        finally
+          CloseFile(settingsFile);
+        end;
+        
+        AddToLogFile(EngineLog, 'Парсинг settings.ini: ScreenWidth=' + IntToStr(ScreenWidth) + ', ScreenHeight=' + IntToStr(ScreenHeight));
+        AddToLogFile(EngineLog, 'Разрешение экрана для клавиатуры БЛОК: ' + IntToStr(ScreenWidth) + 'x' + IntToStr(ScreenHeight));
+      end
+      else
+      begin
+        AddToLogFile(EngineLog, 'settings.ini не найден, используем разрешение по умолчанию');
+      end;
+      
+      // Путь к текстуре клавиатуры БЛОК
+      texturePath := 'booster\block_buttons.bmp';
+      
+      if FileExists(texturePath) then
+      begin
+        BlockKeyboardTexture := LoadTextureFromFile(texturePath, 0, -1);
+        if BlockKeyboardTexture > 0 then
+        begin
+          BlockKeyboardFileExists := True;
+          AddToLogFile(EngineLog, 'Текстура клавиатуры БЛОК загружена: ' + texturePath);
+        end
+        else
+        begin
+          BlockKeyboardFileExists := False;
+          AddToLogFile(EngineLog, 'Ошибка загрузки текстуры клавиатуры БЛОК: ' + texturePath);
+        end;
+      end
+      else
+      begin
+        BlockKeyboardFileExists := False;
+        AddToLogFile(EngineLog, 'Файл клавиатуры БЛОК не найден: ' + texturePath);
+      end;
+      
+      BlockKeyboardInitialized := True;
+      
+    except
+      on E: Exception do
+      begin
+        AddToLogFile(EngineLog, 'КРИТИЧЕСКАЯ ОШИБКА инициализации клавиатуры БЛОК: ' + E.Message);
+        BlockKeyboardInitialized := True;
+        BlockKeyboardFileExists := False;
+      end;
+    end;
+  end;
+  
+  // Если файл не существует, выходим без отрисовки
+  if not BlockKeyboardFileExists then
+    Exit;
+    
+  try
+    // Вычисляем пропорциональные размеры для текущего разрешения
+    panelWidth := Round(ScreenWidth * PanelWidthPercent);      // 24% от ширины экрана
+    visibleEdge := Round(ScreenWidth * VisibleEdgePercent);    // 3% видимого края
+    
+    // Инициализируем offset если первый запуск
+    if (BlockKeyboardCurrentOffset = 0) and (BlockKeyboardTargetOffset = 0) then
+    begin
+      BlockKeyboardCurrentOffset := panelWidth - visibleEdge;  // Скрытое состояние
+      BlockKeyboardTargetOffset := panelWidth - visibleEdge;
+    end;
+    
+    // СНАЧАЛА вычисляем позицию панели
+    keyboardX := ScreenWidth - panelWidth + Round(BlockKeyboardCurrentOffset);
+    keyboardY := ScreenHeight - 136;
+    
+    // Получаем позицию курсора
+    if Windows.GetCursorPos(mousePos) then
+    begin
+      // Область активации = ТОЧНО там где сейчас находится видимая часть панели
+      triggerX := keyboardX;  // Левый край видимой части панели
+      triggerY := ScreenHeight - 136; // По высоте панели
+      
+      // Проверяем наведение курсора на видимую часть панели
+      isMouseOver := (mousePos.X >= triggerX) and 
+                     (mousePos.X <= ScreenWidth - 5) and  // Небольшой отступ от правого края
+                     (mousePos.Y >= triggerY) and 
+                     (mousePos.Y <= ScreenHeight);
+                     
+      // ОТЛАДОЧНОЕ ЛОГИРОВАНИЕ при изменении состояния
+      if isMouseOver <> (BlockKeyboardTargetOffset = 0) then
+      begin
+        AddToLogFile(EngineLog, '=== БЛОК КЛАВИАТУРА АКТИВАЦИЯ ===');
+        AddToLogFile(EngineLog, 'Разрешение: ' + IntToStr(ScreenWidth) + 'x' + IntToStr(ScreenHeight));
+        AddToLogFile(EngineLog, 'Курсор: X=' + IntToStr(mousePos.X) + ', Y=' + IntToStr(mousePos.Y));
+        AddToLogFile(EngineLog, 'Область триггера: X=' + IntToStr(triggerX) + '-' + IntToStr(ScreenWidth-5) + ', Y=' + IntToStr(triggerY) + '-' + IntToStr(ScreenHeight));
+        AddToLogFile(EngineLog, 'panelWidth=' + IntToStr(panelWidth) + ', visibleEdge=' + IntToStr(visibleEdge));
+        AddToLogFile(EngineLog, 'Позиция панели X=' + IntToStr(keyboardX) + ', Y=' + IntToStr(keyboardY));
+        AddToLogFile(EngineLog, 'isMouseOver=' + BoolToStr(isMouseOver, True) + ', было=' + BoolToStr(BlockKeyboardTargetOffset = 0, True));
+        AddToLogFile(EngineLog, 'CurrentOffset=' + FloatToStr(BlockKeyboardCurrentOffset) + ', TargetOffset=' + FloatToStr(BlockKeyboardTargetOffset));
+      end;
+    end else
+      isMouseOver := False;
+    
+    // Устанавливаем целевое смещение
+    if isMouseOver then
+      BlockKeyboardTargetOffset := 0                        // Показать панель полностью
+    else
+      BlockKeyboardTargetOffset := panelWidth - visibleEdge; // Скрыть (показать только край)
+    
+    // Плавная анимация
+    difference := BlockKeyboardTargetOffset - BlockKeyboardCurrentOffset;
+    if Abs(difference) > 1.0 then
+      BlockKeyboardCurrentOffset := BlockKeyboardCurrentOffset + (difference * 0.12)
+    else
+      BlockKeyboardCurrentOffset := BlockKeyboardTargetOffset;
+    
+    // Отрисовка в 2D режиме
+    Begin2D;
+    try
+      // Устанавливаем полную непрозрачность
+      glColor4f(1.0, 1.0, 1.0, 1.0);
+      
+      DrawTexture2D(
+        BlockKeyboardTexture,
+        keyboardX,
+        keyboardY,
+        panelWidth, // Пропорциональная ширина панели
+        136, // Высота панели
+        0,   // Угол поворота
+        255, // Альфа (полная непрозрачность)
+        $FFFFFF, // Цвет (белый)
+        False // Не использовать диффузное наложение
+      );
+    finally
+      End2D;
+    end;
+    
+  except
+    on E: Exception do
+      AddToLogFile(EngineLog, 'Ошибка отрисовки клавиатуры БЛОК: ' + E.Message);
+  end;
+end;
+
 procedure DrawBLOCK(
   x: Single;
   y: Single;
@@ -8510,6 +8707,8 @@ begin
     EndObj3D;
 
     DrawSpeedometer3D;
+
+    DrawBlockKeyboard;
 
     EndObj3D();
   except
