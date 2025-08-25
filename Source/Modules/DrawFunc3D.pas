@@ -8130,8 +8130,8 @@ begin
       Color3D($0101F8, 200, False, 0.0);
       SetTexture(0);
       glBegin(GL_QUADS);
-        glVertex3f(-3, -tm * 12, 0);
-        glVertex3f(3, -tm * 12, 0);
+        glVertex3f(-3, -5 * 12, 0);
+        glVertex3f(3, -5 * 12, 0);
         glVertex3f(3, 0, 0);
         glVertex3f(-3, 0, 0);
       glEnd;
@@ -8178,15 +8178,12 @@ var
 // Глобальные переменные для анимации клавиатуры БЛОК
 var
   BlockKeyboardTexture: Cardinal = 0;
-  BlockKeyboardCurrentOffset: Single = 0;
-  BlockKeyboardTargetOffset: Single = 0;
+  BlockKeyboardCurrentOffset: Single = 210;
+  BlockKeyboardTargetOffset: Single = 210;
   BlockKeyboardInitialized: Boolean = False;
   BlockKeyboardFileExists: Boolean = False;
   ScreenWidth: Integer = 1920;
   ScreenHeight: Integer = 1080;
-  // Константы для расчета (в процентах от ширины экрана)
-  PanelWidthPercent: Single = 0.24;  // 24% от ширины экрана (примерно 340px при 1400px)
-  VisibleEdgePercent: Single = 0.03; // 3% видимой части при скрытии (примерно 30px при 1000px)
 
 // Основная функция отрисовки клавиатуры БЛОК
 procedure DrawBlockKeyboard;
@@ -8197,14 +8194,12 @@ var
   texturePath: string;
   settingsPath: string;
   difference: Single;
-  triggerX, triggerY: Integer;
+  triggerX, triggerY: Integer; // Статичная область триггера
   // Переменные для парсинга settings.ini
   settingsFile: TextFile;
   line: string;
   equalPos: Integer;
   paramName, paramValue: string;
-  // Пропорциональные размеры
-  panelWidth, visibleEdge: Integer;
 begin
   // Инициализация при первом вызове
   if not BlockKeyboardInitialized then
@@ -8242,7 +8237,6 @@ begin
         end;
         
         AddToLogFile(EngineLog, 'Парсинг settings.ini: ScreenWidth=' + IntToStr(ScreenWidth) + ', ScreenHeight=' + IntToStr(ScreenHeight));
-        AddToLogFile(EngineLog, 'Разрешение экрана для клавиатуры БЛОК: ' + IntToStr(ScreenWidth) + 'x' + IntToStr(ScreenHeight));
       end
       else
       begin
@@ -8289,54 +8283,35 @@ begin
     Exit;
     
   try
-    // Вычисляем пропорциональные размеры для текущего разрешения
-    panelWidth := Round(ScreenWidth * PanelWidthPercent);      // 24% от ширины экрана
-    visibleEdge := Round(ScreenWidth * VisibleEdgePercent);    // 3% видимого края
-    
-    // Инициализируем offset если первый запуск
-    if (BlockKeyboardCurrentOffset = 0) and (BlockKeyboardTargetOffset = 0) then
+    // ИСПРАВЛЕННОЕ получение позиции курсора - в клиентских координатах
+    if GetCursorPos(mousePos) then
     begin
-      BlockKeyboardCurrentOffset := panelWidth - visibleEdge;  // Скрытое состояние
-      BlockKeyboardTargetOffset := panelWidth - visibleEdge;
-    end;
-    
-    // СНАЧАЛА вычисляем позицию панели
-    keyboardX := ScreenWidth - panelWidth + Round(BlockKeyboardCurrentOffset);
-    keyboardY := ScreenHeight - 136;
-    
-    // Получаем позицию курсора
-    if Windows.GetCursorPos(mousePos) then
-    begin
-      // Область активации = ТОЧНО там где сейчас находится видимая часть панели
-      triggerX := keyboardX;  // Левый край видимой части панели
-      triggerY := ScreenHeight - 136; // По высоте панели
-      
-      // Проверяем наведение курсора на видимую часть панели
-      isMouseOver := (mousePos.X >= triggerX) and 
-                     (mousePos.X <= ScreenWidth - 5) and  // Небольшой отступ от правого края
-                     (mousePos.Y >= triggerY) and 
-                     (mousePos.Y <= ScreenHeight);
-                     
-      // ОТЛАДОЧНОЕ ЛОГИРОВАНИЕ при изменении состояния
-      if isMouseOver <> (BlockKeyboardTargetOffset = 0) then
+      if ScreenToClient(GetActiveWindow(), mousePos) then
       begin
-        AddToLogFile(EngineLog, '=== БЛОК КЛАВИАТУРА АКТИВАЦИЯ ===');
-        AddToLogFile(EngineLog, 'Разрешение: ' + IntToStr(ScreenWidth) + 'x' + IntToStr(ScreenHeight));
-        AddToLogFile(EngineLog, 'Курсор: X=' + IntToStr(mousePos.X) + ', Y=' + IntToStr(mousePos.Y));
-        AddToLogFile(EngineLog, 'Область триггера: X=' + IntToStr(triggerX) + '-' + IntToStr(ScreenWidth-5) + ', Y=' + IntToStr(triggerY) + '-' + IntToStr(ScreenHeight));
-        AddToLogFile(EngineLog, 'panelWidth=' + IntToStr(panelWidth) + ', visibleEdge=' + IntToStr(visibleEdge));
-        AddToLogFile(EngineLog, 'Позиция панели X=' + IntToStr(keyboardX) + ', Y=' + IntToStr(keyboardY));
-        AddToLogFile(EngineLog, 'isMouseOver=' + BoolToStr(isMouseOver, True) + ', было=' + BoolToStr(BlockKeyboardTargetOffset = 0, True));
-        AddToLogFile(EngineLog, 'CurrentOffset=' + FloatToStr(BlockKeyboardCurrentOffset) + ', TargetOffset=' + FloatToStr(BlockKeyboardTargetOffset));
-      end;
-    end else
+        // Вычисляем где сейчас находится видимая часть панели
+        keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
+        
+        // Область триггера = видимая часть панели + небольшой отступ влево
+        triggerX := keyboardX - 5; // Небольшой отступ влево от видимой части
+        triggerY := ScreenHeight - 140; // Область по высоте панели
+        
+        // Проверяем наведение курсора на видимую часть панели
+        isMouseOver := (mousePos.X >= triggerX) and 
+                       (mousePos.X <= ScreenWidth) and
+                       (mousePos.Y >= triggerY) and 
+                       (mousePos.Y <= ScreenHeight);
+      end
+      else
+        isMouseOver := False;
+    end
+    else
       isMouseOver := False;
     
     // Устанавливаем целевое смещение
     if isMouseOver then
-      BlockKeyboardTargetOffset := 0                        // Показать панель полностью
+      BlockKeyboardTargetOffset := 0        // Показать панель полностью
     else
-      BlockKeyboardTargetOffset := panelWidth - visibleEdge; // Скрыть (показать только край)
+      BlockKeyboardTargetOffset := 310;     // Скрыть панель (показать только край 30px)
     
     // Плавная анимация
     difference := BlockKeyboardTargetOffset - BlockKeyboardCurrentOffset;
@@ -8344,6 +8319,10 @@ begin
       BlockKeyboardCurrentOffset := BlockKeyboardCurrentOffset + (difference * 0.12)
     else
       BlockKeyboardCurrentOffset := BlockKeyboardTargetOffset;
+    
+    // Вычисляем позицию отрисовки панели
+    keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
+    keyboardY := ScreenHeight - 136;
     
     // Отрисовка в 2D режиме
     Begin2D;
@@ -8355,7 +8334,7 @@ begin
         BlockKeyboardTexture,
         keyboardX,
         keyboardY,
-        panelWidth, // Пропорциональная ширина панели
+        340, // Ширина панели
         136, // Высота панели
         0,   // Угол поворота
         255, // Альфа (полная непрозрачность)
@@ -8369,6 +8348,37 @@ begin
   except
     on E: Exception do
       AddToLogFile(EngineLog, 'Ошибка отрисовки клавиатуры БЛОК: ' + E.Message);
+  end;
+end;
+
+// Функция для обработки кликов по кнопкам клавиатуры
+function HandleBlockKeyboardClick(mouseX, mouseY: Integer): Boolean;
+var
+  keyboardX, keyboardY: Integer;
+  relativeX, relativeY: Integer;
+begin
+  Result := False;
+  
+  if not BlockKeyboardFileExists then
+    Exit;
+    
+  // Проверяем, что панель достаточно видна для кликов
+  if BlockKeyboardCurrentOffset > 155 then // Половина от 310 (скрытое состояние)
+    Exit; // Панель слишком скрыта
+    
+  keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
+  keyboardY := ScreenHeight - 136;
+  
+  // Проверяем попадание в область панели
+  if (mouseX >= keyboardX) and (mouseX <= keyboardX + 340) and
+     (mouseY >= keyboardY) and (mouseY <= keyboardY + 136) then
+  begin
+    // Вычисляем относительные координаты внутри панели
+    relativeX := mouseX - keyboardX;
+    relativeY := mouseY - keyboardY;
+    
+    AddToLogFile(EngineLog, 'Клик по клавиатуре БЛОК: ' + IntToStr(relativeX) + ',' + IntToStr(relativeY));
+    Result := True;
   end;
 end;
 
