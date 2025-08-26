@@ -1982,7 +1982,7 @@ begin
   Alpha := Round(RenderWindow.Alpha * 255);
   if Alpha <= 0 then Exit;
   
-  InfoText := 'ZDS-Booster v1 | vk.com/raildriver';
+  InfoText := 'ZDS-Booster v1.1 | vk.com/raildriver';
   BarWidth := 320;
   BarHeight := 30;
   BarX := 10;

@@ -8167,6 +8167,18 @@ begin
   end;
 end;
 
+
+procedure NopMemory(Address: Pointer; Size: Cardinal);
+var
+  OldProtect: DWORD;
+  i: Integer;
+begin
+  VirtualProtect(Address, Size, PAGE_EXECUTE_READWRITE, @OldProtect);
+  for i := 0 to Size - 1 do
+    PByte(NativeUInt(Address) + i)^ := $90; // NOP = 0x90
+  VirtualProtect(Address, Size, OldProtect, @OldProtect);
+end;
+
 var
   // Глобальные переменные для BLOCK системы
   BLOCKModelID: Integer = 0;
@@ -8204,6 +8216,11 @@ begin
   // Инициализация при первом вызове
   if not BlockKeyboardInitialized then
   begin
+
+    //NopMemory(Pointer($0073880D), 5);
+    NopMemory(Pointer($00738844), 3);
+
+
     try
       // Читаем настройки экрана из settings.ini простым парсингом
       settingsPath := ExtractFilePath(ParamStr(0)) + 'settings.ini';
@@ -8251,8 +8268,24 @@ begin
         BlockKeyboardTexture := LoadTextureFromFile(texturePath, 0, -1);
         if BlockKeyboardTexture > 0 then
         begin
+          // НАСТРОЙКА ЧЕТКОЙ ТЕКСТУРЫ СРАЗУ ПОСЛЕ ЗАГРУЗКИ
+          //glBindTexture(GL_TEXTURE_2D, BlockKeyboardTexture);
+
+          // Точная отрисовка без сглаживания
+          //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+          //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+          
+          // Обрезка текстуры по краям
+          //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+          //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+          
+          // Отключаем мипмапы
+          //glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_FALSE);
+          
+          //glBindTexture(GL_TEXTURE_2D, 0);
+          
           BlockKeyboardFileExists := True;
-          AddToLogFile(EngineLog, 'Текстура клавиатуры БЛОК загружена: ' + texturePath);
+          AddToLogFile(EngineLog, 'Текстура клавиатуры БЛОК загружена с четкими настройками: ' + texturePath);
         end
         else
         begin
@@ -8293,13 +8326,13 @@ begin
         
         // Область триггера = видимая часть панели + небольшой отступ влево
         triggerX := keyboardX - 5; // Небольшой отступ влево от видимой части
-        triggerY := ScreenHeight - 140; // Область по высоте панели
+        triggerY := ScreenHeight - 250; // Область по высоте панели (поднято выше)
         
         // Проверяем наведение курсора на видимую часть панели
         isMouseOver := (mousePos.X >= triggerX) and 
                        (mousePos.X <= ScreenWidth) and
                        (mousePos.Y >= triggerY) and 
-                       (mousePos.Y <= ScreenHeight);
+                       (mousePos.Y <= triggerY + 136); // Высота панели
       end
       else
         isMouseOver := False;
@@ -8311,7 +8344,7 @@ begin
     if isMouseOver then
       BlockKeyboardTargetOffset := 0        // Показать панель полностью
     else
-      BlockKeyboardTargetOffset := 310;     // Скрыть панель (показать только край 30px)
+      BlockKeyboardTargetOffset := 210;     // Скрыть панель (показать только край 30px)
     
     // Плавная анимация
     difference := BlockKeyboardTargetOffset - BlockKeyboardCurrentOffset;
@@ -8320,15 +8353,15 @@ begin
     else
       BlockKeyboardCurrentOffset := BlockKeyboardTargetOffset;
     
-    // Вычисляем позицию отрисовки панели
-    keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
-    keyboardY := ScreenHeight - 136;
+    // Вычисляем позицию отрисовки панели (поднято выше для всех разрешений)
+    keyboardX := ScreenWidth - 230 + Round(BlockKeyboardCurrentOffset);
+    keyboardY := ScreenHeight - 250; // Поднято с 136 до 250 пикселей от низа
     
     // Отрисовка в 2D режиме
     Begin2D;
     try
       // Устанавливаем полную непрозрачность
-      glColor4f(1.0, 1.0, 1.0, 1.0);
+      //glColor4f(1.0, 1.0, 1.0, 1.0);
       
       DrawTexture2D(
         BlockKeyboardTexture,
@@ -8341,6 +8374,7 @@ begin
         $FFFFFF, // Цвет (белый)
         False // Не использовать диффузное наложение
       );
+      
     finally
       End2D;
     end;
@@ -8367,7 +8401,7 @@ begin
     Exit; // Панель слишком скрыта
     
   keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
-  keyboardY := ScreenHeight - 136;
+  keyboardY := ScreenHeight - 250; // Поднято с 136 до 250 пикселей от низа
   
   // Проверяем попадание в область панели
   if (mouseX >= keyboardX) and (mouseX <= keyboardX + 340) and
