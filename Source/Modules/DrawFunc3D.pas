@@ -8464,29 +8464,29 @@ begin
     Exit;
     
   try
-    // ИСПРАВЛЕННОЕ получение позиции курсора - в клиентских координатах
-    if GetCursorPos(mousePos) then
-    begin
-      if ScreenToClient(GetActiveWindow(), mousePos) then
-      begin
-        // Вычисляем где сейчас находится видимая часть панели
-        keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
-        
-        // Область триггера = видимая часть панели + небольшой отступ влево
-        triggerX := keyboardX - 5; // Небольшой отступ влево от видимой части
-        triggerY := ScreenHeight - 250; // Область по высоте панели (поднято выше)
-        
-        // Проверяем наведение курсора на видимую часть панели
-        isMouseOver := (mousePos.X >= triggerX) and 
-                       (mousePos.X <= ScreenWidth) and
-                       (mousePos.Y >= triggerY) and 
-                       (mousePos.Y <= triggerY + 136); // Высота панели
-      end
-      else
-        isMouseOver := False;
-    end
-    else
-      isMouseOver := False;
+// ИСПРАВЛЕННОЕ получение позиции курсора - в клиентских координатах
+if GetCursorPos(mousePos) then
+begin
+  if ScreenToClient(GetActiveWindow(), mousePos) then
+  begin
+    // Вычисляем где сейчас находится видимая часть панели (реальная используемая ширина 233px)
+    keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
+    
+    // Область триггера = РЕАЛЬНАЯ видимая часть панели (233px) + небольшой отступ влево
+    triggerX := ScreenWidth - 233 + Round(BlockKeyboardCurrentOffset) - 5; // Рассчитываем от реальной ширины
+    triggerY := ScreenHeight - 250; // Область по высоте панели (поднято выше)
+    
+    // Проверяем наведение курсора на РЕАЛЬНУЮ видимую часть панели
+    isMouseOver := (mousePos.X >= triggerX) and 
+                   (mousePos.X <= ScreenWidth) and // До правого края экрана
+                   (mousePos.Y >= triggerY) and 
+                   (mousePos.Y <= triggerY + 136); // Высота панели
+  end
+  else
+    isMouseOver := False;
+end
+else
+  isMouseOver := False;
     
     // Устанавливаем целевое смещение
     if isMouseOver then
