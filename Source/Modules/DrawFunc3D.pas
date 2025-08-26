@@ -8217,20 +8217,20 @@ begin
   ButtonPositions[5].X := 194;  ButtonPositions[5].Y := 9;   // К20
   
   // Ряд 2: ВК 4 5 6 P OC (Y = 44)
-  ButtonPositions[6].X := 29;   ButtonPositions[6].Y := 44;  // ВК
-  ButtonPositions[7].X := 62;   ButtonPositions[7].Y := 44;  // 4
-  ButtonPositions[8].X := 95;   ButtonPositions[8].Y := 44;  // 5
-  ButtonPositions[9].X := 128;  ButtonPositions[9].Y := 44;  // 6
-  ButtonPositions[10].X := 161; ButtonPositions[10].Y := 44; // P
-  ButtonPositions[11].X := 194; ButtonPositions[11].Y := 44; // OC
+  ButtonPositions[6].X := 29;   ButtonPositions[6].Y := 41;  // ВК
+  ButtonPositions[7].X := 62;   ButtonPositions[7].Y := 41;  // 4
+  ButtonPositions[8].X := 95;   ButtonPositions[8].Y := 41;  // 5
+  ButtonPositions[9].X := 128;  ButtonPositions[9].Y := 41;  // 6
+  ButtonPositions[10].X := 161; ButtonPositions[10].Y := 41; // P
+  ButtonPositions[11].X := 194; ButtonPositions[11].Y := 41; // OC
   
   // Ряд 3: РМП 7 8 9 ОТМ ОТПР (Y = 79)
-  ButtonPositions[12].X := 29;  ButtonPositions[12].Y := 79; // РМП
-  ButtonPositions[13].X := 62;  ButtonPositions[13].Y := 79; // 7
-  ButtonPositions[14].X := 95;  ButtonPositions[14].Y := 79; // 8
-  ButtonPositions[15].X := 128; ButtonPositions[15].Y := 79; // 9
-  ButtonPositions[16].X := 161; ButtonPositions[16].Y := 79; // ОТМ
-  ButtonPositions[17].X := 194; ButtonPositions[17].Y := 79; // ОТПР
+  ButtonPositions[12].X := 29;  ButtonPositions[12].Y := 75; // РМП
+  ButtonPositions[13].X := 62;  ButtonPositions[13].Y := 75; // 7
+  ButtonPositions[14].X := 95;  ButtonPositions[14].Y := 75; // 8
+  ButtonPositions[15].X := 128; ButtonPositions[15].Y := 75; // 9
+  ButtonPositions[16].X := 161; ButtonPositions[16].Y := 75; // ОТМ
+  ButtonPositions[17].X := 194; ButtonPositions[17].Y := 75; // ОТПР
   
   // Ряд 4: F СТР 0 ВВОД о подтяг (Y = 105)
   ButtonPositions[18].X := 29;  ButtonPositions[18].Y := 105; // F
@@ -8276,20 +8276,16 @@ var
 begin
   for i := 0 to 23 do
   begin
+    // Отрисовываем кнопку ТОЛЬКО при hover
+    if not ButtonHovered[i] then
+      Continue; // Пропускаем кнопку, если нет hover
+    
     buttonX := keyboardX + ButtonPositions[i].X;
     buttonY := keyboardY + ButtonPositions[i].Y;
     
-    // Определяем цвет и прозрачность в зависимости от hover состояния
-    if ButtonHovered[i] then
-    begin
-      alpha := 120; // Более видимая при hover
-      color := $4080FF; // Синий оттенок при hover
-    end
-    else
-    begin
-      alpha := 60; // Полупрозрачная в обычном состоянии
-      color := $808080; // Серый цвет в обычном состоянии
-    end;
+    // При hover показываем яркую кнопку
+    alpha := 140; // Хорошо видимая при hover
+    color := $4080FF; // Синий оттенок при hover
     
     // Отрисовка прозрачного прямоугольника кнопки (размер уменьшен до 24x24)
     Begin2D;
@@ -8322,10 +8318,10 @@ begin
         ((color shr 16) and $FF) / 255.0, // R
         ((color shr 8) and $FF) / 255.0,  // G
         (color and $FF) / 255.0,          // B
-        (alpha + 40) / 255.0              // A (ярче для рамки)
+        (alpha + 60) / 255.0              // A (ярче для рамки)
       );
       
-      glLineWidth(1.0);
+      glLineWidth(1.5);
       glBegin(GL_LINE_LOOP);
         glVertex2f(buttonX, buttonY);
         glVertex2f(buttonX + 24, buttonY);
