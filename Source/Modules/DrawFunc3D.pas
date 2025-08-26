@@ -133,6 +133,9 @@ procedure SceneSetObj( SceneIdent, ObjIdent : cardinal; SceneMesh : TSceneMesh )
 function  SceneGetObj( SceneIdent, ObjIdent : cardinal ) : TSceneMesh; stdcall;
 
 function ApplyKPD3Patch: Boolean;
+function HandleBlockKeyboardClick(mouseX, mouseY: Integer): Boolean;
+
+
 
 procedure WriteHookAddress; stdcall;
 procedure WriteHookAddressCHS8; stdcall;
@@ -8204,6 +8207,115 @@ var
   ButtonPositions: array[0..23] of record
     X, Y: Integer;
   end;
+  
+  // Переменные для логики кнопки "П"
+  ButtonPState: Integer = 0; // 0 - ожидание "П", 1 - ожидание первого числа, 2 - ожидание второго числа
+  InputBuffer: string = '';  // Буфер для ввода чисел
+
+// Функция записи байта в память
+procedure WriteByteToMemory(Address: Pointer; Value: Byte);
+begin
+  AddToLogFile(EngineLog, '[ПАМЯТЬ] Попытка записи байта ' + IntToStr(Value) + ' по адресу ' + IntToHex(Cardinal(Address), 8));
+  try
+    PByte(Address)^ := Value;
+    AddToLogFile(EngineLog, '[ПАМЯТЬ] ✓ УСПЕШНО записан байт ' + IntToStr(Value));
+  except
+    on E: Exception do
+      AddToLogFile(EngineLog, '[ПАМЯТЬ] ✗ ОШИБКА записи: ' + E.Message);
+  end;
+end;
+
+// Обработка нажатия кнопки "П"
+procedure ProcessButtonP;
+begin
+  AddToLogFile(EngineLog, '[КНОПКА П] Обработка нажатия, текущее состояние: ' + IntToStr(ButtonPState));
+  
+  if ButtonPState = 0 then
+  begin
+    // Записываем 20 и переходим к ожиданию первого числа
+    WriteByteToMemory(Pointer($0074988C), 20);
+    ButtonPState := 1;
+    InputBuffer := '';
+    AddToLogFile(EngineLog, '[КНОПКА П] ✓ Записали 20, ожидаем первое число');
+  end
+  else
+  begin
+    AddToLogFile(EngineLog, '[КНОПКА П] Кнопка нажата повторно, игнорируем (состояние: ' + IntToStr(ButtonPState) + ')');
+  end;
+end;
+
+// Обработка ввода числа
+procedure ProcessNumberInput(ButtonIndex: Integer);
+var
+  Number: Integer;
+  NumberStr: string;
+begin
+  AddToLogFile(EngineLog, '[ЧИСЛО] Обработка ввода числа, индекс кнопки: ' + IntToStr(ButtonIndex) + ', состояние П: ' + IntToStr(ButtonPState));
+  
+  // Если не ожидаем ввод числа, игнорируем
+  if ButtonPState = 0 then
+  begin
+    AddToLogFile(EngineLog, '[ЧИСЛО] Игнорируем - не ожидается ввод числа');
+    Exit;
+  end;
+  
+  // Определяем какая цифра нажата
+  case ButtonIndex of
+    1: NumberStr := '1';   // Кнопка 1
+    2: NumberStr := '2';   // Кнопка 2  
+    3: NumberStr := '3';   // Кнопка 3
+    7: NumberStr := '4';   // Кнопка 4
+    8: NumberStr := '5';   // Кнопка 5
+    9: NumberStr := '6';   // Кнопка 6
+    13: NumberStr := '7';  // Кнопка 7
+    14: NumberStr := '8';  // Кнопка 8
+    15: NumberStr := '9';  // Кнопка 9
+    20: NumberStr := '0';  // Кнопка 0
+    else
+    begin
+      AddToLogFile(EngineLog, '[ЧИСЛО] Неизвестная кнопка: ' + IntToStr(ButtonIndex));
+      Exit;
+    end;
+  end;
+  
+  // Добавляем цифру к буферу
+  InputBuffer := InputBuffer + NumberStr;
+  AddToLogFile(EngineLog, '[ЧИСЛО] Введена цифра: ' + NumberStr + ', буфер: "' + InputBuffer + '"');
+  
+  // Проверяем готовность числа (1-3 цифры)
+  if Length(InputBuffer) >= 3 then
+  begin
+    Number := StrToIntDef(InputBuffer, 0);
+    AddToLogFile(EngineLog, '[ЧИСЛО] Буфер полный, анализируем число: ' + IntToStr(Number));
+    
+    if (Number >= 1) and (Number <= 127) then
+    begin
+      AddToLogFile(EngineLog, '[ЧИСЛО] ✓ Корректное число: ' + IntToStr(Number));
+      
+      case ButtonPState of
+        1: begin
+             AddToLogFile(EngineLog, '[ЧИСЛО] Первое число - записываем 21');
+             WriteByteToMemory(Pointer($0074988C), 21);
+             ButtonPState := 2;
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[ЧИСЛО] ✓ Ожидаем второе число');
+           end;
+        2: begin
+             AddToLogFile(EngineLog, '[ЧИСЛО] Второе число - записываем 0 и сбрасываем');
+             WriteByteToMemory(Pointer($0074988C), 0);
+             ButtonPState := 0;
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[ЧИСЛО] ✓ Процедура завершена');
+           end;
+      end;
+    end
+    else
+    begin
+      AddToLogFile(EngineLog, '[ЧИСЛО] ✗ Некорректное число: ' + IntToStr(Number) + ' (нужно 1-127)');
+      InputBuffer := '';
+    end;
+  end;
+end;
 
 // Инициализация позиций кнопок
 procedure InitializeButtonPositions;
@@ -8248,17 +8360,14 @@ var
   buttonX, buttonY: Integer;
   relativeMouseX, relativeMouseY: Integer;
 begin
-  // Вычисляем позицию мыши относительно панели клавиатуры
   relativeMouseX := mouseX - keyboardX;
   relativeMouseY := mouseY - keyboardY;
   
-  // Проверяем каждую кнопку
   for i := 0 to 23 do
   begin
     buttonX := ButtonPositions[i].X;
     buttonY := ButtonPositions[i].Y;
     
-    // Проверяем попадание курсора в область кнопки (размер уменьшен до 24x24)
     ButtonHovered[i] := (relativeMouseX >= buttonX) and 
                         (relativeMouseX <= buttonX + 24) and
                         (relativeMouseY >= buttonY) and 
@@ -8276,36 +8385,28 @@ var
 begin
   for i := 0 to 23 do
   begin
-    // Отрисовываем кнопку ТОЛЬКО при hover
     if not ButtonHovered[i] then
-      Continue; // Пропускаем кнопку, если нет hover
+      Continue;
     
     buttonX := keyboardX + ButtonPositions[i].X;
     buttonY := keyboardY + ButtonPositions[i].Y;
     
-    // При hover показываем яркую кнопку
-    alpha := 140; // Хорошо видимая при hover
-    color := $4080FF; // Синий оттенок при hover
+    alpha := 140;
+    color := $4080FF;
     
-    // Отрисовка прозрачного прямоугольника кнопки (размер уменьшен до 24x24)
     Begin2D;
     try
-      // Отключаем текстуры для отрисовки прямоугольника
       glDisable(GL_TEXTURE_2D);
-      
-      // Включаем смешивание для прозрачности
       glEnable(GL_BLEND);
       glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
       
-      // Устанавливаем цвет с прозрачностью
       glColor4f(
-        ((color shr 16) and $FF) / 255.0, // R
-        ((color shr 8) and $FF) / 255.0,  // G
-        (color and $FF) / 255.0,          // B
-        alpha / 255.0                     // A
+        ((color shr 16) and $FF) / 255.0,
+        ((color shr 8) and $FF) / 255.0,
+        (color and $FF) / 255.0,
+        alpha / 255.0
       );
       
-      // Рисуем прямоугольник кнопки (24x24 вместо 27x27)
       glBegin(GL_QUADS);
         glVertex2f(buttonX, buttonY);
         glVertex2f(buttonX + 24, buttonY);
@@ -8313,12 +8414,11 @@ begin
         glVertex2f(buttonX, buttonY + 24);
       glEnd;
       
-      // Рисуем рамку кнопки (немного ярче)
       glColor4f(
-        ((color shr 16) and $FF) / 255.0, // R
-        ((color shr 8) and $FF) / 255.0,  // G
-        (color and $FF) / 255.0,          // B
-        (alpha + 60) / 255.0              // A (ярче для рамки)
+        ((color shr 16) and $FF) / 255.0,
+        ((color shr 8) and $FF) / 255.0,
+        (color and $FF) / 255.0,
+        (alpha + 60) / 255.0
       );
       
       glLineWidth(1.5);
@@ -8329,7 +8429,6 @@ begin
         glVertex2f(buttonX, buttonY + 24);
       glEnd;
       
-      // Восстанавливаем настройки
       glDisable(GL_BLEND);
       glEnable(GL_TEXTURE_2D);
       glColor4f(1.0, 1.0, 1.0, 1.0);
@@ -8349,28 +8448,20 @@ var
   texturePath: string;
   settingsPath: string;
   difference: Single;
-  triggerX, triggerY: Integer; // Статичная область триггера
-  // Переменные для парсинга settings.ini
+  triggerX, triggerY: Integer;
   settingsFile: TextFile;
   line: string;
   equalPos: Integer;
   paramName, paramValue: string;
 begin
-  // Инициализация при первом вызове
   if not BlockKeyboardInitialized then
   begin
-
-    //NopMemory(Pointer($0073880D), 5);
     NopMemory(Pointer($00738844), 3);
 
     try
-      // Инициализируем позиции кнопок
       InitializeButtonPositions;
-      
-      // Обнуляем состояния hover
       FillChar(ButtonHovered, SizeOf(ButtonHovered), 0);
 
-      // Читаем настройки экрана из settings.ini простым парсингом
       settingsPath := ExtractFilePath(ParamStr(0)) + 'settings.ini';
       if FileExists(settingsPath) then
       begin
@@ -8401,14 +8492,9 @@ begin
           CloseFile(settingsFile);
         end;
         
-        AddToLogFile(EngineLog, 'Парсинг settings.ini: ScreenWidth=' + IntToStr(ScreenWidth) + ', ScreenHeight=' + IntToStr(ScreenHeight));
-      end
-      else
-      begin
-        AddToLogFile(EngineLog, 'settings.ini не найден, используем разрешение по умолчанию');
+        AddToLogFile(EngineLog, '[ИНИТ] Парсинг settings.ini: ScreenWidth=' + IntToStr(ScreenWidth) + ', ScreenHeight=' + IntToStr(ScreenHeight));
       end;
       
-      // Путь к текстуре клавиатуры БЛОК
       texturePath := 'booster\block_buttons.bmp';
       
       if FileExists(texturePath) then
@@ -8416,35 +8502,19 @@ begin
         BlockKeyboardTexture := LoadTextureFromFile(texturePath, 0, -1);
         if BlockKeyboardTexture > 0 then
         begin
-          // НАСТРОЙКА ЧЕТКОЙ ТЕКСТУРЫ СРАЗУ ПОСЛЕ ЗАГРУЗКИ
-          //glBindTexture(GL_TEXTURE_2D, BlockKeyboardTexture);
-
-          // Точная отрисовка без сглаживания
-          //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-          //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-          
-          // Обрезка текстуры по краям
-          //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-          //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-          
-          // Отключаем мипмапы
-          //glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_FALSE);
-          
-          //glBindTexture(GL_TEXTURE_2D, 0);
-          
           BlockKeyboardFileExists := True;
-          AddToLogFile(EngineLog, 'Текстура клавиатуры БЛОК загружена с четкими настройками: ' + texturePath);
+          AddToLogFile(EngineLog, '[ИНИТ] ✓ Текстура клавиатуры БЛОК загружена');
         end
         else
         begin
           BlockKeyboardFileExists := False;
-          AddToLogFile(EngineLog, 'Ошибка загрузки текстуры клавиатуры БЛОК: ' + texturePath);
+          AddToLogFile(EngineLog, '[ИНИТ] ✗ Ошибка загрузки текстуры');
         end;
       end
       else
       begin
         BlockKeyboardFileExists := False;
-        AddToLogFile(EngineLog, 'Файл клавиатуры БЛОК не найден: ' + texturePath);
+        AddToLogFile(EngineLog, '[ИНИТ] ✗ Файл текстуры не найден: ' + texturePath);
       end;
       
       BlockKeyboardInitialized := True;
@@ -8452,91 +8522,70 @@ begin
     except
       on E: Exception do
       begin
-        AddToLogFile(EngineLog, 'КРИТИЧЕСКАЯ ОШИБКА инициализации клавиатуры БЛОК: ' + E.Message);
+        AddToLogFile(EngineLog, '[ИНИТ] ✗ КРИТИЧЕСКАЯ ОШИБКА: ' + E.Message);
         BlockKeyboardInitialized := True;
         BlockKeyboardFileExists := False;
       end;
     end;
   end;
   
-  // Если файл не существует, выходим без отрисовки
   if not BlockKeyboardFileExists then
     Exit;
     
   try
-// ИСПРАВЛЕННОЕ получение позиции курсора - в клиентских координатах
-if GetCursorPos(mousePos) then
-begin
-  if ScreenToClient(GetActiveWindow(), mousePos) then
-  begin
-    // Вычисляем где сейчас находится видимая часть панели (реальная используемая ширина 233px)
-    keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
-    
-    // Область триггера = РЕАЛЬНАЯ видимая часть панели (233px) + небольшой отступ влево
-    triggerX := ScreenWidth - 233 + Round(BlockKeyboardCurrentOffset) - 5; // Рассчитываем от реальной ширины
-    triggerY := ScreenHeight - 250; // Область по высоте панели (поднято выше)
-    
-    // Проверяем наведение курсора на РЕАЛЬНУЮ видимую часть панели
-    isMouseOver := (mousePos.X >= triggerX) and 
-                   (mousePos.X <= ScreenWidth) and // До правого края экрана
-                   (mousePos.Y >= triggerY) and 
-                   (mousePos.Y <= triggerY + 136); // Высота панели
-  end
-  else
-    isMouseOver := False;
-end
-else
-  isMouseOver := False;
-    
-    // Устанавливаем целевое смещение
-    if isMouseOver then
-      BlockKeyboardTargetOffset := 0        // Показать панель полностью
+    if GetCursorPos(mousePos) then
+    begin
+      if ScreenToClient(GetActiveWindow(), mousePos) then
+      begin
+        keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
+        triggerX := ScreenWidth - 233 + Round(BlockKeyboardCurrentOffset) - 5;
+        triggerY := ScreenHeight - 250;
+        
+        isMouseOver := (mousePos.X >= triggerX) and 
+                       (mousePos.X <= ScreenWidth) and
+                       (mousePos.Y >= triggerY) and 
+                       (mousePos.Y <= triggerY + 136);
+      end
+      else
+        isMouseOver := False;
+    end
     else
-      BlockKeyboardTargetOffset := 210;     // Скрыть панель (показать только край 30px)
+      isMouseOver := False;
     
-    // Плавная анимация
+    if isMouseOver then
+      BlockKeyboardTargetOffset := 0
+    else
+      BlockKeyboardTargetOffset := 210;
+    
     difference := BlockKeyboardTargetOffset - BlockKeyboardCurrentOffset;
     if Abs(difference) > 1.0 then
       BlockKeyboardCurrentOffset := BlockKeyboardCurrentOffset + (difference * 0.12)
     else
       BlockKeyboardCurrentOffset := BlockKeyboardTargetOffset;
     
-    // Вычисляем позицию отрисовки панели (поднято выше для всех разрешений)
     keyboardX := ScreenWidth - 230 + Round(BlockKeyboardCurrentOffset);
-    keyboardY := ScreenHeight - 250; // Поднято с 136 до 250 пикселей от низа
+    keyboardY := ScreenHeight - 250;
     
-    // Обновляем hover состояния кнопок
     if GetCursorPos(mousePos) and ScreenToClient(GetActiveWindow(), mousePos) then
       UpdateButtonHoverStates(mousePos.X, mousePos.Y, keyboardX, keyboardY);
     
-    // Отрисовка в 2D режиме
     Begin2D;
     try
-      // Устанавливаем полную непрозрачность
-      //glColor4f(1.0, 1.0, 1.0, 1.0);
-      
       DrawTexture2D(
         BlockKeyboardTexture,
         keyboardX,
         keyboardY,
-        340, // Ширина панели
-        136, // Высота панели
-        0,   // Угол поворота
-        255, // Альфа (полная непрозрачность)
-        $FFFFFF, // Цвет (белый)
-        False // Не использовать диффузное наложение
+        340, 136, 0, 255, $FFFFFF, False
       );
-      
     finally
       End2D;
     end;
     
-    // Отрисовываем прозрачные кнопки поверх текстуры
     DrawTransparentButtons(keyboardX, keyboardY);
     
   except
     on E: Exception do
-      AddToLogFile(EngineLog, 'Ошибка отрисовки клавиатуры БЛОК: ' + E.Message);
+      AddToLogFile(EngineLog, '[РИСОВАНИЕ] ✗ Ошибка: ' + E.Message);
   end;
 end;
 
@@ -8549,25 +8598,37 @@ var
 begin
   Result := False;
   
-  if not BlockKeyboardFileExists then
-    Exit;
-    
-  // Проверяем, что панель достаточно видна для кликов
-  if BlockKeyboardCurrentOffset > 155 then // Половина от 310 (скрытое состояние)
-    Exit; // Панель слишком скрыта
-    
-  keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
-  keyboardY := ScreenHeight - 250; // Поднято с 136 до 250 пикселей от низа
+  AddToLogFile(EngineLog, '[КЛИК] Обработка клика: X=' + IntToStr(mouseX) + ', Y=' + IntToStr(mouseY));
   
-  // Проверяем попадание в область панели
+  if not BlockKeyboardFileExists then
+  begin
+    AddToLogFile(EngineLog, '[КЛИК] Файл клавиатуры отсутствует');
+    Exit;
+  end;
+    
+  if BlockKeyboardCurrentOffset > 155 then
+  begin
+    AddToLogFile(EngineLog, '[КЛИК] Панель скрыта (offset: ' + FloatToStr(BlockKeyboardCurrentOffset) + ')');
+    Exit;
+  end;
+    
+  keyboardX := ScreenWidth - 230 + Round(BlockKeyboardCurrentOffset);
+  keyboardY := ScreenHeight - 250;
+  
+  AddToLogFile(EngineLog, '[КЛИК] Позиция панели: X=' + IntToStr(keyboardX) + ', Y=' + IntToStr(keyboardY));
+  
   if (mouseX >= keyboardX) and (mouseX <= keyboardX + 340) and
      (mouseY >= keyboardY) and (mouseY <= keyboardY + 136) then
   begin
-    // Вычисляем относительные координаты внутри панели
     relativeX := mouseX - keyboardX;
     relativeY := mouseY - keyboardY;
     
-    // Проверяем клик по каждой кнопке (размер уменьшен до 24x24)
+    AddToLogFile(EngineLog, '[КЛИК] ✓ Попадание в панель, относительные координаты: X=' + IntToStr(relativeX) + ', Y=' + IntToStr(relativeY));
+
+    // Выводим абсолютную позицию кнопки П
+    AddToLogFile(EngineLog, '[КЛИК] Абсолютная позиция кнопки П: X=' + IntToStr(keyboardX + ButtonPositions[0].X) + '-' + IntToStr(keyboardX + ButtonPositions[0].X + 24) + ', Y=' + IntToStr(keyboardY + ButtonPositions[0].Y) + '-' + IntToStr(keyboardY + ButtonPositions[0].Y + 24));
+    AddToLogFile(EngineLog, '[КЛИК] Относительная позиция кнопки П: X=' + IntToStr(ButtonPositions[0].X) + '-' + IntToStr(ButtonPositions[0].X + 24) + ', Y=' + IntToStr(ButtonPositions[0].Y) + '-' + IntToStr(ButtonPositions[0].Y + 24));
+    // Проверяем остальные кнопки
     for i := 0 to 23 do
     begin
       if (relativeX >= ButtonPositions[i].X) and 
@@ -8575,14 +8636,26 @@ begin
          (relativeY >= ButtonPositions[i].Y) and 
          (relativeY <= ButtonPositions[i].Y + 24) then
       begin
-        AddToLogFile(EngineLog, 'Клик по кнопке ' + IntToStr(i) + ' клавиатуры БЛОК');
+        AddToLogFile(EngineLog, '[КЛИК] ✓ Попадание в кнопку ' + IntToStr(i));
+        
+        case i of
+          1, 2, 3, 7, 8, 9, 13, 14, 15, 20: ProcessNumberInput(i);
+          else
+            AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
+        end;
+        
         Result := True;
         Exit;
       end;
     end;
     
-    AddToLogFile(EngineLog, 'Клик по клавиатуре БЛОК: ' + IntToStr(relativeX) + ',' + IntToStr(relativeY));
+    AddToLogFile(EngineLog, '[КЛИК] Клик мимо всех кнопок');
+    AddToLogFile(EngineLog, '[КЛИК] Для справки - кнопка П: X=' + IntToStr(ButtonPositions[0].X) + '-' + IntToStr(ButtonPositions[0].X + 24) + ', Y=' + IntToStr(ButtonPositions[0].Y) + '-' + IntToStr(ButtonPositions[0].Y + 24));
     Result := True;
+  end
+  else
+  begin
+    AddToLogFile(EngineLog, '[КЛИК] Клик мимо панели');
   end;
 end;
 

@@ -1280,23 +1280,33 @@ begin
         Result := 0;
       end;
       
-    WM_LBUTTONDOWN:
+WM_LBUTTONDOWN:
+  begin
+    try
+      ReleaseCapture();
+      SetCapture(h_Wnd);
+      MouseButton := 1;
+      MBLeft := true;
+      Xcoord := LOWORD(lParam);
+      Ycoord := HIWORD(lParam);
+
+      // Сначала проверяем клик по клавиатуре БЛОК
+      if HandleBlockKeyboardClick(Xcoord, Ycoord) then
       begin
-        try
-          ReleaseCapture();
-          SetCapture(h_Wnd);
-          MouseButton := 1;
-          MBLeft := true;
-          Xcoord := LOWORD(lParam);
-          Ycoord := HIWORD(lParam);
-
-          HandleMenuClick(Xcoord, Ycoord);
-
-        except
-          // Игнорируем ошибки мыши
-        end;
-        Result := 0;
+        // Клик обработан клавиатурой БЛОК, не передаем дальше
+        AddToLogFile(EngineLog, 'Клик обработан клавиатурой БЛОК');
+      end
+      else
+      begin
+        // Клик не попал в клавиатуру, обрабатываем как обычно
+        HandleMenuClick(Xcoord, Ycoord);
       end;
+
+    except
+      // Игнорируем ошибки мыши
+    end;
+    Result := 0;
+  end;
       
     WM_RBUTTONDOWN:
       begin
