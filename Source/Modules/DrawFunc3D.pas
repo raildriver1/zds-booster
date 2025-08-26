@@ -8251,6 +8251,127 @@ begin
   end;
 end;
 
+// Универсальная обработка для кнопки "К" и связанных действий
+procedure ProcessButtonPCycle(ActionType: Integer; ButtonIndex: Integer = -1);
+var
+  NumberStr: string;
+  Number: Integer;
+  currentState: Byte;
+begin
+  // ActionType: 0 = нажатие кнопки К, 1 = ввод цифры, 2 = нажатие ВВОД
+  
+  // Читаем текущее состояние из памяти
+  currentState := PByte($0074988C)^;
+  
+  case ActionType of
+    0: begin // Нажатие кнопки "К"
+         AddToLogFile(EngineLog, '[КНОПКА К] Обработка нажатия кнопки К');
+         try
+           // Записываем специальное состояние 99 = ожидание кода
+           WriteByteToMemory(Pointer($0074988C), 99);
+           InputBuffer := '';
+           AddToLogFile(EngineLog, '[КНОПКА К] ✓ Установлено состояние 99 (ожидание кода), буфер сброшен');
+         except
+           on E: Exception do
+             AddToLogFile(EngineLog, '[КНОПКА К] ✗ ОШИБКА: ' + E.Message);
+         end;
+       end;
+       
+    1: begin // Ввод цифры
+         AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Обработка ввода числа, индекс кнопки: ' + IntToStr(ButtonIndex) + ', состояние памяти: ' + IntToStr(currentState));
+         
+         // Проверяем что находимся в состоянии 99 (ожидание кода) ИЛИ в состоянии 10-19 (цикл)
+         if not ((currentState = 99) or ((currentState >= 10) and (currentState <= 19))) then
+         begin
+           AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
+           Exit;
+         end;
+         
+         // Определяем какая цифра нажата
+         case ButtonIndex of
+           1: NumberStr := '1';   // Кнопка 1
+           2: NumberStr := '2';   // Кнопка 2  
+           3: NumberStr := '3';   // Кнопка 3
+           7: NumberStr := '4';   // Кнопка 4
+           8: NumberStr := '5';   // Кнопка 5
+           9: NumberStr := '6';   // Кнопка 6
+           13: NumberStr := '7';  // Кнопка 7
+           14: NumberStr := '8';  // Кнопка 8
+           15: NumberStr := '9';  // Кнопка 9
+           20: NumberStr := '0';  // Кнопка 0
+           else
+           begin
+             AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Неизвестная кнопка: ' + IntToStr(ButtonIndex));
+             Exit;
+           end;
+         end;
+         
+         // Ограничиваем длину буфера до 6 цифр
+         if Length(InputBuffer) >= 6 then
+         begin
+           AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Буфер полный (6 символов), игнорируем ввод');
+           Exit;
+         end;
+         
+         // Добавляем цифру к буферу
+         InputBuffer := InputBuffer + NumberStr;
+         AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Введена цифра: ' + NumberStr + ', буфер: "' + InputBuffer + '"');
+       end;
+       
+    2: begin // Нажатие ВВОД
+         AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Обработка кнопки ВВОД, состояние памяти: ' + IntToStr(currentState) + ', буфер: "' + InputBuffer + '"');
+         
+         // Обработка состояния 99 (ожидание кода)
+         if currentState = 99 then
+         begin
+           // Проверяем что в буфере есть "7"
+           if InputBuffer <> '7' then
+           begin
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✗ Неверный код! Ожидается "7", получено: "' + InputBuffer + '"');
+             InputBuffer := '';  // Очищаем буфер при неверном коде
+             WriteByteToMemory(Pointer($0074988C), 0);  // Сбрасываем состояние
+             Exit;
+           end;
+           
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Правильный код "7" введен!');
+           
+           // Переходим к состоянию 10
+           WriteByteToMemory(Pointer($0074988C), 10);
+           InputBuffer := '';
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Переход с 99 на 10 (начало цикла)');
+           Exit;
+         end;
+         
+         // Обработка состояний 10-19 (продолжение цикла)
+         if (currentState >= 10) and (currentState <= 19) then
+         begin
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Продолжение цикла, текущее состояние: ' + IntToStr(currentState));
+           
+           // Очищаем буфер и переходим к следующему состоянию
+           InputBuffer := '';
+           
+           if currentState = 19 then
+           begin
+             // После 19 переходим к 0
+             WriteByteToMemory(Pointer($0074988C), 0);
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Переход с 19 на 0');
+           end
+           else
+           begin
+             // Увеличиваем состояние на 1
+             WriteByteToMemory(Pointer($0074988C), currentState + 1);
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Переход с ' + IntToStr(currentState) + ' на ' + IntToStr(currentState + 1));
+           end;
+           Exit;
+         end;
+         
+         AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
+       end;
+       
+    else
+      AddToLogFile(EngineLog, '[КНОПКА К] Неизвестный тип действия: ' + IntToStr(ActionType));
+  end;
+end;
 
 
 // НОВАЯ процедура обработки кнопки "ВВОД"
@@ -8691,13 +8812,27 @@ begin
          (relativeY <= ButtonPositions[i].Y + 24) then
       begin
         AddToLogFile(EngineLog, '[КЛИК] ✓ Попадание в кнопку ' + IntToStr(i));
-        
+       
 
-// ИЗМЕНЕННАЯ часть HandleBlockKeyboardClick (только case statement)
+
+// Обновленный case statement для HandleBlockKeyboardClick:
 case i of
-  0: ProcessButtonP;  // Кнопка П
-  1, 2, 3, 7, 8, 9, 13, 14, 15, 20: ProcessNumberInput(i);  // Цифровые кнопки
-  21: ProcessButtonEnter;  // Кнопка ВВОД - ДОБАВИТЬ ЭТУ СТРОКУ
+  0: ProcessButtonP;  // Кнопка П (старая логика)
+  1, 2, 3, 7, 8, 9, 13, 14, 15, 20: begin
+       // Сначала проверяем логику кнопки "П"
+       if ButtonPState > 0 then
+         ProcessNumberInput(i)  // Старая логика для кнопки "П"
+       else
+         ProcessButtonPCycle(1, i);  // Новая логика для кнопки "К"
+     end;
+  4: ProcessButtonPCycle(0);  // Кнопка К (ИЗМЕНЕНО С 10 НА 4)
+  21: begin
+        // Сначала проверяем логику кнопки "П"  
+        if ButtonPState > 0 then
+          ProcessButtonEnter  // Старая логика для кнопки "П"
+        else
+          ProcessButtonPCycle(2);  // Новая логика для кнопки "К"
+      end;
   else
     AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
 end;
@@ -9061,7 +9196,26 @@ begin
     if GetStateBLOCK = 20 then
       DrawText3D(0, 'НОМЕР ПУТИ ' + InputBuffer + '_')
     else if GetStateBLOCK = 21 then
-      DrawText3D(0, 'ПРИЗНАК ПРАВ. ' + InputBuffer + '_');
+      DrawText3D(0, 'ПРИЗНАК ПРАВ. ' + InputBuffer + '_')
+    else if GetStateBLOCK = 10 then
+      DrawText3D(0, 'НОМЕР МАШИНИСТА ' + InputBuffer + '_')
+    else if GetStateBLOCK = 11 then
+      DrawText3D(0, 'НОМЕР ПОЕЗДА ' + InputBuffer + '_')
+    else if GetStateBLOCK = 12 then
+      DrawText3D(0, 'ДЛИНА В ОСЯХ ' + InputBuffer + '_')
+    else if GetStateBLOCK = 13 then
+      DrawText3D(0, 'ДЛИНА В ВАГОНАХ ' + InputBuffer + '_')
+    else if GetStateBLOCK = 14 then
+      DrawText3D(0, 'МАССА ПОЕЗДА (Т) ' + InputBuffer + '_')
+    else if GetStateBLOCK = 15 then
+      DrawText3D(0, 'СМЕЩЕНИЕ ЧАСОВ ' + InputBuffer + '_')
+    else if GetStateBLOCK = 16 then
+      DrawText3D(0, 'ЗАМЕДЛЕНИЕ ПТ ' + InputBuffer + '_')
+    else if GetStateBLOCK = 17 then
+      DrawText3D(0, 'ЗАМЕДЛЕНИЕ ЭПТ ' + InputBuffer + '_')
+    else if GetStateBLOCK = 18 then
+      DrawText3D(0, 'НАЛИЧ.ПОМ.МАШ. ' + InputBuffer + '_');
+      
     glEnable(GL_LIGHTING);
     EndObj3D;
 
