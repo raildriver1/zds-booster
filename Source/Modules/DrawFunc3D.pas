@@ -8196,6 +8196,153 @@ var
   BlockKeyboardFileExists: Boolean = False;
   ScreenWidth: Integer = 1920;
   ScreenHeight: Integer = 1080;
+  
+  // Переменные для hover эффектов кнопок (24 кнопки)
+  ButtonHovered: array[0..23] of Boolean;
+  
+  // Позиции кнопок (относительно панели клавиатуры)
+  ButtonPositions: array[0..23] of record
+    X, Y: Integer;
+  end;
+
+// Инициализация позиций кнопок
+procedure InitializeButtonPositions;
+begin
+  // Ряд 1: П 1 2 3 К К20 (Y = 9)
+  ButtonPositions[0].X := 29;   ButtonPositions[0].Y := 9;   // П
+  ButtonPositions[1].X := 62;   ButtonPositions[1].Y := 9;   // 1
+  ButtonPositions[2].X := 95;   ButtonPositions[2].Y := 9;   // 2
+  ButtonPositions[3].X := 128;  ButtonPositions[3].Y := 9;   // 3
+  ButtonPositions[4].X := 161;  ButtonPositions[4].Y := 9;   // К
+  ButtonPositions[5].X := 194;  ButtonPositions[5].Y := 9;   // К20
+  
+  // Ряд 2: ВК 4 5 6 P OC (Y = 44)
+  ButtonPositions[6].X := 29;   ButtonPositions[6].Y := 44;  // ВК
+  ButtonPositions[7].X := 62;   ButtonPositions[7].Y := 44;  // 4
+  ButtonPositions[8].X := 95;   ButtonPositions[8].Y := 44;  // 5
+  ButtonPositions[9].X := 128;  ButtonPositions[9].Y := 44;  // 6
+  ButtonPositions[10].X := 161; ButtonPositions[10].Y := 44; // P
+  ButtonPositions[11].X := 194; ButtonPositions[11].Y := 44; // OC
+  
+  // Ряд 3: РМП 7 8 9 ОТМ ОТПР (Y = 79)
+  ButtonPositions[12].X := 29;  ButtonPositions[12].Y := 79; // РМП
+  ButtonPositions[13].X := 62;  ButtonPositions[13].Y := 79; // 7
+  ButtonPositions[14].X := 95;  ButtonPositions[14].Y := 79; // 8
+  ButtonPositions[15].X := 128; ButtonPositions[15].Y := 79; // 9
+  ButtonPositions[16].X := 161; ButtonPositions[16].Y := 79; // ОТМ
+  ButtonPositions[17].X := 194; ButtonPositions[17].Y := 79; // ОТПР
+  
+  // Ряд 4: F СТР 0 ВВОД о подтяг (Y = 105)
+  ButtonPositions[18].X := 29;  ButtonPositions[18].Y := 105; // F
+  ButtonPositions[19].X := 62;  ButtonPositions[19].Y := 105; // СТР
+  ButtonPositions[20].X := 95;  ButtonPositions[20].Y := 105; // 0
+  ButtonPositions[21].X := 128; ButtonPositions[21].Y := 105; // ВВОД
+  ButtonPositions[22].X := 161; ButtonPositions[22].Y := 105; // о
+  ButtonPositions[23].X := 194; ButtonPositions[23].Y := 105; // подтяг
+end;
+
+// Обновление hover состояний кнопок
+procedure UpdateButtonHoverStates(mouseX, mouseY: Integer; keyboardX, keyboardY: Integer);
+var
+  i: Integer;
+  buttonX, buttonY: Integer;
+  relativeMouseX, relativeMouseY: Integer;
+begin
+  // Вычисляем позицию мыши относительно панели клавиатуры
+  relativeMouseX := mouseX - keyboardX;
+  relativeMouseY := mouseY - keyboardY;
+  
+  // Проверяем каждую кнопку
+  for i := 0 to 23 do
+  begin
+    buttonX := ButtonPositions[i].X;
+    buttonY := ButtonPositions[i].Y;
+    
+    // Проверяем попадание курсора в область кнопки (размер уменьшен до 24x24)
+    ButtonHovered[i] := (relativeMouseX >= buttonX) and 
+                        (relativeMouseX <= buttonX + 24) and
+                        (relativeMouseY >= buttonY) and 
+                        (relativeMouseY <= buttonY + 24);
+  end;
+end;
+
+// Отрисовка прозрачных кнопок с hover эффектом
+procedure DrawTransparentButtons(keyboardX, keyboardY: Integer);
+var
+  i: Integer;
+  buttonX, buttonY: Integer;
+  alpha: Byte;
+  color: Cardinal;
+begin
+  for i := 0 to 23 do
+  begin
+    buttonX := keyboardX + ButtonPositions[i].X;
+    buttonY := keyboardY + ButtonPositions[i].Y;
+    
+    // Определяем цвет и прозрачность в зависимости от hover состояния
+    if ButtonHovered[i] then
+    begin
+      alpha := 120; // Более видимая при hover
+      color := $4080FF; // Синий оттенок при hover
+    end
+    else
+    begin
+      alpha := 60; // Полупрозрачная в обычном состоянии
+      color := $808080; // Серый цвет в обычном состоянии
+    end;
+    
+    // Отрисовка прозрачного прямоугольника кнопки (размер уменьшен до 24x24)
+    Begin2D;
+    try
+      // Отключаем текстуры для отрисовки прямоугольника
+      glDisable(GL_TEXTURE_2D);
+      
+      // Включаем смешивание для прозрачности
+      glEnable(GL_BLEND);
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      
+      // Устанавливаем цвет с прозрачностью
+      glColor4f(
+        ((color shr 16) and $FF) / 255.0, // R
+        ((color shr 8) and $FF) / 255.0,  // G
+        (color and $FF) / 255.0,          // B
+        alpha / 255.0                     // A
+      );
+      
+      // Рисуем прямоугольник кнопки (24x24 вместо 27x27)
+      glBegin(GL_QUADS);
+        glVertex2f(buttonX, buttonY);
+        glVertex2f(buttonX + 24, buttonY);
+        glVertex2f(buttonX + 24, buttonY + 24);
+        glVertex2f(buttonX, buttonY + 24);
+      glEnd;
+      
+      // Рисуем рамку кнопки (немного ярче)
+      glColor4f(
+        ((color shr 16) and $FF) / 255.0, // R
+        ((color shr 8) and $FF) / 255.0,  // G
+        (color and $FF) / 255.0,          // B
+        (alpha + 40) / 255.0              // A (ярче для рамки)
+      );
+      
+      glLineWidth(1.0);
+      glBegin(GL_LINE_LOOP);
+        glVertex2f(buttonX, buttonY);
+        glVertex2f(buttonX + 24, buttonY);
+        glVertex2f(buttonX + 24, buttonY + 24);
+        glVertex2f(buttonX, buttonY + 24);
+      glEnd;
+      
+      // Восстанавливаем настройки
+      glDisable(GL_BLEND);
+      glEnable(GL_TEXTURE_2D);
+      glColor4f(1.0, 1.0, 1.0, 1.0);
+      
+    finally
+      End2D;
+    end;
+  end;
+end;
 
 // Основная функция отрисовки клавиатуры БЛОК
 procedure DrawBlockKeyboard;
@@ -8220,8 +8367,13 @@ begin
     //NopMemory(Pointer($0073880D), 5);
     NopMemory(Pointer($00738844), 3);
 
-
     try
+      // Инициализируем позиции кнопок
+      InitializeButtonPositions;
+      
+      // Обнуляем состояния hover
+      FillChar(ButtonHovered, SizeOf(ButtonHovered), 0);
+
       // Читаем настройки экрана из settings.ini простым парсингом
       settingsPath := ExtractFilePath(ParamStr(0)) + 'settings.ini';
       if FileExists(settingsPath) then
@@ -8357,6 +8509,10 @@ begin
     keyboardX := ScreenWidth - 230 + Round(BlockKeyboardCurrentOffset);
     keyboardY := ScreenHeight - 250; // Поднято с 136 до 250 пикселей от низа
     
+    // Обновляем hover состояния кнопок
+    if GetCursorPos(mousePos) and ScreenToClient(GetActiveWindow(), mousePos) then
+      UpdateButtonHoverStates(mousePos.X, mousePos.Y, keyboardX, keyboardY);
+    
     // Отрисовка в 2D режиме
     Begin2D;
     try
@@ -8379,6 +8535,9 @@ begin
       End2D;
     end;
     
+    // Отрисовываем прозрачные кнопки поверх текстуры
+    DrawTransparentButtons(keyboardX, keyboardY);
+    
   except
     on E: Exception do
       AddToLogFile(EngineLog, 'Ошибка отрисовки клавиатуры БЛОК: ' + E.Message);
@@ -8390,6 +8549,7 @@ function HandleBlockKeyboardClick(mouseX, mouseY: Integer): Boolean;
 var
   keyboardX, keyboardY: Integer;
   relativeX, relativeY: Integer;
+  i: Integer;
 begin
   Result := False;
   
@@ -8410,6 +8570,20 @@ begin
     // Вычисляем относительные координаты внутри панели
     relativeX := mouseX - keyboardX;
     relativeY := mouseY - keyboardY;
+    
+    // Проверяем клик по каждой кнопке (размер уменьшен до 24x24)
+    for i := 0 to 23 do
+    begin
+      if (relativeX >= ButtonPositions[i].X) and 
+         (relativeX <= ButtonPositions[i].X + 24) and
+         (relativeY >= ButtonPositions[i].Y) and 
+         (relativeY <= ButtonPositions[i].Y + 24) then
+      begin
+        AddToLogFile(EngineLog, 'Клик по кнопке ' + IntToStr(i) + ' клавиатуры БЛОК');
+        Result := True;
+        Exit;
+      end;
+    end;
     
     AddToLogFile(EngineLog, 'Клик по клавиатуре БЛОК: ' + IntToStr(relativeX) + ',' + IntToStr(relativeY));
     Result := True;
