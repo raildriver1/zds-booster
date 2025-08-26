@@ -21,7 +21,7 @@
 unit DrawFunc3D;
 interface
 uses OpenGL, Variables, Windows, TFrustumClass, EngineUtils, SysUtils, DMD_MultyMesh,
-     Textures, DPC_Packages, Classes, KlubData, KlubProcessor, Math, TlHelp32, MMSystem, IniFiles;
+     Textures, DPC_Packages, Classes, KlubData, KlubProcessor, Math, TlHelp32, MMSystem, IniFiles, Sound;
 
 
 type TVertex3D = record X,Y,Z : single; Color, Alpha : integer; TexX, TexY : single; end;
@@ -8197,6 +8197,7 @@ var
   BlockKeyboardTargetOffset: Single = 210;
   BlockKeyboardInitialized: Boolean = False;
   BlockKeyboardFileExists: Boolean = False;
+  BlockKeyboardSoundID: Integer = -1; // ID звукового файла кнопок
   ScreenWidth: Integer = 1920;
   ScreenHeight: Integer = 1080;
   
@@ -8217,8 +8218,6 @@ begin
   Result := PByte($400000 + $34988C)^;
 end;
 
-
-
 // Функция записи байта в память
 procedure WriteByteToMemory(Address: Pointer; Value: Byte);
 begin
@@ -8229,25 +8228,6 @@ begin
   except
     on E: Exception do
       AddToLogFile(EngineLog, '[ПАМЯТЬ] ✗ ОШИБКА записи: ' + E.Message);
-  end;
-end;
-
-// Обработка нажатия кнопки "П"
-procedure ProcessButtonP;
-begin
-  AddToLogFile(EngineLog, '[КНОПКА П] Обработка нажатия, текущее состояние: ' + IntToStr(ButtonPState));
-  
-  if ButtonPState = 0 then
-  begin
-    // Записываем 20 и переходим к ожиданию первого числа
-    WriteByteToMemory(Pointer($0074988C), 20);
-    ButtonPState := 1;
-    InputBuffer := '';
-    AddToLogFile(EngineLog, '[КНОПКА П] ✓ Записали 20, ожидаем первое число');
-  end
-  else
-  begin
-    AddToLogFile(EngineLog, '[КНОПКА П] Кнопка нажата повторно, игнорируем (состояние: ' + IntToStr(ButtonPState) + ')');
   end;
 end;
 
@@ -8267,10 +8247,10 @@ begin
     0: begin // Нажатие кнопки "К"
          AddToLogFile(EngineLog, '[КНОПКА К] Обработка нажатия кнопки К');
          try
-           // Записываем специальное состояние 99 = ожидание кода
-           WriteByteToMemory(Pointer($0074988C), 99);
+           // Записываем состояние 30 для ожидания ввода
+           WriteByteToMemory(Pointer($0074988C), 30);
            InputBuffer := '';
-           AddToLogFile(EngineLog, '[КНОПКА К] ✓ Установлено состояние 99 (ожидание кода), буфер сброшен');
+           AddToLogFile(EngineLog, '[КНОПКА К] ✓ Установлено состояние 30 (ожидание ввода), буфер сброшен');
          except
            on E: Exception do
              AddToLogFile(EngineLog, '[КНОПКА К] ✗ ОШИБКА: ' + E.Message);
@@ -8280,8 +8260,8 @@ begin
     1: begin // Ввод цифры
          AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Обработка ввода числа, индекс кнопки: ' + IntToStr(ButtonIndex) + ', состояние памяти: ' + IntToStr(currentState));
          
-         // Проверяем что находимся в состоянии 99 (ожидание кода) ИЛИ в состоянии 10-19 (цикл)
-         if not ((currentState = 99) or ((currentState >= 10) and (currentState <= 19))) then
+         // Проверяем подходящие состояния: 30 (ожидание), 71 (команда К), 70 (команда К70), 10-19 (старый цикл)
+         if not ((currentState = 30) or (currentState = 71) or (currentState = 70) or ((currentState >= 10) and (currentState <= 19))) then
          begin
            AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
            Exit;
@@ -8321,31 +8301,79 @@ begin
     2: begin // Нажатие ВВОД
          AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Обработка кнопки ВВОД, состояние памяти: ' + IntToStr(currentState) + ', буфер: "' + InputBuffer + '"');
          
-         // Обработка состояния 99 (ожидание кода)
-         if currentState = 99 then
+         // Обработка состояния 30 (ожидание ввода после нажатия К)
+         if currentState = 30 then
          begin
-           // Проверяем что в буфере есть "7"
-           if InputBuffer <> '7' then
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Обработка состояния 30');
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] DEBUG: Буфер содержит: "' + InputBuffer + '"');
+           
+           // Проверяем содержимое буфера
+           if InputBuffer = '70' then
            begin
-             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✗ Неверный код! Ожидается "7", получено: "' + InputBuffer + '"');
-             InputBuffer := '';  // Очищаем буфер при неверном коде
-             WriteByteToMemory(Pointer($0074988C), 0);  // Сбрасываем состояние
-             Exit;
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Обнаружена команда К70, переход в состояние 70');
+             WriteByteToMemory(Pointer($0074988C), 70);
+             InputBuffer := '';
+             // Записываем 0 в адрес 0538D95A для состояния 70
+             WriteByteToMemory(Pointer($0538D95A), 0);
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Записан 0 в адрес 0x' + IntToHex($0538D95A, 8) + ' для состояния 70');
+           end
+           else
+           begin
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Переход в состояние 71, введено: "' + InputBuffer + '"');
+             WriteByteToMemory(Pointer($0074988C), 71);
+             InputBuffer := '';
+             // Записываем 1 в адрес 0538D962 для состояния 71
+             WriteByteToMemory(Pointer($0538D962), 1);
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Записан 1 в адрес 0x' + IntToHex($0538D962, 8) + ' для состояния 71');
            end;
-           
-           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Правильный код "7" введен!');
-           
-           // Переходим к состоянию 10
-           WriteByteToMemory(Pointer($0074988C), 10);
-           InputBuffer := '';
-           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Переход с 99 на 10 (начало цикла)');
            Exit;
          end;
          
-         // Обработка состояний 10-19 (продолжение цикла)
+         // Обработка состояния 71 (команда К)
+         if currentState = 71 then
+         begin
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Обработка состояния 71');
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] DEBUG: Длина буфера: ' + IntToStr(Length(InputBuffer)));
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] DEBUG: Содержимое буфера: "' + InputBuffer + '"');
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] DEBUG: Сравнение с "70": ' + BoolToStr(InputBuffer = '70', True));
+           
+           // Проверяем на команду "70"
+           if InputBuffer = '70' then
+           begin
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Обнаружена команда К70, переход в состояние 70');
+             WriteByteToMemory(Pointer($0074988C), 70);
+             InputBuffer := '';
+             // Записываем 0 в адрес 0538D95A для состояния 70
+             WriteByteToMemory(Pointer($0538D95A), 0);
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Записан 0 в адрес 0x' + IntToHex($0538D95A, 8) + ' для состояния 70');
+           end
+           else
+           begin
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✗ НЕ СОВПАЛО! Остаемся в состоянии 71, введено: "' + InputBuffer + '"');
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] DEBUG: Ожидалось "70", получено "' + InputBuffer + '"');
+             InputBuffer := '';
+             // Записываем 1 в адрес 0538D962 для состояния 71
+             WriteByteToMemory(Pointer($0538D962), 1);
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Записан 1 в адрес 0x' + IntToHex($0538D962, 8) + ' для состояния 71');
+           end;
+           Exit;
+         end;
+         
+         // Обработка состояния 70 (команда К70)
+         if currentState = 70 then
+         begin
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Обработка состояния 70, введено: "' + InputBuffer + '"');
+           InputBuffer := '';
+           // Записываем 0 в адрес 0538D95A для состояния 70
+           WriteByteToMemory(Pointer($0538D95A), 0);
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Записан 0 в адрес 0x' + IntToHex($0538D95A, 8) + ' для состояния 70');
+           Exit;
+         end;
+         
+         // Обработка состояний 10-19 (старая логика цикла с кодом "7")
          if (currentState >= 10) and (currentState <= 19) then
          begin
-           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Продолжение цикла, текущее состояние: ' + IntToStr(currentState));
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Обработка старого цикла, текущее состояние: ' + IntToStr(currentState));
            
            // Очищаем буфер и переходим к следующему состоянию
            InputBuffer := '';
@@ -8373,9 +8401,26 @@ begin
   end;
 end;
 
+// Обработка нажатия кнопки "П"
+procedure ProcessButtonP;
+begin
+  AddToLogFile(EngineLog, '[КНОПКА П] Обработка нажатия, текущее состояние: ' + IntToStr(ButtonPState));
+  
+  if ButtonPState = 0 then
+  begin
+    // Записываем 20 и переходим к ожиданию первого числа
+    WriteByteToMemory(Pointer($0074988C), 20);
+    ButtonPState := 1;
+    InputBuffer := '';
+    AddToLogFile(EngineLog, '[КНОПКА П] ✓ Записали 20, ожидаем первое число');
+  end
+  else
+  begin
+    AddToLogFile(EngineLog, '[КНОПКА П] Кнопка нажата повторно, игнорируем (состояние: ' + IntToStr(ButtonPState) + ')');
+  end;
+end;
 
-// НОВАЯ процедура обработки кнопки "ВВОД"
-// Измененная обработка ввода числа (убираем автоматическое срабатывание)
+// Обработка ввода числа для кнопки "П"
 procedure ProcessNumberInput(ButtonIndex: Integer);
 var
   NumberStr: string;
@@ -8420,7 +8465,7 @@ begin
   AddToLogFile(EngineLog, '[ЧИСЛО] Введена цифра: ' + NumberStr + ', буфер: "' + InputBuffer + '"');
 end;
 
-// НОВАЯ процедура обработки кнопки "ВВОД"
+// Обработка кнопки "ВВОД" для кнопки "П"
 procedure ProcessButtonEnter;
 var
   Number: Integer;
@@ -8489,8 +8534,6 @@ begin
        end;
   end;
 end;
-
-
 
 // Инициализация позиций кнопок
 procedure InitializeButtonPositions;
@@ -8692,6 +8735,18 @@ begin
         AddToLogFile(EngineLog, '[ИНИТ] ✗ Файл текстуры не найден: ' + texturePath);
       end;
       
+      // Загружаем звук клавиш (проверяем только наличие файла)
+      if FileExists('booster\block_pick.wav') then
+      begin
+        BlockKeyboardSoundID := 1; // Просто флаг что файл существует
+        AddToLogFile(EngineLog, '[ИНИТ] ✓ Звуковой файл найден: booster\block_pick.wav');
+      end
+      else
+      begin
+        BlockKeyboardSoundID := -1;
+        AddToLogFile(EngineLog, '[ИНИТ] ✗ Файл звука клавиш не найден: booster\block_pick.wav');
+      end;
+      
       BlockKeyboardInitialized := True;
       
     except
@@ -8800,9 +8855,6 @@ begin
     
     AddToLogFile(EngineLog, '[КЛИК] ✓ Попадание в панель, относительные координаты: X=' + IntToStr(relativeX) + ', Y=' + IntToStr(relativeY));
 
-    // Выводим абсолютную позицию кнопки П
-    AddToLogFile(EngineLog, '[КЛИК] Абсолютная позиция кнопки П: X=' + IntToStr(keyboardX + ButtonPositions[0].X) + '-' + IntToStr(keyboardX + ButtonPositions[0].X + 24) + ', Y=' + IntToStr(keyboardY + ButtonPositions[0].Y) + '-' + IntToStr(keyboardY + ButtonPositions[0].Y + 24));
-    AddToLogFile(EngineLog, '[КЛИК] Относительная позиция кнопки П: X=' + IntToStr(ButtonPositions[0].X) + '-' + IntToStr(ButtonPositions[0].X + 24) + ', Y=' + IntToStr(ButtonPositions[0].Y) + '-' + IntToStr(ButtonPositions[0].Y + 24));
     // Проверяем остальные кнопки
     for i := 0 to 23 do
     begin
@@ -8812,30 +8864,49 @@ begin
          (relativeY <= ButtonPositions[i].Y + 24) then
       begin
         AddToLogFile(EngineLog, '[КЛИК] ✓ Попадание в кнопку ' + IntToStr(i));
-       
-
-
-// Обновленный case statement для HandleBlockKeyboardClick:
-case i of
-  0: ProcessButtonP;  // Кнопка П (старая логика)
-  1, 2, 3, 7, 8, 9, 13, 14, 15, 20: begin
-       // Сначала проверяем логику кнопки "П"
-       if ButtonPState > 0 then
-         ProcessNumberInput(i)  // Старая логика для кнопки "П"
-       else
-         ProcessButtonPCycle(1, i);  // Новая логика для кнопки "К"
-     end;
-  4: ProcessButtonPCycle(0);  // Кнопка К (ИЗМЕНЕНО С 10 НА 4)
-  21: begin
-        // Сначала проверяем логику кнопки "П"  
-        if ButtonPState > 0 then
-          ProcessButtonEnter  // Старая логика для кнопки "П"
+        
+        // Проигрываем звук нажатия кнопки через Windows API
+        if BlockKeyboardSoundID > 0 then
+        begin
+          try
+            AddToLogFile(EngineLog, '[ЗВУК] Проигрываем звук через PlaySound');
+            // Используем PlaySound из MMSystem (нужно добавить MMSystem в uses)
+            // SND_FILENAME | SND_ASYNC = воспроизвести файл асинхронно
+            if PlaySound('booster\block_pick.wav', 0, SND_FILENAME or SND_ASYNC) then
+              AddToLogFile(EngineLog, '[ЗВУК] ✓ Звук успешно проигран')
+            else
+              AddToLogFile(EngineLog, '[ЗВУК] ✗ Ошибка PlaySound');
+          except
+            on E: Exception do
+              AddToLogFile(EngineLog, '[ЗВУК] ✗ Исключение при воспроизведении: ' + E.Message);
+          end;
+        end
         else
-          ProcessButtonPCycle(2);  // Новая логика для кнопки "К"
-      end;
-  else
-    AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
-end;
+        begin
+          AddToLogFile(EngineLog, '[ЗВУК] Звуковой файл недоступен');
+        end;
+        
+        // Обработка кнопок
+        case i of
+          0: ProcessButtonP;  // Кнопка П (старая логика)
+          1, 2, 3, 7, 8, 9, 13, 14, 15, 20: begin
+               // Сначала проверяем логику кнопки "П"
+               if ButtonPState > 0 then
+                 ProcessNumberInput(i)  // Старая логика для кнопки "П"
+               else
+                 ProcessButtonPCycle(1, i);  // Новая логика для кнопки "К"
+             end;
+          4: ProcessButtonPCycle(0);  // Кнопка К (новая логика: 30->71/70, запись в память)
+          21: begin
+                // Сначала проверяем логику кнопки "П"  
+                if ButtonPState > 0 then
+                  ProcessButtonEnter  // Старая логика для кнопки "П"
+                else
+                  ProcessButtonPCycle(2);  // Новая логика для кнопки "К"
+              end;
+          else
+            AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
+        end;
 
         Result := True;
         Exit;
@@ -8843,7 +8914,6 @@ end;
     end;
     
     AddToLogFile(EngineLog, '[КЛИК] Клик мимо всех кнопок');
-    AddToLogFile(EngineLog, '[КЛИК] Для справки - кнопка П: X=' + IntToStr(ButtonPositions[0].X) + '-' + IntToStr(ButtonPositions[0].X + 24) + ', Y=' + IntToStr(ButtonPositions[0].Y) + '-' + IntToStr(ButtonPositions[0].Y + 24));
     Result := True;
   end
   else
@@ -9214,8 +9284,12 @@ begin
     else if GetStateBLOCK = 17 then
       DrawText3D(0, 'ЗАМЕДЛЕНИЕ ЭПТ ' + InputBuffer + '_')
     else if GetStateBLOCK = 18 then
-      DrawText3D(0, 'НАЛИЧ.ПОМ.МАШ. ' + InputBuffer + '_');
-      
+      DrawText3D(0, 'НАЛИЧ.ПОМ.МАШ. ' + InputBuffer + '_')
+    else if GetStateBLOCK = 30 then
+      DrawText3D(0, 'ВВЕДИТЕ КОМАНДУ ' + InputBuffer + '_')
+    else if GetStateBLOCK = 71 then
+      DrawText3D(0, '1234567-9-В');
+
     glEnable(GL_LIGHTING);
     EndObj3D;
 

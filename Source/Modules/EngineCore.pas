@@ -177,7 +177,9 @@ var
   
 begin
   if ZDSimPatched then Exit;
-  
+
+
+
   try
     AddToLogFile(EngineLog, 'Starting ZDSim patches - checking settings and file...');
     
@@ -1948,6 +1950,7 @@ begin
     
         case LocType of
           524, 880, 2070, 21014, 1462, 811, 882: begin
+
             ApplyKPD3Patch();
             AddToLogFile(EngineLog, 'KPD-3 patch applied for locomotive type: ' + IntToStr(LocType));
           end;
