@@ -8244,10 +8244,12 @@ begin
   end;
 end;
 
-// Обработка ввода числа
+
+
+// НОВАЯ процедура обработки кнопки "ВВОД"
+// Измененная обработка ввода числа (убираем автоматическое срабатывание)
 procedure ProcessNumberInput(ButtonIndex: Integer);
 var
-  Number: Integer;
   NumberStr: string;
 begin
   AddToLogFile(EngineLog, '[ЧИСЛО] Обработка ввода числа, индекс кнопки: ' + IntToStr(ButtonIndex) + ', состояние П: ' + IntToStr(ButtonPState));
@@ -8278,44 +8280,89 @@ begin
     end;
   end;
   
+  // Ограничиваем длину буфера до 3 цифр
+  if Length(InputBuffer) >= 3 then
+  begin
+    AddToLogFile(EngineLog, '[ЧИСЛО] Буфер полный, игнорируем ввод');
+    Exit;
+  end;
+  
   // Добавляем цифру к буферу
   InputBuffer := InputBuffer + NumberStr;
   AddToLogFile(EngineLog, '[ЧИСЛО] Введена цифра: ' + NumberStr + ', буфер: "' + InputBuffer + '"');
+end;
+
+// НОВАЯ процедура обработки кнопки "ВВОД"
+procedure ProcessButtonEnter;
+var
+  Number: Integer;
+begin
+  AddToLogFile(EngineLog, '[ВВОД] Обработка кнопки ВВОД, состояние П: ' + IntToStr(ButtonPState) + ', буфер: "' + InputBuffer + '"');
   
-  // Проверяем готовность числа (1-3 цифры)
-  if Length(InputBuffer) >= 3 then
+  // Если не ожидаем ввод числа, игнорируем
+  if ButtonPState = 0 then
   begin
-    Number := StrToIntDef(InputBuffer, 0);
-    AddToLogFile(EngineLog, '[ЧИСЛО] Буфер полный, анализируем число: ' + IntToStr(Number));
-    
-    if (Number >= 1) and (Number <= 127) then
-    begin
-      AddToLogFile(EngineLog, '[ЧИСЛО] ✓ Корректное число: ' + IntToStr(Number));
-      
-      case ButtonPState of
-        1: begin
-             AddToLogFile(EngineLog, '[ЧИСЛО] Первое число - записываем 21');
-             WriteByteToMemory(Pointer($0074988C), 21);
-             ButtonPState := 2;
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[ЧИСЛО] ✓ Ожидаем второе число');
-           end;
-        2: begin
-             AddToLogFile(EngineLog, '[ЧИСЛО] Второе число - записываем 0 и сбрасываем');
-             WriteByteToMemory(Pointer($0074988C), 0);
-             ButtonPState := 0;
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[ЧИСЛО] ✓ Процедура завершена');
-           end;
-      end;
-    end
-    else
-    begin
-      AddToLogFile(EngineLog, '[ЧИСЛО] ✗ Некорректное число: ' + IntToStr(Number) + ' (нужно 1-127)');
-      InputBuffer := '';
-    end;
+    AddToLogFile(EngineLog, '[ВВОД] Игнорируем - не ожидается ввод числа');
+    Exit;
+  end;
+  
+  // Проверяем что в буфере есть данные
+  if InputBuffer = '' then
+  begin
+    AddToLogFile(EngineLog, '[ВВОД] Буфер пустой, игнорируем');
+    Exit;
+  end;
+  
+  Number := StrToIntDef(InputBuffer, 0);
+  AddToLogFile(EngineLog, '[ВВОД] Анализируем число: ' + IntToStr(Number));
+  
+  case ButtonPState of
+    1: begin
+         if (Number >= 1) and (Number <= 127) then
+         begin
+           AddToLogFile(EngineLog, '[ВВОД] ✓ Первое число корректное: ' + IntToStr(Number));
+           
+           // Записываем введенное значение по адресу 0x400000 + 0x4F8D958
+           WriteByteToMemory(Pointer($400000 + $4F8D958), Byte(Number));
+           AddToLogFile(EngineLog, '[ВВОД] ✓ Записано значение ' + IntToStr(Number) + ' по адресу 0x' + IntToHex($400000 + $4F8D958, 8));
+           
+           // Записываем 21 и переходим к следующему состоянию
+           WriteByteToMemory(Pointer($0074988C), 21);
+           ButtonPState := 2;
+           InputBuffer := '';
+           AddToLogFile(EngineLog, '[ВВОД] ✓ Ожидаем второе число');
+         end
+         else
+         begin
+           AddToLogFile(EngineLog, '[ВВОД] ✗ Некорректное первое число: ' + IntToStr(Number) + ' (нужно 1-127)');
+           InputBuffer := '';
+         end;
+       end;
+    2: begin
+         if (Number = 0) or (Number = 1) then
+         begin
+           AddToLogFile(EngineLog, '[ВВОД] ✓ Второе число корректное: ' + IntToStr(Number));
+           
+           // Записываем 0 или 1 по адресу 0x400000 + 0x349890
+           WriteByteToMemory(Pointer($400000 + $349890), Byte(Number));
+           AddToLogFile(EngineLog, '[ВВОД] ✓ Записано значение ' + IntToStr(Number) + ' по адресу 0x' + IntToHex($400000 + $349890, 8));
+           
+           // Записываем 0 и завершаем процедуру
+           WriteByteToMemory(Pointer($0074988C), 0);
+           ButtonPState := 0;
+           InputBuffer := '';
+           AddToLogFile(EngineLog, '[ВВОД] ✓ Процедура завершена');
+         end
+         else
+         begin
+           AddToLogFile(EngineLog, '[ВВОД] ✗ Некорректное второе число: ' + IntToStr(Number) + ' (нужно 0 или 1)');
+           InputBuffer := '';
+         end;
+       end;
   end;
 end;
+
+
 
 // Инициализация позиций кнопок
 procedure InitializeButtonPositions;
@@ -8638,12 +8685,16 @@ begin
       begin
         AddToLogFile(EngineLog, '[КЛИК] ✓ Попадание в кнопку ' + IntToStr(i));
         
-        case i of
-          1, 2, 3, 7, 8, 9, 13, 14, 15, 20: ProcessNumberInput(i);
-          else
-            AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
-        end;
-        
+
+// ИЗМЕНЕННАЯ часть HandleBlockKeyboardClick (только case statement)
+case i of
+  0: ProcessButtonP;  // Кнопка П
+  1, 2, 3, 7, 8, 9, 13, 14, 15, 20: ProcessNumberInput(i);  // Цифровые кнопки
+  21: ProcessButtonEnter;  // Кнопка ВВОД - ДОБАВИТЬ ЭТУ СТРОКУ
+  else
+    AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
+end;
+
         Result := True;
         Exit;
       end;
