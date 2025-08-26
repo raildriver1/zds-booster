@@ -8212,6 +8212,13 @@ var
   ButtonPState: Integer = 0; // 0 - ожидание "П", 1 - ожидание первого числа, 2 - ожидание второго числа
   InputBuffer: string = '';  // Буфер для ввода чисел
 
+function GetStateBLOCK: Byte;
+begin
+  Result := PByte($400000 + $34988C)^;
+end;
+
+
+
 // Функция записи байта в память
 procedure WriteByteToMemory(Address: Pointer; Value: Byte);
 begin
@@ -9041,6 +9048,20 @@ begin
     Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, GetTargetType);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.11, 0, 0.081);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    if GetStateBLOCK = 20 then
+      DrawText3D(0, 'НОМЕР ПУТИ ' + InputBuffer + '_')
+    else if GetStateBLOCK = 21 then
+      DrawText3D(0, 'ПРИЗНАК ПРАВ. ' + InputBuffer + '_');
     glEnable(GL_LIGHTING);
     EndObj3D;
 
