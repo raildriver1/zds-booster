@@ -9037,6 +9037,25 @@ var
   posZ_ur: Double;
   posX_ur: Double;
 
+  // Переменные для полосок
+  barValue: Single;        // значение для полоски ТМ
+  barX: Single;           // X координата полоски ТМ
+  barWidth: Single;       // ширина полоски
+  barBottom: Single;      // нижняя граница (где 0.00)
+  barTop: Single;         // верхняя граница (где 10.00)
+  barCurrentHeight: Single; // текущая высота полоски ТМ
+  barZ: Single;           // Z координата для полоски
+  
+  // Переменные для ТЦ
+  barValue_tc: Single;        
+  barX_tc: Single;           
+  barCurrentHeight_tc: Single; 
+  
+  // Переменные для УР
+  barValue_ur: Single;        
+  barX_ur: Single;           
+  barCurrentHeight_ur: Single; 
+
 procedure DrawBLOCK(
   x: Single;
   y: Single;
@@ -9242,17 +9261,36 @@ begin
   posZ_tm := 0.191; // стартовая координата
   posZ_ur := 0.191; // стартовая координата
 
+  // Настройки полосок
+  barWidth := 0.003;      // ширина всех полосок
+  barTop := 0.191;        // верх (где было 10.00)
+  barBottom := 0.191 - 5 * 0.018; // низ (где 0.00) = 0.101
+  
+  // ТЦ полоска
+  barValue_tc := GetPressureTCf;    // значение для ТЦ
+  barX_tc := 0.0676;      // X координата (правее от "ТЦ")
+  
+  // ТМ полоска
+  barValue := GetPressureTMf;       // значение для ТМ
+  barX := 0.0896;         // X координата (правее от "ТМ")
+  
+  // УР полоска
+  barValue_ur := GetPressureURf;    // значение для УР
+  barX_ur := 0.111;      // X координата (правее от "УР")
+
   // Инициализируем модели если еще не инициализированы
   if not BLOCKInitialized then
     begin
       InitBLOCKModels;
     end;
 
-    
+  if barValue_tc > 10.0 then barValue_tc := 10.0;
+  if barValue > 10.0 then barValue := 10.0;
+  if barValue_ur > 10.0 then barValue_ur := 10.0;
+
   // Если инициализация не удалась, выходим
   if not BLOCKInitialized then
   begin
-
     AddToLogFile(EngineLog, 'BLOCK не инициализирован, отрисовка отменена');
     Exit;
   end;
@@ -9393,6 +9431,63 @@ begin
     posZ_tc := posZ_tc - 0.018; // 0.191 → 0.173 → …
   end;
 
+    // === ПОЛОСКА ТЦ ===
+    barCurrentHeight_tc := barBottom + ((barTop - barBottom) * (barValue_tc / 10.0));
+    
+    SetTexture(0);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
+    if barValue_tc > 0 then
+    begin
+      glColor4f(0.0, 0.0, 1.0, 0.9); // синий цвет как у стрелки
+
+      glBegin(GL_QUADS);
+        glVertex3f(barX_tc - barWidth/2, 0, barBottom);
+        glVertex3f(barX_tc + barWidth/2, 0, barBottom);
+        glVertex3f(barX_tc + barWidth/2, 0, barCurrentHeight_tc);
+        glVertex3f(barX_tc - barWidth/2, 0, barCurrentHeight_tc);
+      glEnd;
+    end;
+
+    glDisable(GL_BLEND);
+    glEnable(GL_LIGHTING);
+    glColor4f(1.0, 1.0, 1.0, 1.0);
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(barX_tc - 0.008, 0, barBottom - 0.007);
+    RotateX(-90);
+    Scale3D(0.005);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, 'ТЦ');
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(barX_tc - 0.009, 0, barBottom - 0.0135);
+    RotateX(-90);
+    Scale3D(0.005);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, FormatFloat('0.00', barValue_tc));
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(barX_tc - 0.009, 0, barBottom - 0.02);
+    RotateX(-90);
+    Scale3D(0.005);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, 'КГС');
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
   val := 10;
 
   // тм
@@ -9420,6 +9515,63 @@ begin
     posZ_tm := posZ_tm - 0.018; // 0.191 → 0.173 → …
   end;
 
+    // === ПОЛОСКА ТМ ===
+    barCurrentHeight := barBottom + ((barTop - barBottom) * (barValue / 10.0));
+    
+    SetTexture(0);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
+    if barValue > 0 then
+    begin
+      glColor4f(0.0, 0.0, 1.0, 0.9); // синий цвет как у стрелки
+
+      glBegin(GL_QUADS);
+        glVertex3f(barX - barWidth/2, 0, barBottom);
+        glVertex3f(barX + barWidth/2, 0, barBottom);
+        glVertex3f(barX + barWidth/2, 0, barCurrentHeight);
+        glVertex3f(barX - barWidth/2, 0, barCurrentHeight);
+      glEnd;
+    end;
+
+    glDisable(GL_BLEND);
+    glEnable(GL_LIGHTING);
+    glColor4f(1.0, 1.0, 1.0, 1.0);
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(barX - 0.008, 0, barBottom - 0.007);
+    RotateX(-90);
+    Scale3D(0.005);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, 'ТМ');
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(barX - 0.009, 0, barBottom - 0.0135);
+    RotateX(-90);
+    Scale3D(0.005);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, FormatFloat('0.00', barValue));
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(barX - 0.009, 0, barBottom - 0.02);
+    RotateX(-90);
+    Scale3D(0.005);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, 'КГС');
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
   val := 10;
 
   // ур
@@ -9446,6 +9598,63 @@ begin
     val := val - 2.0;          // 10 → 8 → 6 → …
     posZ_ur := posZ_ur - 0.018; // 0.191 → 0.173 → …
   end;
+
+    // === ПОЛОСКА УР ===
+    barCurrentHeight_ur := barBottom + ((barTop - barBottom) * (barValue_ur / 10.0));
+    
+    SetTexture(0);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
+    if barValue_ur > 0 then
+    begin
+      glColor4f(0.0, 0.0, 1.0, 0.9); // синий цвет как у стрелки
+
+      glBegin(GL_QUADS);
+        glVertex3f(barX_ur - barWidth/2, 0, barBottom);
+        glVertex3f(barX_ur + barWidth/2, 0, barBottom);
+        glVertex3f(barX_ur + barWidth/2, 0, barCurrentHeight_ur);
+        glVertex3f(barX_ur - barWidth/2, 0, barCurrentHeight_ur);
+      glEnd;
+    end;
+
+    glDisable(GL_BLEND);
+    glEnable(GL_LIGHTING);
+    glColor4f(1.0, 1.0, 1.0, 1.0);
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(barX_ur - 0.008, 0, barBottom - 0.007);
+    RotateX(-90);
+    Scale3D(0.005);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, 'УР');
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(barX_ur - 0.009, 0, barBottom - 0.0135);
+    RotateX(-90);
+    Scale3D(0.005);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, FormatFloat('0.00', barValue_ur));
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(barX_ur - 0.009, 0, barBottom - 0.02);
+    RotateX(-90);
+    Scale3D(0.005);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, 'КГС');
+    glEnable(GL_LIGHTING);
+    EndObj3D;
 
     // Тип цели
     BeginObj3D;
@@ -10522,6 +10731,8 @@ begin
 end;
 
 begin
+
+  AddToLogFile(EngineLog, GetPressureTC);
 
   // ===== ИНИЦИАЛИЗАЦИЯ СВЕТОФОРНОЙ СИСТЕМЫ =====
   if not SystemInitialized then

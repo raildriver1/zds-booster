@@ -26,7 +26,9 @@ function GetSpeedValue: Integer;     // Скорость как число
 function GetDistanceValue: Integer; // Расстояние как число
 
 function GetALS: Byte;
-
+function GetPressureTMf: Single;    // Давление ТМ
+function GetPressureURf: Single;    // Давление УР
+function GetPressureTCf: Single;    // Давление ТЦ  
 
 implementation
 
@@ -479,6 +481,31 @@ begin
   end;
 end;
 
+function GetPressureTMf: Single;
+begin
+  try
+    Result := PSingle(BaseAddress + $8D10738)^;
+  except
+    Result := 0.0;
+  end;
+end;
+
+function GetPressureURf: Single;
+var
+  addr: Cardinal;
+begin
+  try
+    // Базовый адрес для большинства локомотивов
+    addr := PCardinal(BaseAddress + $8D10D78)^;
+    if addr <> 0 then
+      Result := PSingle(addr + $20)^
+    else
+      Result := 0.0;
+  except
+    Result := 0.0;
+  end;
+end;
+
 function GetPressureTM: string;
 var
   val: Single;
@@ -526,13 +553,198 @@ begin
   end;
 end;
 
+function GetPressureTCf: Single;
+var
+  locType: Integer;
+  baseAddr: Cardinal;
+  addr, tempAddr: Cardinal;
+
+  // Вспомогательная функция для получения адреса через указатели (аналог GetPtrAddr из Python)
+function GetPtrAddr(baseOffset: Cardinal; offsets: array of Cardinal): Cardinal;
+var
+  i: Integer;
+  currentAddr: Cardinal;
+begin
+  Result := 0;
+  try
+    currentAddr := PCardinal(baseAddr + baseOffset)^;
+    if currentAddr = 0 then Exit;
+    
+    // Просто прибавляем смещения, НЕ читаем по ним указатели
+    for i := 0 to High(offsets) do
+    begin
+      currentAddr := currentAddr + offsets[i];  // УБРАТЬ PCardinal()^
+    end;
+    
+    Result := currentAddr;
+  except
+    Result := 0;
+  end;
+end;
+
+begin
+  Result := 0.0;
+  baseAddr := $00400000;
+  
+  try
+    // Определяем тип локомотива
+    locType := PInteger(Pointer(baseAddr + $4F8D93C))^;
+    
+    case locType of
+      // Группа 1: ED9M, ED4M, 2M62 - используем float
+      3159, // ЭД9М (ED9M)
+      3154, // ЭД4М (ED4M)  
+      1462: // М62 (2M62)
+      begin
+        try
+          Result := PSingle(baseAddr + $8D107B0)^;
+        except
+          Result := 0.0;
+        end;
+      end;
+      
+      // Группа 2: 2TE10U, TEP70BS, TEP70, TEM18DM, VL85, VL80T, VL82M - используем double
+      21014, // 2ТЭ10У (2TE10U)
+      2071,  // ТЭП70БС (TEP70BS)
+      2070,  // ТЭП70 (TEP70)
+      201318,// ТЭМ18ДМ (TEM18DM)
+      885,   // ВЛ85 (VL85)
+      880,   // ВЛ80Т (VL80T)
+      882:   // ВЛ82М (VL82M)
+      begin
+        try
+          addr := GetPtrAddr($4F8D8D4, [$A8]);
+          if addr <> 0 then
+            Result := PDouble(addr)^
+          else
+            Result := 0.0;
+        except
+          Result := 0.0;
+        end;
+      end;
+      
+      // Группа 3: VL11M, CHS2K, EP1M, 2ES5K - используем float
+      811,   // ВЛ11М (VL11M)
+      343,   // ЧС2К (CHS2K)  
+      31714, // ЭП1М (EP1M)
+      23152: // 2ЭС5К (2ES5K)
+      begin
+        try
+          addr := GetPtrAddr($8D10D78, [$68]);
+          if addr <> 0 then
+            Result := PSingle(addr)^
+          else
+            Result := 0.0;
+        except
+          Result := 0.0;
+        end;
+      end;
+      
+      // Группа 4: CHS7, CHS4T, CHS4 с правильными адресами памяти
+      822: // ЧС7 (CHS7)
+begin
+  try
+    tempAddr := PCardinal(baseAddr + $4F8D8D4)^;
+    if tempAddr <> 0 then
+    begin
+      addr := tempAddr + $80;  // Просто прибавляем смещение
+      Result := PDouble(addr)^;
+    end;
+  except
+    Result := 0.0;
+  end;
+end;
+      
+      621: // ЧС4Т (CHS4T)
+      begin
+        try
+          addr := GetPtrAddr($4F8D8D4, [$58]);
+          if addr <> 0 then
+            Result := PDouble(addr)^
+          else
+            Result := 0.0;
+        except
+          Result := 0.0;
+        end;
+      end;
+      
+      523: // ЧС4 (CHS4)
+      begin
+        // Для версии 55, CHS4 имеет значение 0.0
+        Result := 0.0;
+      end;
+      
+      // Группа 5: CHS4KVR - используем double
+      524: // ЧС4КВР (CHS4KVR)
+      begin
+        try
+          addr := GetPtrAddr($34846C, [$1C, $80]);
+          if addr <> 0 then
+            Result := PDouble(addr)^
+          else
+            Result := 0.0;
+        except
+          Result := 0.0;
+        end;
+      end;
+      
+      // Остальные случаи (ЧС8, 2ЭС4К и др.)
+      812,   // ЧС8 (CHS8)
+      23142: // 2ЭС4К (2ES4K)
+      begin
+        try
+          addr := GetPtrAddr($04F8D8D4, [$28, $48]);
+          if addr <> 0 then
+            Result := PSingle(addr)^
+          else
+            Result := 0.0;
+        except
+          Result := 0.0;
+        end;
+      end;
+      
+      else
+      begin
+        // Случай по умолчанию - используем подход из default case
+        try
+          addr := GetPtrAddr($04F8D8D4, [$28, $48]);
+          if addr <> 0 then
+            Result := PSingle(addr)^
+          else
+            Result := 0.0;
+        except
+          Result := 0.0;
+        end;
+      end;
+    end;
+    
+    // Проверяем разумность значения (давление ТЦ обычно 0-10 кгс/см²)
+    if (Result < 0) or (Result > 15) then
+      Result := 0.0;
+      
+  except
+    Result := 0.0;
+  end;
+end;
+
+// Строковая версия для совместимости
 function GetPressureTC: string;
 var
   val: Single;
-  addr: Cardinal;
   OldDecimalSeparator: Char;
 begin
-  Result := '0.00';
+  try
+    OldDecimalSeparator := DecimalSeparator;
+    DecimalSeparator := '.';
+    try
+      val := GetPressureTCf;
+      Result := FormatFloat('0.00', val);
+    finally
+      DecimalSeparator := OldDecimalSeparator;
+    end;
+  except
+    Result := 'Err';
+  end;
 end;
 
 function GetTrackNumber: string;
