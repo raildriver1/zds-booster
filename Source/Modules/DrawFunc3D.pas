@@ -8289,14 +8289,10 @@ procedure ProcessButtonP;
 begin
   AddToLogFile(EngineLog, '[КНОПКА П] Обработка нажатия, текущее состояние: ' + IntToStr(ButtonPState));
   
-  // Если активен режим К123, сбрасываем его
-  if K123Active then
-    ResetK123Mode;
-  
   if ButtonPState = 0 then
   begin
     // Записываем 20 и переходим к ожиданию первого числа
-    WriteByteToMemory(Pointer($400000 + $34988C), 20);
+    WriteByteToMemory(Pointer($0074988C), 20);
     ButtonPState := 1;
     InputBuffer := '';
     AddToLogFile(EngineLog, '[КНОПКА П] ✓ Записали 20, ожидаем первое число');
@@ -8430,23 +8426,125 @@ begin
   end;
 end;
 
-// Обработка кнопки "К"
-procedure ProcessButtonK;
+// Универсальная обработка для кнопки "К" и связанных действий
+procedure ProcessButtonPCycle(ActionType: Integer; ButtonIndex: Integer = -1);
+var
+  NumberStr: string;
+  Number: Integer;
+  currentState: Byte;
 begin
-  AddToLogFile(EngineLog, '[КНОПКА К] Обработка нажатия кнопки К');
+  // ActionType: 0 = нажатие кнопки К, 1 = ввод цифры, 2 = нажатие ВВОД
   
-  // Если активен режим К123, сбрасываем его
-  if K123Active then
-    ResetK123Mode;
+  // Читаем текущее состояние из памяти
+  currentState := PByte($0074988C)^;
   
-  try
-    // Переходим в режим ожидания команды К123
-    K123State := 1;
-    InputBuffer := '';
-    AddToLogFile(EngineLog, '[КНОПКА К] ✓ Переход в режим ожидания команды К123');
-  except
-    on E: Exception do
-      AddToLogFile(EngineLog, '[КНОПКА К] ✗ ОШИБКА: ' + E.Message);
+  case ActionType of
+    0: begin // Нажатие кнопки "К"
+         AddToLogFile(EngineLog, '[КНОПКА К] Обработка нажатия кнопки К');
+         try
+           // Записываем специальное состояние 30 = ожидание кода
+           WriteByteToMemory(Pointer($0074988C), 30);
+           InputBuffer := '';
+           AddToLogFile(EngineLog, '[КНОПКА К] ✓ Установлено состояние 30 (ожидание кода), буфер сброшен');
+         except
+           on E: Exception do
+             AddToLogFile(EngineLog, '[КНОПКА К] ✗ ОШИБКА: ' + E.Message);
+         end;
+       end;
+       
+    1: begin // Ввод цифры
+         AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Обработка ввода числа, индекс кнопки: ' + IntToStr(ButtonIndex) + ', состояние памяти: ' + IntToStr(currentState));
+         
+         // Проверяем что находимся в состоянии 99 (ожидание кода) ИЛИ в состоянии 10-19 (цикл)
+         if not ((currentState = 30) or ((currentState >= 10) and (currentState <= 19))) then
+         begin
+           AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
+           Exit;
+         end;
+         
+         // Определяем какая цифра нажата
+         case ButtonIndex of
+           1: NumberStr := '1';   // Кнопка 1
+           2: NumberStr := '2';   // Кнопка 2  
+           3: NumberStr := '3';   // Кнопка 3
+           7: NumberStr := '4';   // Кнопка 4
+           8: NumberStr := '5';   // Кнопка 5
+           9: NumberStr := '6';   // Кнопка 6
+           13: NumberStr := '7';  // Кнопка 7
+           14: NumberStr := '8';  // Кнопка 8
+           15: NumberStr := '9';  // Кнопка 9
+           20: NumberStr := '0';  // Кнопка 0
+           else
+           begin
+             AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Неизвестная кнопка: ' + IntToStr(ButtonIndex));
+             Exit;
+           end;
+         end;
+         
+         // Ограничиваем длину буфера до 6 цифр
+         if Length(InputBuffer) >= 6 then
+         begin
+           AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Буфер полный (6 символов), игнорируем ввод');
+           Exit;
+         end;
+         
+         // Добавляем цифру к буферу
+         InputBuffer := InputBuffer + NumberStr;
+         AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Введена цифра: ' + NumberStr + ', буфер: "' + InputBuffer + '"');
+       end;
+       
+    2: begin // Нажатие ВВОД
+         AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Обработка кнопки ВВОД, состояние памяти: ' + IntToStr(currentState) + ', буфер: "' + InputBuffer + '"');
+         
+         // Обработка состояния 99 (ожидание кода)
+         if currentState = 30 then
+         begin
+           // Проверяем что в буфере есть "7"
+           if InputBuffer <> '7' then
+           begin
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✗ Неверный код! Ожидается "7", получено: "' + InputBuffer + '"');
+             InputBuffer := '';  // Очищаем буфер при неверном коде
+             WriteByteToMemory(Pointer($0074988C), 0);  // Сбрасываем состояние
+             Exit;
+           end;
+           
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Правильный код "7" введен!');
+           
+           // Переходим к состоянию 10
+           WriteByteToMemory(Pointer($0074988C), 10);
+           InputBuffer := '';
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Переход с 30 на 10 (начало цикла)');
+           Exit;
+         end;
+         
+         // Обработка состояний 10-19 (продолжение цикла)
+         if (currentState >= 10) and (currentState <= 19) then
+         begin
+           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Продолжение цикла, текущее состояние: ' + IntToStr(currentState));
+           
+           // Очищаем буфер и переходим к следующему состоянию
+           InputBuffer := '';
+           
+           if currentState = 19 then
+           begin
+             // После 19 переходим к 0
+             WriteByteToMemory(Pointer($0074988C), 0);
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Переход с 19 на 0');
+           end
+           else
+           begin
+             // Увеличиваем состояние на 1
+             WriteByteToMemory(Pointer($0074988C), currentState + 1);
+             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Переход с ' + IntToStr(currentState) + ' на ' + IntToStr(currentState + 1));
+           end;
+           Exit;
+         end;
+         
+         AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
+       end;
+       
+    else
+      AddToLogFile(EngineLog, '[КНОПКА К] Неизвестный тип действия: ' + IntToStr(ActionType));
   end;
 end;
 
@@ -8990,28 +9088,26 @@ begin
           end;
         end;
         
-        // Обработка кнопок
-        case i of
-          0: ProcessButtonP;  // Кнопка П
-          1, 2, 3, 7, 8, 9, 13, 14, 15, 20: begin
-               // Определяем для какой системы ввод
-               if ButtonPState > 0 then
-                 ProcessNumberInput(i)  // Система кнопки "П"
-               else
-                 ProcessKNumberInput(i);  // Система кнопки "К"
-             end;
-          4: ProcessButtonK;  // Кнопка К
-          19: ProcessButtonClear;  // Кнопка СТР - очистка буфера
-          21: begin
-                // Определяем для какой системы ввод ВВОД
-                if ButtonPState > 0 then
-                  ProcessButtonEnter  // Система кнопки "П"
-                else
-                  ProcessKEnter;  // Система кнопки "К"
-              end;
-          else
-            AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
-        end;
+case i of
+  0: ProcessButtonP;  // Кнопка П (старая логика)
+  1, 2, 3, 7, 8, 9, 13, 14, 15, 20: begin
+       // Сначала проверяем логику кнопки "П"
+       if ButtonPState > 0 then
+         ProcessNumberInput(i)  // Старая логика для кнопки "П"
+       else
+         ProcessButtonPCycle(1, i);  // Новая логика для кнопки "К"
+     end;
+  4: ProcessButtonPCycle(0);  // Кнопка К (ИЗМЕНЕНО С 10 НА 4)
+  21: begin
+        // Сначала проверяем логику кнопки "П"  
+        if ButtonPState > 0 then
+          ProcessButtonEnter  // Старая логика для кнопки "П"
+        else
+          ProcessButtonPCycle(2);  // Новая логика для кнопки "К"
+      end;
+  else
+    AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
+end;
 
         Result := True;
         Exit;
