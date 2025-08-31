@@ -8236,6 +8236,19 @@ begin
   end;
 end;
 
+// Функция записи 4-байтового значения в память
+procedure WriteDWordToMemory(Address: Pointer; Value: LongWord);
+begin
+  AddToLogFile(EngineLog, '[ПАМЯТЬ] Попытка записи 4 байтов ' + IntToStr(Value) + ' по адресу ' + IntToHex(Cardinal(Address), 8));
+  try
+    PLongWord(Address)^ := Value;
+    AddToLogFile(EngineLog, '[ПАМЯТЬ] ✓ УСПЕШНО записано 4 байта ' + IntToStr(Value));
+  except
+    on E: Exception do
+      AddToLogFile(EngineLog, '[ПАМЯТЬ] ✗ ОШИБКА записи 4 байт: ' + E.Message);
+  end;
+end;
+
 // Функция проверки и обновления таймера К123
 procedure UpdateK123Timer;
 var
@@ -8406,6 +8419,7 @@ var
   NumberStr: string;
   Number: Integer;
   currentState: Byte;
+  NumberValue: LongWord;
 begin
   // ActionType: 0 = нажатие кнопки К, 1 = ввод цифры, 2 = нажатие ВВОД
   
@@ -8429,8 +8443,8 @@ begin
     1: begin // Ввод цифры
          AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Обработка ввода числа, индекс кнопки: ' + IntToStr(ButtonIndex) + ', состояние памяти: ' + IntToStr(currentState));
          
-         // Проверяем что находимся в состоянии 99 (ожидание кода) ИЛИ в состоянии 10-19 (цикл)
-         if not ((currentState = 30) or ((currentState >= 10) and (currentState <= 19))) then
+         // Проверяем что находимся в состоянии 30 (ожидание кода) ИЛИ в состоянии 10-19 (цикл) ИЛИ в состоянии 31 (К799) ИЛИ в состоянии 70-71
+         if not ((currentState = 30) or ((currentState >= 10) and (currentState <= 19)) or (currentState = 31) or (currentState = 70) or (currentState = 71)) then
          begin
            AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
            Exit;
@@ -8470,24 +8484,89 @@ begin
     2: begin // Нажатие ВВОД
          AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Обработка кнопки ВВОД, состояние памяти: ' + IntToStr(currentState) + ', буфер: "' + InputBuffer + '"');
          
-         // Обработка состояния 99 (ожидание кода)
+         // Обработка состояния 30 (ожидание кода)
          if currentState = 30 then
          begin
-           // Проверяем что в буфере есть "7"
-           if InputBuffer <> '7' then
+           AddToLogFile(EngineLog, '[К-ВВОД] Обработка команды К, буфер: "' + InputBuffer + '"');
+           
+           if InputBuffer = '7' then
            begin
-             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✗ Неверный код! Ожидается "7", получено: "' + InputBuffer + '"');
-             InputBuffer := '';  // Очищаем буфер при неверном коде
-             WriteByteToMemory(Pointer($0074988C), 0);  // Сбрасываем состояние
-             Exit;
+             // Команда К7 - переход в состояние 10 (НОМЕР МАШИНИСТА)
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К7 - НОМЕР МАШИНИСТА');
+             WriteByteToMemory(Pointer($0074988C), 10);
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 10');
+           end
+           else if InputBuffer = '70' then
+           begin
+             // Команда К70 - переход в состояние 70 + запись в память
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К70');
+             WriteByteToMemory(Pointer($0074988C), 70);
+             WriteByteToMemory(Pointer($0538D95A), 0);
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 70, записан 0 в 0x0538D95A');
+           end
+           else if InputBuffer = '71' then
+           begin
+             // КОМАНДА К71 - переход в состояние 71
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К71');
+             WriteByteToMemory(Pointer($0074988C), 71);
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 71');
+           end
+           else if InputBuffer = '799' then
+           begin
+             // КОМАНДА К799 - переход в состояние 31
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К799');
+             WriteByteToMemory(Pointer($0074988C), 31);
+             WriteDWordToMemory(Pointer($0538D960), 1);  // записываем 4 байта со значением 1
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 31, записана 1 в 0x0538D960');
+           end
+           else if InputBuffer = '800' then
+           begin
+             // НОВАЯ КОМАНДА К800 - сброс 0538D960 в 0
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К800 - сброс 0538D960');
+             WriteDWordToMemory(Pointer($0538D960), 0);  // записываем 4 байта со значением 0
+             WriteByteToMemory(Pointer($0074988C), 0);   // сразу возвращаемся в состояние 0
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ К800 выполнена: записан 0 в 0x0538D960, возврат в состояние 0');
+           end
+           else
+           begin
+             // Неизвестная команда - сбрасываем в состояние 0
+             AddToLogFile(EngineLog, '[К-ВВОД] ✗ Неизвестная команда: "' + InputBuffer + '", сброс');
+             WriteByteToMemory(Pointer($0074988C), 0);
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Сброс в состояние 0');
            end;
+           Exit;
+         end;
+         
+         // ОБРАБОТКА состояния 31 (ожидание числа для записи в 00749894) - К799
+         if currentState = 31 then
+         begin
+           AddToLogFile(EngineLog, '[К-ВВОД] Обработка состояния 31 (К799), буфер: "' + InputBuffer + '"');
            
-           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Правильный код "7" введен!');
-           
-           // Переходим к состоянию 10
-           WriteByteToMemory(Pointer($0074988C), 10);
-           InputBuffer := '';
-           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Переход с 30 на 10 (начало цикла)');
+           if InputBuffer <> '' then
+           begin
+             NumberValue := StrToIntDef(InputBuffer, 0);
+             AddToLogFile(EngineLog, '[К-ВВОД] Записываем число ' + IntToStr(NumberValue) + ' в 0x00749894');
+             
+             // Записываем введенное число как 4 байта в адрес 00749894
+             WriteDWordToMemory(Pointer($00749894), NumberValue);
+             
+             // Сбрасываем состояние и буфер
+             WriteByteToMemory(Pointer($0074988C), 0);
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Состояние 31 завершено, сброс в 0');
+           end
+           else
+           begin
+             AddToLogFile(EngineLog, '[К-ВВОД] ✗ Буфер пустой для состояния 31');
+             WriteByteToMemory(Pointer($0074988C), 0);
+             InputBuffer := '';
+           end;
            Exit;
          end;
          
@@ -8510,6 +8589,44 @@ begin
              // Увеличиваем состояние на 1
              WriteByteToMemory(Pointer($0074988C), currentState + 1);
              AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Переход с ' + IntToStr(currentState) + ' на ' + IntToStr(currentState + 1));
+           end;
+           Exit;
+         end;
+         
+         // Обработка состояния 70 - К70
+         if currentState = 70 then
+         begin
+           AddToLogFile(EngineLog, '[К-ВВОД] Обработка состояния 70 (К70), буфер: "' + InputBuffer + '"');
+           InputBuffer := '';
+           WriteByteToMemory(Pointer($0538D95A), 0);
+           AddToLogFile(EngineLog, '[К-ВВОД] ✓ Записан 0 в 0x0538D95A для состояния 70');
+           Exit;
+         end;
+         
+         // ОБРАБОТКА состояния 71 - К71
+         if currentState = 71 then
+         begin
+           AddToLogFile(EngineLog, '[К-ВВОД] Обработка состояния 71 (К71), буфер: "' + InputBuffer + '"');
+           
+           if InputBuffer <> '' then
+           begin
+             NumberValue := StrToIntDef(InputBuffer, 0);
+             AddToLogFile(EngineLog, '[К-ВВОД] К71 - введенное число: ' + IntToStr(NumberValue));
+             
+             // Здесь можно добавить специальную логику для К71 если нужно
+             // Например, записать число в определенный адрес памяти
+             // WriteDWordToMemory(Pointer($АДРЕС_ДЛЯ_К71), NumberValue);
+             
+             // Сбрасываем состояние и буфер
+             WriteByteToMemory(Pointer($0074988C), 0);
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Состояние 71 завершено, сброс в 0');
+           end
+           else
+           begin
+             AddToLogFile(EngineLog, '[К-ВВОД] ✗ Буфер пустой для состояния 71');
+             WriteByteToMemory(Pointer($0074988C), 0);
+             InputBuffer := '';
            end;
            Exit;
          end;
@@ -8566,8 +8683,8 @@ begin
     Exit;
   end;
   
-  // Принимаем ввод только в состояниях 30 и 10-19
-  if not ((currentState = 30) or ((currentState >= 10) and (currentState <= 19))) then
+  // Принимаем ввод только в состояниях 30, 10-19 и 31
+  if not ((currentState = 30) or ((currentState >= 10) and (currentState <= 19)) or (currentState = 31)) then
   begin
     AddToLogFile(EngineLog, '[К-ЧИСЛО] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
     Exit;
@@ -8608,9 +8725,9 @@ end;
 procedure ProcessKEnter;
 var
   currentState: Byte;
+  NumberValue: LongWord;
 begin
   currentState := GetStateBLOCK;
-
   
   // Обработка состояния 30 (ожидание команды К)
   if currentState = 30 then
@@ -8634,6 +8751,15 @@ begin
       InputBuffer := '';
       AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 70, записан 0 в 0x0538D95A');
     end
+    else if InputBuffer = '799' then
+    begin
+      // НОВАЯ КОМАНДА К799 - переход в состояние 31
+      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К799');
+      WriteByteToMemory(Pointer($0074988C), 31);
+      WriteDWordToMemory(Pointer($0538D960), 1);  // записываем 4 байта со значением 1
+      InputBuffer := '';
+      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 31, записана 1 в 0x0538D960');
+    end
     else
     begin
       // Неизвестная команда - сбрасываем в состояние 0
@@ -8641,6 +8767,33 @@ begin
       WriteByteToMemory(Pointer($400000 + $34988C), 0);
       InputBuffer := '';
       AddToLogFile(EngineLog, '[К-ВВОД] ✓ Сброс в состояние 0');
+    end;
+    Exit;
+  end;
+  
+  // НОВАЯ ОБРАБОТКА состояния 31 (ожидание числа для записи в 00749894)
+  if currentState = 31 then
+  begin
+    AddToLogFile(EngineLog, '[К-ВВОД] Обработка состояния 31 (К799), буфер: "' + InputBuffer + '"');
+    
+    if InputBuffer <> '' then
+    begin
+      NumberValue := StrToIntDef(InputBuffer, 0);
+      AddToLogFile(EngineLog, '[К-ВВОД] Записываем число ' + IntToStr(NumberValue) + ' в 0x00749894');
+      
+      // Записываем введенное число как 4 байта в адрес 00749894
+      WriteDWordToMemory(Pointer($00749894), NumberValue);
+      
+      // Сбрасываем состояние и буфер
+      WriteByteToMemory(Pointer($0074988C), 0);
+      InputBuffer := '';
+      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Состояние 31 завершено, сброс в 0');
+    end
+    else
+    begin
+      AddToLogFile(EngineLog, '[К-ВВОД] ✗ Буфер пустой для состояния 31');
+      WriteByteToMemory(Pointer($0074988C), 0);
+      InputBuffer := '';
     end;
     Exit;
   end;
@@ -9030,26 +9183,26 @@ begin
           end;
         end;
         
-case i of
-  0: ProcessButtonP;  // Кнопка П (старая логика)
-  1, 2, 3, 7, 8, 9, 13, 14, 15, 20: begin
-       // Сначала проверяем логику кнопки "П"
-       if ButtonPState > 0 then
-         ProcessNumberInput(i)  // Старая логика для кнопки "П"
-       else
-         ProcessButtonPCycle(1, i);  // Новая логика для кнопки "К"
-     end;
-  4: ProcessButtonPCycle(0);  // Кнопка К (ИЗМЕНЕНО С 10 НА 4)
-  21: begin
-        // Сначала проверяем логику кнопки "П"  
-        if ButtonPState > 0 then
-          ProcessButtonEnter  // Старая логика для кнопки "П"
-        else
-          ProcessButtonPCycle(2);  // Новая логика для кнопки "К"
-      end;
-  else
-    AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
-end;
+        case i of
+          0: ProcessButtonP;  // Кнопка П (старая логика)
+          1, 2, 3, 7, 8, 9, 13, 14, 15, 20: begin
+               // Сначала проверяем логику кнопки "П"
+               if ButtonPState > 0 then
+                 ProcessNumberInput(i)  // Старая логика для кнопки "П"
+               else
+                 ProcessButtonPCycle(1, i);  // Новая логика для кнопки "К"
+             end;
+          4: ProcessButtonPCycle(0);  // Кнопка К
+          21: begin
+                // Сначала проверяем логику кнопки "П"  
+                if ButtonPState > 0 then
+                  ProcessButtonEnter  // Старая логика для кнопки "П"
+                else
+                  ProcessButtonPCycle(2);  // Новая логика для кнопки "К"
+              end;
+          else
+            AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
+        end;
 
         Result := True;
         Exit;
@@ -9444,30 +9597,30 @@ begin
     glEnable(GL_LIGHTING);
     EndObj3D;
 
-  // тц
-  for i := 0 to 5 do
-  begin
-    // для 10.00 X = 0.055, для остальных чутка левее
-    if val = 10.0 then
-      posX_tc := 0.055
-    else
-      posX_tc := 0.057; // левее на 0.005
+    // тц
+    for i := 0 to 5 do
+    begin
+      // для 10.00 X = 0.055, для остальных чутка левее
+      if val = 10.0 then
+        posX_tc := 0.055
+      else
+        posX_tc := 0.057; // левее на 0.005
 
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(posX_tc, 0, posZ_tc);
-    RotateX(-90);
-    Scale3D(0.0044);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, FormatFloat('0.00', val));
-    glEnable(GL_LIGHTING);
-    EndObj3D;
+      BeginObj3D;
+      glDisable(GL_LIGHTING);
+      Position3D(posX_tc, 0, posZ_tc);
+      RotateX(-90);
+      Scale3D(0.0044);
+      Color3D($FFFFFF, 255, False, 0.0);
+      SetTexture(0);
+      DrawText3D(0, FormatFloat('0.00', val));
+      glEnable(GL_LIGHTING);
+      EndObj3D;
 
-    // подготовка к следующей итерации
-    val := val - 2.0;          // 10 → 8 → 6 → …
-    posZ_tc := posZ_tc - 0.018; // 0.191 → 0.173 → …
-  end;
+      // подготовка к следующей итерации
+      val := val - 2.0;          // 10 → 8 → 6 → …
+      posZ_tc := posZ_tc - 0.018; // 0.191 → 0.173 → …
+    end;
 
     // === ПОЛОСКА ТЦ ===
     barCurrentHeight_tc := barBottom + ((barTop - barBottom) * (barValue_tc / 10.0));
@@ -9526,32 +9679,32 @@ begin
     glEnable(GL_LIGHTING);
     EndObj3D;
 
-  val := 10;
+    val := 10;
 
-  // тм
-  for i := 0 to 5 do
-  begin
-    // для 10.00 X = 0.055, для остальных чутка левее
-    if val = 10.0 then
-      posX_tm := 0.077
-    else
-      posX_tm := 0.079; // левее на 0.005
+    // тм
+    for i := 0 to 5 do
+    begin
+      // для 10.00 X = 0.055, для остальных чутка левее
+      if val = 10.0 then
+        posX_tm := 0.077
+      else
+        posX_tm := 0.079; // левее на 0.005
 
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(posX_tm, 0, posZ_tm);
-    RotateX(-90);
-    Scale3D(0.0044);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, FormatFloat('0.00', val));
-    glEnable(GL_LIGHTING);
-    EndObj3D;
+      BeginObj3D;
+      glDisable(GL_LIGHTING);
+      Position3D(posX_tm, 0, posZ_tm);
+      RotateX(-90);
+      Scale3D(0.0044);
+      Color3D($FFFFFF, 255, False, 0.0);
+      SetTexture(0);
+      DrawText3D(0, FormatFloat('0.00', val));
+      glEnable(GL_LIGHTING);
+      EndObj3D;
 
-    // подготовка к следующей итерации
-    val := val - 2.0;          // 10 → 8 → 6 → …
-    posZ_tm := posZ_tm - 0.018; // 0.191 → 0.173 → …
-  end;
+      // подготовка к следующей итерации
+      val := val - 2.0;          // 10 → 8 → 6 → …
+      posZ_tm := posZ_tm - 0.018; // 0.191 → 0.173 → …
+    end;
 
     // === ПОЛОСКА ТМ ===
     barCurrentHeight := barBottom + ((barTop - barBottom) * (barValue / 10.0));
@@ -9610,32 +9763,32 @@ begin
     glEnable(GL_LIGHTING);
     EndObj3D;
 
-  val := 10;
+    val := 10;
 
-  // ур
-  for i := 0 to 5 do
-  begin
-    // для 10.00 X = 0.055, для остальных чутка левее
-    if val = 10.0 then
-      posX_ur := 0.099
-    else
-      posX_ur := 0.101; // левее на 0.005
+    // ур
+    for i := 0 to 5 do
+    begin
+      // для 10.00 X = 0.055, для остальных чутка левее
+      if val = 10.0 then
+        posX_ur := 0.099
+      else
+        posX_ur := 0.101; // левее на 0.005
 
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(posX_ur, 0, posZ_ur);
-    RotateX(-90);
-    Scale3D(0.0044);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, FormatFloat('0.00', val));
-    glEnable(GL_LIGHTING);
-    EndObj3D;
+      BeginObj3D;
+      glDisable(GL_LIGHTING);
+      Position3D(posX_ur, 0, posZ_ur);
+      RotateX(-90);
+      Scale3D(0.0044);
+      Color3D($FFFFFF, 255, False, 0.0);
+      SetTexture(0);
+      DrawText3D(0, FormatFloat('0.00', val));
+      glEnable(GL_LIGHTING);
+      EndObj3D;
 
-    // подготовка к следующей итерации
-    val := val - 2.0;          // 10 → 8 → 6 → …
-    posZ_ur := posZ_ur - 0.018; // 0.191 → 0.173 → …
-  end;
+      // подготовка к следующей итерации
+      val := val - 2.0;          // 10 → 8 → 6 → …
+      posZ_ur := posZ_ur - 0.018; // 0.191 → 0.173 → …
+    end;
 
     // === ПОЛОСКА УР ===
     barCurrentHeight_ur := barBottom + ((barTop - barBottom) * (barValue_ur / 10.0));
@@ -9737,6 +9890,8 @@ begin
       DrawText3D(0, 'НАЛИЧ.ПОМ.МАШ. ' + InputBuffer + '_')
     else if GetStateBLOCK = 30 then
       DrawText3D(0, 'ВВЕДИТЕ КОМАНДУ ' + InputBuffer + '_')
+    else if GetStateBLOCK = 31 then
+      DrawText3D(0, 'СКОРОСТЬ НА БЕЛЫЙ ' + InputBuffer + '_')
     else if GetStateBLOCK = 71 then
       DrawText3D(0, '1234567-9-В');
 
