@@ -9533,7 +9533,23 @@ var
           else
             AddToLogFile(EngineLog, 'ОШИБКА применения BLOCK патча для ЧС7');
         end;
-        
+        812: // ЧС8
+        begin
+          if ApplyNOPPatch($4D835F, 5) then
+          begin
+            BLOCKPatchApplied := True;
+            AddToLogFile(EngineLog, 'BLOCK патч для ЧС7 применен успешно');
+          end
+        end;
+        3154: // ЭД4М
+        begin
+          if ApplyNOPPatch($6297EF, 5) then
+          begin
+            BLOCKPatchApplied := True;
+            AddToLogFile(EngineLog, 'BLOCK патч для ЧС7 применен успешно');
+          end
+        end;
+
         // Здесь можно добавить другие локомотивы
         else
           AddToLogFile(EngineLog, 'BLOCK патч не поддерживается для типа локомотива: ' + IntToStr(currentLocType));
