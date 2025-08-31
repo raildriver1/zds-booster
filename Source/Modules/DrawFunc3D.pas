@@ -8514,6 +8514,24 @@ begin
              InputBuffer := '';
              AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 71');
            end
+           else if InputBuffer = '122' then
+           begin
+             // НОВАЯ КОМАНДА К122 - устанавливает 0538D95F в 1
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К122 - установка 0538D95F в 1');
+             WriteByteToMemory(Pointer($0538D95F), 1);   // записываем 1 байт со значением 1
+             WriteByteToMemory(Pointer($0074988C), 0);   // сразу возвращаемся в состояние 0
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ К122 выполнена: записана 1 в 0x0538D95F, возврат в состояние 0');
+           end
+           else if InputBuffer = '123' then
+           begin
+             // НОВАЯ КОМАНДА К123 - сбрасывает 0538D95F в 0
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К123 - сброс 0538D95F в 0');
+             WriteByteToMemory(Pointer($0538D95F), 0);   // записываем 1 байт со значением 0
+             WriteByteToMemory(Pointer($0074988C), 0);   // сразу возвращаемся в состояние 0
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ К123 выполнена: записан 0 в 0x0538D95F, возврат в состояние 0');
+           end
            else if InputBuffer = '799' then
            begin
              // КОМАНДА К799 - переход в состояние 31
@@ -8525,7 +8543,7 @@ begin
            end
            else if InputBuffer = '800' then
            begin
-             // НОВАЯ КОМАНДА К800 - сброс 0538D960 в 0
+             // КОМАНДА К800 - сброс 0538D960 в 0
              AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К800 - сброс 0538D960');
              WriteDWordToMemory(Pointer($0538D960), 0);  // записываем 4 байта со значением 0
              WriteByteToMemory(Pointer($0074988C), 0);   // сразу возвращаемся в состояние 0
@@ -9254,6 +9272,41 @@ procedure DrawBLOCK(
   AngZ: Single
 );
 
+var
+  i: Integer;
+  val: Double;
+  posZ_tc: Double;
+  posX_tc: Double;
+  posZ_tm: Double;
+  posX_tm: Double;
+  posZ_ur: Double;
+  posX_ur: Double;
+
+  // Переменные для полосок
+  barValue: Single;        // значение для полоски ТМ
+  barX: Single;           // X координата полоски ТМ
+  barWidth: Single;       // ширина полоски
+  barBottom: Single;      // нижняя граница (где 0.00)
+  barTop: Single;         // верхняя граница (где 10.00)
+  barCurrentHeight: Single; // текущая высота полоски ТМ
+  barZ: Single;           // Z координата для полоски
+  
+  // Переменные для ТЦ
+  barValue_tc: Single;        
+  barX_tc: Single;           
+  barCurrentHeight_tc: Single; 
+  
+  // Переменные для УР
+  barValue_ur: Single;        
+  barX_ur: Single;           
+  barCurrentHeight_ur: Single;
+  
+  // НОВЫЕ ПЕРЕМЕННЫЕ для режимов давления
+  pressureMode: Byte;     // режим давлений из 0538D95F
+  scaleFactor: Single;    // коэффициент масштабирования
+  maxScaleValue: Single;  // максимальное значение шкалы
+  scaleStep: Single;      // шаг шкалы
+
   // Внутренняя функция проверки файлов
   function CheckBLOCKFiles: Boolean;
   var
@@ -9274,7 +9327,7 @@ procedure DrawBLOCK(
       end;
       
       blockModelPath := blockPath + 'BI-BLOK.dmd';
-      blockDisplayModelPath := blockPath + 'BI-blok-displ.dmd';  // Добавлен путь к модели дисплея
+      blockDisplayModelPath := blockPath + 'BI-blok-displ.dmd';
       blockTexturePath := blockPath + 'blok.bmp';
       
       Result := FileExists(blockModelPath) and FileExists(blockDisplayModelPath) and FileExists(blockTexturePath);
@@ -9314,7 +9367,7 @@ procedure DrawBLOCK(
       AddToLogFile(EngineLog, 'Путь BLOCK: ' + blockPath);
       
       blockModelPath := blockPath + 'BI-BLOK.dmd';
-      blockDisplayModelPath := blockPath + 'BI-blok-displ.dmd';  // Добавлен путь к модели дисплея
+      blockDisplayModelPath := blockPath + 'BI-blok-displ.dmd';
       blockTexturePath := blockPath + 'blok.bmp';
       
       if not CheckBLOCKFiles then
@@ -9428,11 +9481,6 @@ procedure DrawBLOCK(
         end;
         
         // Здесь можно добавить другие локомотивы
-        // 811: // ВЛ11М
-        // begin
-        //   // Логика для ВЛ11М
-        // end;
-        
         else
           AddToLogFile(EngineLog, 'BLOCK патч не поддерживается для типа локомотива: ' + IntToStr(currentLocType));
       end;
@@ -9447,37 +9495,55 @@ begin
   // Применяем патч при первом вызове
   ApplyBLOCKPatch;
 
-  val := 10.0;      // стартовое значение
-  posZ_tc := 0.191; // стартовая координата
-  posZ_tm := 0.191; // стартовая координата
-  posZ_ur := 0.191; // стартовая координата
+  // ЧИТАЕМ РЕЖИМ ДАВЛЕНИЙ ИЗ ПАМЯТИ
+  pressureMode := PByte($0538D95F)^;
+  
+  // Устанавливаем параметры в зависимости от режима
+  if pressureMode = 1 then
+  begin
+    // Режим 1: шкала 1.00, 0.80, 0.60, 0.40, 0.20, 0.00
+    scaleFactor := 0.1;     // делим на 10
+    maxScaleValue := 1.0;   // максимум шкалы 1.00
+    scaleStep := 0.2;       // шаг 0.20
+  end
+  else
+  begin
+    // Режим 0: шкала 10.00, 8.00, 6.00, 4.00, 2.00, 0.00
+    scaleFactor := 1.0;     // без изменений
+    maxScaleValue := 10.0;  // максимум шкалы 10.00
+    scaleStep := 2.0;       // шаг 2.00
+  end;
+
+  val := maxScaleValue;   // стартовое значение шкалы
+  posZ_tc := 0.191;       // стартовая координата
+  posZ_tm := 0.191;       // стартовая координата
+  posZ_ur := 0.191;       // стартовая координата
 
   // Настройки полосок
   barWidth := 0.003;      // ширина всех полосок
-  barTop := 0.191;        // верх (где было 10.00)
+  barTop := 0.191;        // верх (где максимальное значение)
   barBottom := 0.191 - 5 * 0.018; // низ (где 0.00) = 0.101
   
-  // ТЦ полоска
-  barValue_tc := GetPressureTCf;    // значение для ТЦ
+  // Получаем реальные значения давлений и применяем scaleFactor
+  barValue_tc := GetPressureTCf * scaleFactor;    // значение для ТЦ
   barX_tc := 0.0676;      // X координата (правее от "ТЦ")
   
-  // ТМ полоска
-  barValue := GetPressureTMf;       // значение для ТМ
+  barValue := GetPressureTMf * scaleFactor;       // значение для ТМ
   barX := 0.0896;         // X координата (правее от "ТМ")
   
-  // УР полоска
-  barValue_ur := GetPressureURf;    // значение для УР
+  barValue_ur := GetPressureURf * scaleFactor;    // значение для УР
   barX_ur := 0.111;      // X координата (правее от "УР")
 
   // Инициализируем модели если еще не инициализированы
   if not BLOCKInitialized then
-    begin
-      InitBLOCKModels;
-    end;
+  begin
+    InitBLOCKModels;
+  end;
 
-  if barValue_tc > 10.0 then barValue_tc := 10.0;
-  if barValue > 10.0 then barValue := 10.0;
-  if barValue_ur > 10.0 then barValue_ur := 10.0;
+  // Ограничиваем значения максимумом шкалы
+  if barValue_tc > maxScaleValue then barValue_tc := maxScaleValue;
+  if barValue > maxScaleValue then barValue := maxScaleValue;
+  if barValue_ur > maxScaleValue then barValue_ur := maxScaleValue;
 
   // Если инициализация не удалась, выходим
   if not BLOCKInitialized then
@@ -9597,14 +9663,14 @@ begin
     glEnable(GL_LIGHTING);
     EndObj3D;
 
-    // тц
+    // === ШКАЛА И ПОЛОСКА ТЦ ===
     for i := 0 to 5 do
     begin
-      // для 10.00 X = 0.055, для остальных чутка левее
-      if val = 10.0 then
+      // для максимального значения X = 0.055, для остальных чутка левее
+      if val = maxScaleValue then
         posX_tc := 0.055
       else
-        posX_tc := 0.057; // левее на 0.005
+        posX_tc := 0.057;
 
       BeginObj3D;
       glDisable(GL_LIGHTING);
@@ -9618,12 +9684,12 @@ begin
       EndObj3D;
 
       // подготовка к следующей итерации
-      val := val - 2.0;          // 10 → 8 → 6 → …
-      posZ_tc := posZ_tc - 0.018; // 0.191 → 0.173 → …
+      val := val - scaleStep;         // уменьшаем на шаг
+      posZ_tc := posZ_tc - 0.018;     // двигаемся вниз
     end;
 
-    // === ПОЛОСКА ТЦ ===
-    barCurrentHeight_tc := barBottom + ((barTop - barBottom) * (barValue_tc / 10.0));
+    // ПОЛОСКА ТЦ
+    barCurrentHeight_tc := barBottom + ((barTop - barBottom) * (barValue_tc / maxScaleValue));
     
     SetTexture(0);
     glDisable(GL_LIGHTING);
@@ -9632,7 +9698,7 @@ begin
     
     if barValue_tc > 0 then
     begin
-      glColor4f(0.0, 0.0, 1.0, 0.9); // синий цвет как у стрелки
+      glColor4f(0.0, 0.0, 1.0, 0.9);
 
       glBegin(GL_QUADS);
         glVertex3f(barX_tc - barWidth/2, 0, barBottom);
@@ -9679,16 +9745,16 @@ begin
     glEnable(GL_LIGHTING);
     EndObj3D;
 
-    val := 10;
+    // === ШКАЛА И ПОЛОСКА ТМ ===
+    val := maxScaleValue;
 
-    // тм
     for i := 0 to 5 do
     begin
-      // для 10.00 X = 0.055, для остальных чутка левее
-      if val = 10.0 then
+      // для максимального значения X = 0.077, для остальных чутка левее
+      if val = maxScaleValue then
         posX_tm := 0.077
       else
-        posX_tm := 0.079; // левее на 0.005
+        posX_tm := 0.079;
 
       BeginObj3D;
       glDisable(GL_LIGHTING);
@@ -9702,12 +9768,12 @@ begin
       EndObj3D;
 
       // подготовка к следующей итерации
-      val := val - 2.0;          // 10 → 8 → 6 → …
-      posZ_tm := posZ_tm - 0.018; // 0.191 → 0.173 → …
+      val := val - scaleStep;         // уменьшаем на шаг
+      posZ_tm := posZ_tm - 0.018;     // двигаемся вниз
     end;
 
-    // === ПОЛОСКА ТМ ===
-    barCurrentHeight := barBottom + ((barTop - barBottom) * (barValue / 10.0));
+    // ПОЛОСКА ТМ
+    barCurrentHeight := barBottom + ((barTop - barBottom) * (barValue / maxScaleValue));
     
     SetTexture(0);
     glDisable(GL_LIGHTING);
@@ -9716,7 +9782,7 @@ begin
     
     if barValue > 0 then
     begin
-      glColor4f(0.0, 0.0, 1.0, 0.9); // синий цвет как у стрелки
+      glColor4f(0.0, 0.0, 1.0, 0.9);
 
       glBegin(GL_QUADS);
         glVertex3f(barX - barWidth/2, 0, barBottom);
@@ -9763,16 +9829,16 @@ begin
     glEnable(GL_LIGHTING);
     EndObj3D;
 
-    val := 10;
+    // === ШКАЛА И ПОЛОСКА УР ===
+    val := maxScaleValue;
 
-    // ур
     for i := 0 to 5 do
     begin
-      // для 10.00 X = 0.055, для остальных чутка левее
-      if val = 10.0 then
+      // для максимального значения X = 0.099, для остальных чутка левее
+      if val = maxScaleValue then
         posX_ur := 0.099
       else
-        posX_ur := 0.101; // левее на 0.005
+        posX_ur := 0.101;
 
       BeginObj3D;
       glDisable(GL_LIGHTING);
@@ -9786,12 +9852,12 @@ begin
       EndObj3D;
 
       // подготовка к следующей итерации
-      val := val - 2.0;          // 10 → 8 → 6 → …
-      posZ_ur := posZ_ur - 0.018; // 0.191 → 0.173 → …
+      val := val - scaleStep;         // уменьшаем на шаг
+      posZ_ur := posZ_ur - 0.018;     // двигаемся вниз
     end;
 
-    // === ПОЛОСКА УР ===
-    barCurrentHeight_ur := barBottom + ((barTop - barBottom) * (barValue_ur / 10.0));
+    // ПОЛОСКА УР
+    barCurrentHeight_ur := barBottom + ((barTop - barBottom) * (barValue_ur / maxScaleValue));
     
     SetTexture(0);
     glDisable(GL_LIGHTING);
@@ -9800,7 +9866,7 @@ begin
     
     if barValue_ur > 0 then
     begin
-      glColor4f(0.0, 0.0, 1.0, 0.9); // синий цвет как у стрелки
+      glColor4f(0.0, 0.0, 1.0, 0.9);
 
       glBegin(GL_QUADS);
         glVertex3f(barX_ur - barWidth/2, 0, barBottom);
@@ -9850,12 +9916,36 @@ begin
     // Тип цели
     BeginObj3D;
     glDisable(GL_LIGHTING);
-    Position3D(-0.105, 0, 0.182);
+    Position3D(-0.110, 0, 0.092);
     RotateX(-90);
-    Scale3D(0.007);
+    Scale3D(0.0055);
     Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, GetTargetType);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Надпись Светофор
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.058, 0, 0.092);
+    RotateX(-90);
+    Scale3D(0.0055);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, 'СВЕТОФОР');
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Литера Светофора
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.024, 0, 0.092);
+    RotateX(-90);
+    Scale3D(0.0055);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetSvetoforValue);
     glEnable(GL_LIGHTING);
     EndObj3D;
 
@@ -9893,7 +9983,7 @@ begin
     else if GetStateBLOCK = 31 then
       DrawText3D(0, 'СКОРОСТЬ НА БЕЛЫЙ ' + InputBuffer + '_')
     else if GetStateBLOCK = 71 then
-      DrawText3D(0, '1234567-9-В');
+      DrawText3D(0, 'К71 КОМАНДА ' + InputBuffer + '_');
 
     glEnable(GL_LIGHTING);
     EndObj3D;

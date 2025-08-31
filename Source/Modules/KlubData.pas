@@ -22,6 +22,12 @@ function GetChannel: string;
 function GetTrackWithDirection: string;
 function GetTargetType: string;
 
+// Новые функции интегрированные из Python кода
+function GetSvetoforValue: string;  // Получение значения светофора
+function GetDirection: Boolean;     // Определение направления (аналог tuda)
+function GetSvetoforFileName: string; // Получение имени файла светофора
+function GetRoutePathFromMemory: string; // Получение пути маршрута из памяти
+
 function GetSpeedValue: Integer;     // Скорость как число
 function GetDistanceValue: Integer; // Расстояние как число
 
@@ -89,6 +95,224 @@ begin
   if A < B then Result := A else Result := B;
 end;
 
+// Новая функция: получение пути маршрута из памяти (аналог Python self.map_)
+function GetRoutePathFromMemory: string;
+var
+  MapAddr: Cardinal;
+  PathStr: string;
+  Buffer: array[0..255] of AnsiChar;
+  i: Integer;
+begin
+  Result := '';
+  try
+    // Адрес карты для версии 55
+    MapAddr := BaseAddress + $8DD46D7;
+    
+    // Читаем строку из памяти
+    FillChar(Buffer, SizeOf(Buffer), 0);
+    for i := 0 to 254 do
+    begin
+      try
+        Buffer[i] := PAnsiChar(MapAddr + i)^;
+        if Buffer[i] = #0 then Break;
+      except
+        Break;
+      end;
+    end;
+    
+    PathStr := string(Buffer);
+    if Pos('\', PathStr) > 0 then
+    begin
+      // Извлекаем первую часть пути до первого обратного слэша
+      Result := Copy(PathStr, 1, Pos('\', PathStr) - 1);
+    end;
+  except
+    Result := '';
+  end;
+end;
+
+// Новая функция: определение направления (аналог Python tuda)
+function GetDirection: Boolean;
+var
+  MapAddr: Cardinal;
+  PathStr: string;
+  Buffer: array[0..255] of AnsiChar;
+  i: Integer;
+begin
+  Result := True; // По умолчанию
+  try
+    // Адрес карты для версии 55
+    MapAddr := BaseAddress + $8DD46D7;
+    
+    // Читаем строку из памяти
+    FillChar(Buffer, SizeOf(Buffer), 0);
+    for i := 0 to 254 do
+    begin
+      try
+        Buffer[i] := PAnsiChar(MapAddr + i)^;
+        if Buffer[i] = #0 then Break;
+      except
+        Break;
+      end;
+    end;
+    
+    PathStr := string(Buffer);
+    // Ищем 'speeds1' во второй части пути
+    if Pos('\speeds1', PathStr) > 0 then
+      Result := True
+    else
+      Result := False;
+  except
+    Result := True;
+  end;
+end;
+
+// Новая функция: получение имени файла светофора
+function GetSvetoforFileName: string;
+begin
+  if GetDirection then
+    Result := 'svetofor1.dat'
+  else
+    Result := 'svetofor2.dat';
+end;
+
+// Новая функция: поиск значения светофора по пикету (аналог find_value_by_picket)
+function FindValueByPicket(const FilePath: string; Picket: Integer): string;
+var
+  F: TextFile;
+  Line: string;
+  Parts: TStringList;
+  Intervals: array of record
+    StartValue: Integer;
+    Value: string;
+  end;
+  i, j: Integer;
+  StartValue: Integer;
+  Value: string;
+  Direction: Boolean;
+begin
+  Result := '';
+  
+  if not FileExists(FilePath) then
+    Exit;
+    
+  SetLength(Intervals, 0);
+  Parts := TStringList.Create;
+  try
+    AssignFile(F, FilePath);
+    Reset(F);
+    try
+      while not Eof(F) do
+      begin
+        ReadLn(F, Line);
+        Line := Trim(Line);
+        if Line = '' then Continue;
+        
+        Parts.Clear;
+        Parts.Delimiter := ' ';
+        Parts.DelimitedText := Line;
+        
+        if Parts.Count >= 3 then
+        begin
+          try
+            StartValue := StrToInt(Parts[0]);
+            Value := Parts[2];
+            
+            SetLength(Intervals, Length(Intervals) + 1);
+            Intervals[High(Intervals)].StartValue := StartValue;
+            Intervals[High(Intervals)].Value := Value;
+          except
+            // Пропускаем строки с ошибками
+          end;
+        end;
+      end;
+    finally
+      CloseFile(F);
+    end;
+    
+    // Сортировка интервалов по возрастанию значений пикетов
+    for i := 0 to High(Intervals) - 1 do
+      for j := i + 1 to High(Intervals) do
+        if Intervals[i].StartValue > Intervals[j].StartValue then
+        begin
+          StartValue := Intervals[i].StartValue;
+          Value := Intervals[i].Value;
+          Intervals[i].StartValue := Intervals[j].StartValue;
+          Intervals[i].Value := Intervals[j].Value;
+          Intervals[j].StartValue := StartValue;
+          Intervals[j].Value := Value;
+        end;
+    
+    // Ищем значение для данного пикета
+    Direction := GetDirection;
+    for i := 0 to High(Intervals) do
+    begin
+      if Picket <= Intervals[i].StartValue then
+      begin
+        if i > 0 then
+        begin
+          if Direction then
+            Result := Intervals[i].Value
+          else
+            Result := Intervals[i-1].Value;
+        end
+        else
+          Result := Intervals[0].Value;
+        Break;
+      end;
+    end;
+    
+    // Если пикет больше всех имеющихся, берем последний интервал
+    if (Result = '') and (Length(Intervals) > 0) then
+      Result := Intervals[High(Intervals)].Value;
+      
+  finally
+    Parts.Free;
+  end;
+end;
+
+// Новая функция: получение значения светофора
+function GetSvetoforValue: string;
+var
+  CurrentPiket: Integer;
+  RoutePath: string;
+  SvetoforFile: string;
+  FilePath: string;
+begin
+  Result := '';
+  try
+    // Получаем текущий пикет
+    CurrentPiket := PWord(BaseAddress + $8C08054)^;
+    
+    // Получаем путь маршрута из памяти
+    RoutePath := GetRoutePathFromMemory;
+    if RoutePath = '' then Exit;
+    
+    // Формируем путь к файлу светофора
+    SvetoforFile := GetSvetoforFileName;
+    FilePath := ExtractFilePath(ParamStr(0)) + 'routes\' + RoutePath + '\' + SvetoforFile;
+    
+    // Корректировка пикета в зависимости от направления
+    if not GetDirection then
+      CurrentPiket := CurrentPiket + 4;
+    
+    // Ищем значение по пикету
+    Result := FindValueByPicket(FilePath, CurrentPiket);
+    
+    // Форматируем результат (выравнивание по правому краю на 8 символов)
+    if Result <> '' then
+    begin
+      while Length(Result) < 8 do
+        Result := ' ' + Result;
+    end
+    else
+      Result := '        '; // 8 пробелов если не найдено
+      
+  except
+    Result := '        ';
+  end;
+end;
+
 function GetChannel: string;
 begin
   try
@@ -98,6 +322,7 @@ begin
   end;
 end;
 
+// Обновленная функция GetTargetType с интегрированной логикой из Python
 function GetTargetType: string;
 var
   CurrentPiket: Integer;
@@ -106,69 +331,33 @@ var
   FileName: string;
   FilePath: string;
   ObjFile: TextFile;
-  SettingsFile: TextFile;
   Line: string;
-  Parts: array[0..10] of string;
-  PartCount: Integer;
-  i, SpacePos: Integer;
+  Parts: TStringList;
   PicketStr: string;
   PicketNum: Integer;
   ObjectFile: string;
-  Direction: Byte;
+  Direction: Boolean;
+  i: Integer;
 begin
   Result := '';
   
   try
-    // Получаем текущий пикет (для версии 55)
-    try
-      CurrentPiket := PWord(BaseAddress + $8C08054)^;
-    except
-      Exit;
-    end;
+    // Получаем текущий пикет
+    CurrentPiket := PWord(BaseAddress + $8C08054)^;
     
-    // Читаем RoutePath из settings.ini
-    RoutePath := '';
-    try
-      AssignFile(SettingsFile, ExtractFilePath(ParamStr(0)) + 'settings.ini');
-      
-      if not FileExists(ExtractFilePath(ParamStr(0)) + 'settings.ini') then
-        Exit;
-        
-      Reset(SettingsFile);
-      try
-        while not Eof(SettingsFile) do
-        begin
-          ReadLn(SettingsFile, Line);
-          Line := Trim(Line);
-          if Pos('RoutePath=', Line) = 1 then
-          begin
-            RoutePath := Copy(Line, 11, Length(Line) - 10);
-            Break;
-          end;
-        end;
-      finally
-        CloseFile(SettingsFile);
-      end;
-    except
-      Exit;
-    end;
-    
-    if RoutePath = '' then
-      Exit;
+    // Получаем путь маршрута из памяти
+    RoutePath := GetRoutePathFromMemory;
+    if RoutePath = '' then Exit;
     
     // Формируем базовый путь
     BasePath := ExtractFilePath(ParamStr(0)) + 'routes\' + RoutePath;
     
     // Определяем направление и файл
-    try
-      Direction := PByte(BaseAddress + $749818)^;
-      if Direction = 1 then
-        FileName := 'Info_Obj_Tuda.txt'
-      else
-        FileName := 'Info_Obj_Obratno.txt';
-    except
-      FileName := 'Info_Obj_Tuda.txt'; // По умолчанию
-    end;
+    Direction := GetDirection;
+    if Direction then
+      FileName := 'Info_Obj_Tuda.txt'
+    else
+      FileName := 'Info_Obj_Obratno.txt';
     
     FilePath := BasePath + '\' + FileName;
     
@@ -176,7 +365,7 @@ begin
     if not FileExists(FilePath) then
     begin
       // Пробуем альтернативный файл
-      if FileName = 'Info_Obj_Tuda.txt' then
+      if Direction then
         FileName := 'Info_Obj_Obratno.txt'
       else
         FileName := 'Info_Obj_Tuda.txt';
@@ -186,6 +375,7 @@ begin
         Exit;
     end;
     
+    Parts := TStringList.Create;
     try
       AssignFile(ObjFile, FilePath);
       Reset(ObjFile);
@@ -199,28 +389,11 @@ begin
             Continue;
           
           // Парсим строку по пробелам
-          PartCount := 0;
-          i := 1;
-          while (i <= Length(Line)) and (PartCount < 10) do
-          begin
-            // Пропускаем пробелы
-            while (i <= Length(Line)) and (Line[i] = ' ') do
-              Inc(i);
-            
-            if i > Length(Line) then
-              Break;
-            
-            // Читаем слово
-            SpacePos := i;
-            while (SpacePos <= Length(Line)) and (Line[SpacePos] <> ' ') do
-              Inc(SpacePos);
-            
-            Parts[PartCount] := Copy(Line, i, SpacePos - i);
-            Inc(PartCount);
-            i := SpacePos;
-          end;
+          Parts.Clear;
+          Parts.Delimiter := ' ';
+          Parts.DelimitedText := Line;
           
-          if PartCount >= 2 then
+          if Parts.Count >= 2 then
           begin
             PicketStr := Parts[0];
             ObjectFile := LowerCase(Parts[1]);
@@ -229,7 +402,7 @@ begin
             PicketNum := 0;
             for i := 1 to Length(PicketStr) do
             begin
-              if PicketStr[i] in ['0'..'9'] then
+              if (PicketStr[i] >= '0') and (PicketStr[i] <= '9') then
               begin
                 PicketNum := PicketNum * 10 + (Ord(PicketStr[i]) - Ord('0'));
               end;
@@ -269,8 +442,8 @@ begin
       finally
         CloseFile(ObjFile);
       end;
-    except
-      Result := '';
+    finally
+      Parts.Free;
     end;
     
   except
