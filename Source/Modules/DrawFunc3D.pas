@@ -439,6 +439,8 @@ var
   NewSkyInitialized: Boolean = False;
   OriginalMaxDistanceValue: Integer = 800; // Сохраняем оригинальное значение
 
+  blokhookklub: Boolean = False;
+
   // Флаги для обработки команд  
   statek137: Boolean = False;
   statek10: Boolean = False;  // <- ДОБАВИТЬ ЭТУ СТРОКУ
@@ -8413,7 +8415,6 @@ begin
   end;
 end;
 
-// Универсальная обработка для кнопки "К" и связанных действий
 procedure ProcessButtonPCycle(ActionType: Integer; ButtonIndex: Integer = -1);
 var
   NumberStr: string;
@@ -8443,8 +8444,8 @@ begin
     1: begin // Ввод цифры
          AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Обработка ввода числа, индекс кнопки: ' + IntToStr(ButtonIndex) + ', состояние памяти: ' + IntToStr(currentState));
          
-         // Проверяем что находимся в состоянии 30 (ожидание кода) ИЛИ в состоянии 10-19 (цикл) ИЛИ в состоянии 31 (К799) ИЛИ в состоянии 70-71
-         if not ((currentState = 30) or ((currentState >= 10) and (currentState <= 19)) or (currentState = 31) or (currentState = 70) or (currentState = 71)) then
+         // Проверяем что находимся в подходящем состоянии
+         if not ((currentState = 30) or ((currentState >= 10) and (currentState <= 19)) or (currentState = 31) or (currentState = 52) or (currentState = 70) or (currentState = 71)) then
          begin
            AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
            Exit;
@@ -8516,7 +8517,7 @@ begin
            end
            else if InputBuffer = '122' then
            begin
-             // НОВАЯ КОМАНДА К122 - устанавливает 0538D95F в 1
+             // КОМАНДА К122 - устанавливает 0538D95F в 1
              AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К122 - установка 0538D95F в 1');
              WriteByteToMemory(Pointer($0538D95F), 1);   // записываем 1 байт со значением 1
              WriteByteToMemory(Pointer($0074988C), 0);   // сразу возвращаемся в состояние 0
@@ -8525,12 +8526,20 @@ begin
            end
            else if InputBuffer = '123' then
            begin
-             // НОВАЯ КОМАНДА К123 - сбрасывает 0538D95F в 0
+             // КОМАНДА К123 - сбрасывает 0538D95F в 0
              AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К123 - сброс 0538D95F в 0');
              WriteByteToMemory(Pointer($0538D95F), 0);   // записываем 1 байт со значением 0
              WriteByteToMemory(Pointer($0074988C), 0);   // сразу возвращаемся в состояние 0
              InputBuffer := '';
              AddToLogFile(EngineLog, '[К-ВВОД] ✓ К123 выполнена: записан 0 в 0x0538D95F, возврат в состояние 0');
+           end
+           else if InputBuffer = '137' then
+           begin
+             // НОВАЯ КОМАНДА К137 - переход в состояние 52
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К137 - управление АЛС');
+             WriteByteToMemory(Pointer($0074988C), 52);
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 52 (К137)');
            end
            else if InputBuffer = '799' then
            begin
@@ -8582,6 +8591,49 @@ begin
            else
            begin
              AddToLogFile(EngineLog, '[К-ВВОД] ✗ Буфер пустой для состояния 31');
+             WriteByteToMemory(Pointer($0074988C), 0);
+             InputBuffer := '';
+           end;
+           Exit;
+         end;
+         
+         // НОВАЯ ОБРАБОТКА состояния 52 (К137 - управление АЛС)
+         if currentState = 52 then
+         begin
+           AddToLogFile(EngineLog, '[К-ВВОД] Обработка состояния 52 (К137), буфер: "' + InputBuffer + '"');
+           
+           if InputBuffer <> '' then
+           begin
+             NumberValue := StrToIntDef(InputBuffer, 0);
+             AddToLogFile(EngineLog, '[К-ВВОД] К137 - введенное число: ' + IntToStr(NumberValue));
+             
+             if NumberValue = 0 then
+             begin
+               // Ввели 0 - отключаем АЛС
+               statek137 := False;
+               als_en_state := False;
+               AddToLogFile(EngineLog, '[К-ВВОД] ✓ К137(0): statek137=False, als_en_state=False');
+             end
+             else if (NumberValue >= 1) and (NumberValue <= 3) then
+             begin
+               // Ввели 1, 2 или 3 - включаем АЛС
+               statek137 := True;
+               als_en_state := True;
+               AddToLogFile(EngineLog, '[К-ВВОД] ✓ К137(' + IntToStr(NumberValue) + '): statek137=True, als_en_state=True');
+             end
+             else
+             begin
+               AddToLogFile(EngineLog, '[К-ВВОД] ✗ К137: неверное число ' + IntToStr(NumberValue) + ', ожидается 0-3');
+             end;
+             
+             // Сбрасываем состояние и буфер в любом случае
+             WriteByteToMemory(Pointer($0074988C), 0);
+             InputBuffer := '';
+             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Состояние 52 завершено, сброс в 0');
+           end
+           else
+           begin
+             AddToLogFile(EngineLog, '[К-ВВОД] ✗ Буфер пустой для состояния 52');
              WriteByteToMemory(Pointer($0074988C), 0);
              InputBuffer := '';
            end;
@@ -9265,6 +9317,46 @@ var
   barX_ur: Single;           
   barCurrentHeight_ur: Single; 
 
+  // Внутренняя функция проверки файлов
+  function CheckBLOCKFiles: Boolean;
+  var
+    currentLocType: Integer;
+    locFolder, blockPath: string;
+    blockModelPath, blockDisplayModelPath, blockTexturePath: string;
+  begin
+    Result := False;
+    try
+      currentLocType := GetLocomotiveTypeFromMemory;
+      locFolder := GetLocomotiveFolder(currentLocType);
+      blockPath := 'data\' + locFolder + '\' + GetLocNum + '\blok\';
+      
+      if not DirectoryExists(blockPath) then
+      begin
+        AddToLogFile(EngineLog, 'BLOCK папка не найдена: ' + blockPath);
+        Exit;
+      end;
+      
+      blockModelPath := blockPath + 'BI-BLOK.dmd';
+      blockDisplayModelPath := blockPath + 'BI-blok-displ.dmd';
+      blockTexturePath := blockPath + 'blok.bmp';
+      
+      Result := FileExists(blockModelPath) and FileExists(blockDisplayModelPath) and FileExists(blockTexturePath);
+      
+      if Result then
+        AddToLogFile(EngineLog, 'BLOCK файлы найдены для ' + locFolder + ' ' + GetLocNum)
+      else
+        AddToLogFile(EngineLog, 'BLOCK файлы неполные для ' + locFolder + ' ' + GetLocNum);
+        
+    except
+      on E: Exception do
+      begin
+        AddToLogFile(EngineLog, 'Ошибка проверки BLOCK файлов: ' + E.Message);
+        Result := False;
+      end;
+    end;
+  end;
+
+
 procedure DrawBLOCK(
   x: Single;
   y: Single;
@@ -9307,44 +9399,6 @@ var
   maxScaleValue: Single;  // максимальное значение шкалы
   scaleStep: Single;      // шаг шкалы
 
-  // Внутренняя функция проверки файлов
-  function CheckBLOCKFiles: Boolean;
-  var
-    currentLocType: Integer;
-    locFolder, blockPath: string;
-    blockModelPath, blockDisplayModelPath, blockTexturePath: string;
-  begin
-    Result := False;
-    try
-      currentLocType := GetLocomotiveTypeFromMemory;
-      locFolder := GetLocomotiveFolder(currentLocType);
-      blockPath := 'data\' + locFolder + '\' + GetLocNum + '\blok\';
-      
-      if not DirectoryExists(blockPath) then
-      begin
-        AddToLogFile(EngineLog, 'BLOCK папка не найдена: ' + blockPath);
-        Exit;
-      end;
-      
-      blockModelPath := blockPath + 'BI-BLOK.dmd';
-      blockDisplayModelPath := blockPath + 'BI-blok-displ.dmd';
-      blockTexturePath := blockPath + 'blok.bmp';
-      
-      Result := FileExists(blockModelPath) and FileExists(blockDisplayModelPath) and FileExists(blockTexturePath);
-      
-      if Result then
-        AddToLogFile(EngineLog, 'BLOCK файлы найдены для ' + locFolder + ' ' + GetLocNum)
-      else
-        AddToLogFile(EngineLog, 'BLOCK файлы неполные для ' + locFolder + ' ' + GetLocNum);
-        
-    except
-      on E: Exception do
-      begin
-        AddToLogFile(EngineLog, 'Ошибка проверки BLOCK файлов: ' + E.Message);
-        Result := False;
-      end;
-    end;
-  end;
 
   // Внутренняя функция инициализации моделей
   procedure InitBLOCKModels;
@@ -9493,7 +9547,8 @@ var
 
 begin
   // Применяем патч при первом вызове
-  ApplyBLOCKPatch;
+  if not BLOCKInitialized then
+    ApplyBLOCKPatch;
 
   // ЧИТАЕМ РЕЖИМ ДАВЛЕНИЙ ИЗ ПАМЯТИ
   pressureMode := PByte($0538D95F)^;
@@ -9928,21 +9983,21 @@ begin
     // Надпись Светофор
     BeginObj3D;
     glDisable(GL_LIGHTING);
-    Position3D(-0.058, 0, 0.092);
+    Position3D(0.035, 0, 0.092);
     RotateX(-90);
-    Scale3D(0.0055);
+    Scale3D(0.006);
     Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
-    DrawText3D(0, 'СВЕТОФОР');
+    DrawText3D(0, GetDistance + ' м');
     glEnable(GL_LIGHTING);
     EndObj3D;
 
     // Литера Светофора
     BeginObj3D;
     glDisable(GL_LIGHTING);
-    Position3D(-0.024, 0, 0.092);
+    Position3D(-0.0, 0, 0.092);
     RotateX(-90);
-    Scale3D(0.0055);
+    Scale3D(0.006);
     Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, GetSvetoforValue);
@@ -9983,7 +10038,9 @@ begin
     else if GetStateBLOCK = 31 then
       DrawText3D(0, 'СКОРОСТЬ НА БЕЛЫЙ ' + InputBuffer + '_')
     else if GetStateBLOCK = 71 then
-      DrawText3D(0, 'К71 КОМАНДА ' + InputBuffer + '_');
+      DrawText3D(0, 'К71 КОМАНДА ' + InputBuffer + '_')
+    else if GetStateBLOCK = 52 then
+      DrawText3D(0, 'ТАБЛИЦА АЛС-ЕН  ' + InputBuffer + '_');
 
     glEnable(GL_LIGHTING);
     EndObj3D;
@@ -11015,8 +11072,6 @@ end;
 
 begin
 
-  AddToLogFile(EngineLog, GetPressureTC);
-
   // ===== ИНИЦИАЛИЗАЦИЯ СВЕТОФОРНОЙ СИСТЕМЫ =====
   if not SystemInitialized then
   begin
@@ -11032,6 +11087,14 @@ begin
       CachedGreenBlockID := 14;
       LightBlockIDsCached := True;
     end;
+
+
+    if CheckBLOCKFiles then
+      begin
+        blokhookklub := True;
+        DrawBLOCK(x, y, z, AngZ);
+      end;
+
 
     //InitializeBoosterKeyboard;
     //SetBoosterKeyboardCallback(@MyKeyHandler);
@@ -11159,6 +11222,40 @@ begin
   end;
 
 
+
+
+  try
+    textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + $34);
+    textureID := PWord(textureAddr)^;
+  except
+    textureID := MyTextureID; // fallback
+  end;
+
+  try
+    modelAddr := Pointer(PCardinal(Pointer($00400000 + $8D10D70))^ + $04);
+    modelID := PWord(modelAddr)^;
+  except
+    modelID := MyModelID; // fallback
+  end;
+
+  if not blokhookklub then
+     begin
+  BeginObj3D;
+  //Position3D(1.17, 7.1799998, 3.4319999);
+  Position3D(angZ, z, y);
+  RotateZ(x);
+  SetTexture(textureID);
+  DrawModel(modelID, 0, False);
+  EndObj3D;
+     end
+  else
+    DrawBLOCK(x,y,z,angZ);
+
+
+//
+
+
+
   // ======== АНАЛИЗ СВЕТОФОРОВ ========
   if (timeGetTime - LastSignalUpdate) > SignalUpdateInterval then
   begin
@@ -11169,7 +11266,7 @@ begin
 
 
   // Частота ЕН
-  if PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0 then
+  if (not BLOCKInitialized) and (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
   begin
     glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
     BeginObj3D;
@@ -11187,7 +11284,7 @@ begin
 
 
   // ======== ЛОГИКА ОТОБРАЖЕНИЯ МОДЕЛЕЙ ОТКЛОНЕНИЯ ========
-  if (als_en_state) and (PByte($905B754)^ <> 0) and (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
+  if (not BLOCKInitialized) and (als_en_state) and (PByte($905B754)^ <> 0) and (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
   begin
     if KlubBilIndPModelID > 0 then
     begin
@@ -11220,29 +11317,6 @@ begin
 
 
 
-
-  try
-    textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + $34);
-    textureID := PWord(textureAddr)^;
-  except
-    textureID := MyTextureID; // fallback
-  end;
-
-  try
-    modelAddr := Pointer(PCardinal(Pointer($00400000 + $8D10D70))^ + $04);
-    modelID := PWord(modelAddr)^;
-  except
-    modelID := MyModelID; // fallback
-  end;
-
-
-  BeginObj3D;
-  //Position3D(1.17, 7.1799998, 3.4319999);
-  Position3D(angZ, z, y);
-  RotateZ(x);
-  SetTexture(textureID);
-  DrawModel(modelID, 0, False);
-  EndObj3D;
 
   // Получаем состояние основного светофора
   mainTrafficLight := PByte(Pointer($400000 + $8C07ECC))^;
@@ -11293,7 +11367,8 @@ begin
 
     SetTexture(textureID);
     // ======== СИСТЕМА КЛУБ ========
-    if visibleSignalCount > 0 then
+    if (visibleSignalCount > 0) and (not BLOCKInitialized) then
+
     begin
       // Нижний блок - желтый
       BeginObj3D;
@@ -11492,7 +11567,10 @@ begin
     RotateX(-103.0);
     RotateY(34.2);
     RotateZ(-7.0); // Поворот против часовой на 15 градусов
-    Scale3D(0.002);
+    if GetLocomotiveTypeFromMemory = 812 then
+      Scale3D(0.00017)
+    else
+      Scale3D(0.002);
     Color3D($00FFFF, 255, False, 0.0); // Желтый
     SetTexture(0);
     Draw3DSemiCircle(5.2, 0, 180);
@@ -11512,7 +11590,7 @@ begin
     if GetLocomotiveTypeFromMemory = 812 then
       Scale3D(0.00017)
     else
-      Scale3D(0.0002);
+      Scale3D(0.002);
     Color3D($0000FF, 255, False, 0.0); // Красный
     SetTexture(0);
     Draw3DSemiCircle(5.2, 180, 360);
