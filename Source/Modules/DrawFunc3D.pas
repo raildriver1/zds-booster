@@ -8236,20 +8236,6 @@ begin
   end;
 end;
 
-// Функция сброса режима К123
-procedure ResetK123Mode;
-begin
-  if K123Active then
-  begin
-    AddToLogFile(EngineLog, '[К123] Сброс режима К123, записываем 0');
-    WriteByteToMemory(Pointer($0074988C), 0);
-    K123Active := False;
-    K123Timer := 0;
-  end;
-  K123State := 0;
-  InputBuffer := '';
-end;
-
 // Функция проверки и обновления таймера К123
 procedure UpdateK123Timer;
 var
@@ -8275,11 +8261,7 @@ end;
 procedure ProcessButtonClear;
 begin
   AddToLogFile(EngineLog, '[КНОПКА СТР] Очистка буфера, было: "' + InputBuffer + '"');
-  
-  // Если активен режим К123, сбрасываем его
-  if K123Active then
-    ResetK123Mode;
-    
+
   InputBuffer := '';
   AddToLogFile(EngineLog, '[КНОПКА СТР] ✓ Буфер очищен');
 end;
@@ -8309,10 +8291,6 @@ var
   NumberStr: string;
 begin
   AddToLogFile(EngineLog, '[ЧИСЛО] Обработка ввода числа, индекс кнопки: ' + IntToStr(ButtonIndex) + ', состояние П: ' + IntToStr(ButtonPState));
-  
-  // Если активен режим К123, сбрасываем его
-  if K123Active then
-    ResetK123Mode;
   
   // Если не ожидаем ввод числа, игнорируем
   if ButtonPState = 0 then
@@ -8358,10 +8336,6 @@ var
   Number: Integer;
 begin
   AddToLogFile(EngineLog, '[ВВОД] Обработка кнопки ВВОД, состояние П: ' + IntToStr(ButtonPState) + ', буфер: "' + InputBuffer + '"');
-  
-  // Если активен режим К123, сбрасываем его
-  if K123Active then
-    ResetK123Mode;
   
   // Если не ожидаем ввод числа, игнорируем
   if ButtonPState = 0 then
@@ -8556,11 +8530,7 @@ var
 begin
   currentState := GetStateBLOCK;
   AddToLogFile(EngineLog, '[К-ЧИСЛО] Обработка ввода числа, индекс кнопки: ' + IntToStr(ButtonIndex) + ', состояние: ' + IntToStr(currentState));
-  
-  // Если активен режим К123, сбрасываем его
-  if K123Active then
-    ResetK123Mode;
-  
+
   // Проверяем режим К123
   if K123State = 1 then
   begin
@@ -8640,35 +8610,7 @@ var
   currentState: Byte;
 begin
   currentState := GetStateBLOCK;
-  AddToLogFile(EngineLog, '[К-ВВОД] Обработка кнопки ВВОД, состояние: ' + IntToStr(currentState) + ', К123 состояние: ' + IntToStr(K123State) + ', буфер: "' + InputBuffer + '"');
-  
-  // Если активен режим К123, сбрасываем его
-  if K123Active then
-    ResetK123Mode;
-  
-  // Обработка команды К123
-  if K123State = 1 then
-  begin
-    AddToLogFile(EngineLog, '[К-ВВОД] Проверка команды К123, буфер: "' + InputBuffer + '"');
-    
-    if InputBuffer = '123' then
-    begin
-      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К123 распознана! Записываем 77 на 4 секунды');
-      WriteByteToMemory(Pointer($0074988C), 77);
-      K123Active := True;
-      K123Timer := GetTickCount;
-      K123State := 0;
-      InputBuffer := '';
-      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Запущен таймер К123 на 4 секунды');
-    end
-    else
-    begin
-      AddToLogFile(EngineLog, '[К-ВВОД] ✗ Неверная команда К123: "' + InputBuffer + '", сброс');
-      K123State := 0;
-      InputBuffer := '';
-    end;
-    Exit;
-  end;
+
   
   // Обработка состояния 30 (ожидание команды К)
   if currentState = 30 then
@@ -8921,7 +8863,7 @@ begin
         AddToLogFile(EngineLog, '[ИНИТ] Парсинг settings.ini: ScreenWidth=' + IntToStr(ScreenWidth) + ', ScreenHeight=' + IntToStr(ScreenHeight));
       end;
       
-      texturePath := 'booster\block_buttons.bmp';
+      texturePath := 'booster\blok_buttons.bmp';
       
       if FileExists(texturePath) then
       begin
@@ -8944,15 +8886,15 @@ begin
       end;
       
       // Проверяем звуковой файл
-      if FileExists('booster\block_pick.wav') then
+      if FileExists('booster\blok_pick.wav') then
       begin
         BlockKeyboardSoundID := 1;
-        AddToLogFile(EngineLog, '[ИНИТ] ✓ Звуковой файл найден: booster\block_pick.wav');
+        AddToLogFile(EngineLog, '[ИНИТ] ✓ Звуковой файл найден: booster\blok_pick.wav');
       end
       else
       begin
         BlockKeyboardSoundID := -1;
-        AddToLogFile(EngineLog, '[ИНИТ] ✗ Файл звука клавиш не найден: booster\block_pick.wav');
+        AddToLogFile(EngineLog, '[ИНИТ] ✗ Файл звука клавиш не найден: booster\blok_pick.wav');
       end;
       
       BlockKeyboardInitialized := True;
@@ -9078,7 +9020,7 @@ begin
         begin
           try
             AddToLogFile(EngineLog, '[ЗВУК] Проигрываем звук через PlaySound');
-            if PlaySound('booster\block_pick.wav', 0, SND_FILENAME or SND_ASYNC) then
+            if PlaySound('booster\blok_pick.wav', 0, SND_FILENAME or SND_ASYNC) then
               AddToLogFile(EngineLog, '[ЗВУК] ✓ Звук успешно проигран')
             else
               AddToLogFile(EngineLog, '[ЗВУК] ✗ Ошибка PlaySound');
@@ -9170,7 +9112,7 @@ procedure DrawBLOCK(
     try
       currentLocType := GetLocomotiveTypeFromMemory;
       locFolder := GetLocomotiveFolder(currentLocType);
-      blockPath := 'data\' + locFolder + '\' + GetLocNum + '\block\';
+      blockPath := 'data\' + locFolder + '\' + GetLocNum + '\blok\';
       
       if not DirectoryExists(blockPath) then
       begin
@@ -9210,7 +9152,7 @@ procedure DrawBLOCK(
     try
       currentLocType := GetLocomotiveTypeFromMemory;
       locFolder := GetLocomotiveFolder(currentLocType);
-      blockPath := 'data\' + locFolder + '\' + GetLocNum + '\block\';
+      blockPath := 'data\' + locFolder + '\' + GetLocNum + '\blok\';
       
       AddToLogFile(EngineLog, '=== ИНИЦИАЛИЗАЦИЯ BLOCK ===');
       AddToLogFile(EngineLog, 'Тип локомотива: ' + IntToStr(currentLocType));
@@ -9426,7 +9368,7 @@ begin
     Scale3D(0.007);
     Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
-    DrawText3D(0, GetCurrentStation);
+    DrawText3D(0, Copy(GetCurrentStation, 1, 8));
     glEnable(GL_LIGHTING);
     EndObj3D;
 
