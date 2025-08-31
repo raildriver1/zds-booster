@@ -9429,7 +9429,9 @@ var
         AddToLogFile(EngineLog, 'BLOCK файлы не найдены, инициализация отменена');
         Exit;
       end;
-      
+
+      NopMemory(Pointer($0073880D), 5);
+
       // Загружаем основную модель
       BLOCKModelID := LoadModel(blockModelPath, 0, False);
       if BLOCKModelID > 0 then
@@ -11456,7 +11458,9 @@ begin
       RotateZ(bilpom_y);
       RotateX(-bilpom_x);
       Position3D(0.0, 0.0, 0.07);
+
       DrawModel(yellowBlockModelID, 0, False); // Читаем из памяти
+      SetTexture(textureID);
       glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
       EndObj3D;
 
@@ -11471,7 +11475,9 @@ begin
         RotateZ(bilpom_y);
         RotateX(-bilpom_x);
         Position3D(0.0, 0.0, 0.07 + i * 0.014);
+        SetTexture(textureID);
         DrawModel(greenBlockModelID, 0, False); // Читаем из памяти
+
         glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
         EndObj3D;
 
