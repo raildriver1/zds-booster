@@ -450,9 +450,11 @@ var
 
   // Переменные для моделей
   MyModelID: integer = 0;
+  UsavppDisplayModelID: integer = 0;
   KlubBilIndPModelID: Integer = 0;  // для klub-bil-ind_p.dmd (||)
   KlubBilIndBModelID: Integer = 0;  // для klub-bil-ind_b.dmd (|, l, -)
   MyTextureID: cardinal = 0;
+  UsavppDisplayTextureID: cardinal = 0;
   strelka: integer = 0;
   SevenSegmentFont: Integer = 0;
   KLUBUFont: Integer = 0;        // ← ДОБАВИТЬ ЭТУ ПЕРЕМЕННУЮ
@@ -11164,9 +11166,18 @@ begin
   begin
     MyModelID := LoadModel('data\loc\klub_bil_v.dmd', 0, False);
     MyTextureID := LoadTextureFromFile('data\loc\klub_bil.bmp', 0, -1);
+    UsavppDisplayModelID := LoadModel('data\' + GetLocomotiveFolder(GetLocomotiveTypeFromMemory) + '\' + LocNum + '\loc\usavpp-display.dmd', 0, False);
+    UsavppDisplayTextureID := LoadTextureFromFile('data\' + GetLocomotiveFolder(GetLocomotiveTypeFromMemory) + '\' + LocNum + '\loc\usavpp-display.bmp', 0, -1);
     strelka := LoadModel('data\' + GetLocomotiveFolder(GetLocomotiveTypeFromMemory) + '\' + LocNum + '\strelka-m.dmd', 0, False);
   end;
 
+  BeginObj3D;
+  glDisable(GL_LIGHTING);
+  Position3D(0,0.01,0);
+  SetTexture(UsavppDisplayTextureID);
+  DrawModel(UsavppDisplayModelID, 0, False); // Читаем из памяти
+  glEnable(GL_LIGHTING);
+  EndObj3D;
 
   currentLocType := GetLocomotiveTypeFromMemory;
   locFolder := GetLocomotiveFolder(currentLocType);
