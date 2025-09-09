@@ -7974,9 +7974,7 @@ begin
     // === СТРЕЛКА (исправленная - всегда видимая) ===
     needleAngle := (START_ANGLE - (speed / maxSpeed) * SPEED_RANGE) * (Pi / 180.0);
 
-    // Отключаем depth test для стрелки чтобы она всегда была видна
-    glDisable(GL_DEPTH_TEST);
-    
+
     BeginObj3D;
     Position3D(-0.01, 0, 0.18);
     RotateX(-90);
@@ -8022,8 +8020,6 @@ begin
     // Включаем depth test обратно
     glEnable(GL_DEPTH_TEST);
 
-    // === ЦЕНТРАЛЬНЫЙ КРУГ (над стрелкой) ===
-    glDisable(GL_DEPTH_TEST); // Также отключаем для центрального круга
     
     BeginObj3D;
     Position3D(-0.01, 0, 0.18);
@@ -8055,9 +8051,7 @@ begin
 
     glEnable(GL_DEPTH_TEST); // Включаем обратно
 
-    // === ОБВОДКА ЦЕНТРА ===
-    glDisable(GL_DEPTH_TEST);
-    
+
     BeginObj3D;
     Position3D(-0.01, 0, 0.18);
     RotateX(-90);
@@ -8079,21 +8073,22 @@ begin
     
     glEnable(GL_DEPTH_TEST);
 
-    // === ТЕКСТ СКОРОСТИ ===
-    speedText := FormatFloat('000', Trunc(speed));
-    BeginObj3D;
-    Position3D(-0.019, 0, 0.177); // Выдвигаем вперед
-    RotateX(-90);
-    Scale3D(0.012); // Чуть увеличиваем размер текста
+// === ТЕКСТ СКОРОСТИ ===
+speedText := FormatFloat('000', Trunc(speed));
 
-    if (speed > speedLimit - 3) and (speedLimit > 0) and (speed > 0) and blinkState then
-      Color3D($FF6600, 255, False, 0.0)
-    else
-      Color3D($FFFFFF, 255, False, 0.0);
+BeginObj3D;
+Position3D(-0.019, -0.005, 0.177); // Увеличил Z с 0.177 до 0.178 - чуть вперед
+RotateX(-90);
+Scale3D(0.012);
 
-    SetTexture(0);
-    DrawText3D(0, speedText);
-    EndObj3D;
+if (speed > speedLimit - 3) and (speedLimit > 0) and (speed > 0) and blinkState then
+  Color3D($FF6600, 255, False, 0.0)
+else
+  Color3D($FFFFFF, 255, False, 0.0);
+
+SetTexture(0);
+DrawText3D(0, speedText);
+EndObj3D;
 
     // === ТЕКСТ ОГРАНИЧЕНИЯ ===
     if speedLimit > 0 then
