@@ -710,7 +710,7 @@ CurrentTime := GetTimer;
     LastConfigReadTime := CurrentTime;
   end;
 
-  UpdateDiscordRPC; // Обновляем Discord Rich Presence
+  //UpdateDiscordRPC; // Обновляем Discord Rich Presence
 
      if ShowLogo and (LogoA<>0) then LogoA:=LogoA-1;
      if @ProcessGame<>nil then ProcessGame;
@@ -2001,7 +2001,7 @@ end;
   InitCheatMenu;
 
  try
-    InitDiscordRPC;
+    //InitDiscordRPC;
     AddToLogFile(EngineLog, 'Discord RPC initialized successfully');
   except
     on E: Exception do
@@ -2020,7 +2020,7 @@ var
 begin
   StartQuitingEngine := False;
 
-  ShutdownDiscordRPC; // Завершаем Discord RPC
+  //ShutdownDiscordRPC; // Завершаем Discord RPC
 
   if not glCreateWnd(InitResX, InitResY, InitFullscreen, InitPDepth, InitFrequency ,InitVsync) then
   begin

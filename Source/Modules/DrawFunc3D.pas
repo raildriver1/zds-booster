@@ -9357,50 +9357,20 @@ var
   end;
 
 
-procedure DrawBLOCK(
-  x: Single;
-  y: Single;
-  z: Single;
-  AngZ: Single
-);
-
+procedure DrawBLOCK(x: Single; y: Single; z: Single; AngZ: Single);
 var
-  i: Integer;
-  val: Double;
-  posZ_tc: Double;
-  posX_tc: Double;
-  posZ_tm: Double;
-  posX_tm: Double;
-  posZ_ur: Double;
-  posX_ur: Double;
-
-  // Переменные для полосок
-  barValue: Single;        // значение для полоски ТМ
-  barX: Single;           // X координата полоски ТМ
-  barWidth: Single;       // ширина полоски
-  barBottom: Single;      // нижняя граница (где 0.00)
-  barTop: Single;         // верхняя граница (где 10.00)
-  barCurrentHeight: Single; // текущая высота полоски ТМ
-  barZ: Single;           // Z координата для полоски
+  pressureMode: Byte;
+  scaleFactor: Single;
+  maxScaleValue: Single;
+  scaleStep: Single;
   
-  // Переменные для ТЦ
-  barValue_tc: Single;        
-  barX_tc: Single;           
-  barCurrentHeight_tc: Single; 
+  // Переменные для барграфов
+  barWidth: Single;
+  barTop: Single;
+  barBottom: Single;
+  scaleStepZ: Single;
   
-  // Переменные для УР
-  barValue_ur: Single;        
-  barX_ur: Single;           
-  barCurrentHeight_ur: Single;
-  
-  // НОВЫЕ ПЕРЕМЕННЫЕ для режимов давления
-  pressureMode: Byte;     // режим давлений из 0538D95F
-  scaleFactor: Single;    // коэффициент масштабирования
-  maxScaleValue: Single;  // максимальное значение шкалы
-  scaleStep: Single;      // шаг шкалы
-
-
-  // Внутренняя функция инициализации моделей
+  // Внутренняя процедура инициализации моделей
   procedure InitBLOCKModels;
   var
     currentLocType: Integer;
@@ -9432,7 +9402,6 @@ var
 
       NopMemory(Pointer($0073880D), 5);
 
-      // Загружаем основную модель
       BLOCKModelID := LoadModel(blockModelPath, 0, False);
       if BLOCKModelID > 0 then
         AddToLogFile(EngineLog, 'BLOCK модель загружена, ID: ' + IntToStr(BLOCKModelID))
@@ -9442,7 +9411,6 @@ var
         Exit;
       end;
       
-      // Загружаем модель дисплея
       BLOCKDisplayModelID := LoadModel(blockDisplayModelPath, 0, False);
       if BLOCKDisplayModelID > 0 then
         AddToLogFile(EngineLog, 'BLOCK модель дисплея загружена, ID: ' + IntToStr(BLOCKDisplayModelID))
@@ -9452,7 +9420,6 @@ var
         Exit;
       end;
       
-      // Загружаем текстуру
       BLOCKTextureID := LoadTextureFromFile(blockTexturePath, 0, -1);
       if BLOCKTextureID > 0 then
         AddToLogFile(EngineLog, 'BLOCK текстура загружена, ID: ' + IntToStr(BLOCKTextureID))
@@ -9474,7 +9441,7 @@ var
     end;
   end;
 
-  // Внутренняя функция применения NOP патча
+  // Функция применения NOP патча
   function ApplyNOPPatch(patchAddress: Cardinal; size: Integer): Boolean;
   var
     OldProtect: DWORD;
@@ -9500,13 +9467,10 @@ var
       end;
     end
     else
-    begin
       AddToLogFile(EngineLog, 'ОШИБКА: Не удалось изменить защиту памяти для NOP патча');
-      Result := False;
-    end;
   end;
 
-  // Внутренняя функция применения патча
+  // Процедура применения патча
   procedure ApplyBLOCKPatch;
   var
     currentLocType: Integer;
@@ -9517,15 +9481,13 @@ var
     try
       currentLocType := GetLocomotiveTypeFromMemory;
       
-      // Проверяем поддерживаемые типы локомотивов
       case currentLocType of
         822: // ЧС7
         begin
-          patchAddress := $00677AB3; // Прямой адрес
+          patchAddress := $00677AB3;
           AddToLogFile(EngineLog, '=== ПРИМЕНЕНИЕ BLOCK ПАТЧА ===');
           AddToLogFile(EngineLog, 'Тип локомотива: ЧС7 (822)');
           AddToLogFile(EngineLog, 'Адрес патча: $' + IntToHex(patchAddress, 8));
-          AddToLogFile(EngineLog, 'Тип патча: NOP call sub_484AB4');
           
           if ApplyNOPPatch(patchAddress, 5) then
           begin
@@ -9540,19 +9502,17 @@ var
           if ApplyNOPPatch($4D835F, 5) then
           begin
             BLOCKPatchApplied := True;
-            AddToLogFile(EngineLog, 'BLOCK патч для ЧС7 применен успешно');
-          end
+            AddToLogFile(EngineLog, 'BLOCK патч для ЧС8 применен успешно');
+          end;
         end;
         3154: // ЭД4М
         begin
           if ApplyNOPPatch($6297EF, 5) then
           begin
             BLOCKPatchApplied := True;
-            AddToLogFile(EngineLog, 'BLOCK патч для ЧС7 применен успешно');
-          end
+            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
+          end;
         end;
-
-        // Здесь можно добавить другие локомотивы
         else
           AddToLogFile(EngineLog, 'BLOCK патч не поддерживается для типа локомотива: ' + IntToStr(currentLocType));
       end;
@@ -9563,298 +9523,87 @@ var
     end;
   end;
 
-begin
-  // Применяем патч при первом вызове
-  if not BLOCKInitialized then
-    ApplyBLOCKPatch;
-
-  // ЧИТАЕМ РЕЖИМ ДАВЛЕНИЙ ИЗ ПАМЯТИ
-  pressureMode := PByte($0538D95F)^;
-  
-  // Устанавливаем параметры в зависимости от режима
-  if pressureMode = 1 then
+  // Процедура отрисовки текста
+  procedure DrawTextSimple(posX, posY, posZ: Single; scale: Single; text: string);
   begin
-    // Режим 1: шкала 1.00, 0.80, 0.60, 0.40, 0.20, 0.00
-    scaleFactor := 0.1;     // делим на 10
-    maxScaleValue := 1.0;   // максимум шкалы 1.00
-    scaleStep := 0.2;       // шаг 0.20
-  end
-  else
-  begin
-    // Режим 0: шкала 10.00, 8.00, 6.00, 4.00, 2.00, 0.00
-    scaleFactor := 1.0;     // без изменений
-    maxScaleValue := 10.0;  // максимум шкалы 10.00
-    scaleStep := 2.0;       // шаг 2.00
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(posX, posY, posZ);
+    RotateX(-90);
+    Scale3D(scale);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, text);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
   end;
 
-  val := maxScaleValue;   // стартовое значение шкалы
-  posZ_tc := 0.191;       // стартовая координата
-  posZ_tm := 0.191;       // стартовая координата
-  posZ_ur := 0.191;       // стартовая координата
-
-  // Настройки полосок
-  barWidth := 0.003;      // ширина всех полосок
-  barTop := 0.191;        // верх (где максимальное значение)
-  barBottom := 0.191 - 5 * 0.018; // низ (где 0.00) = 0.101
-  
-  // Получаем реальные значения давлений и применяем scaleFactor
-  barValue_tc := GetPressureTCf * scaleFactor;    // значение для ТЦ
-  barX_tc := 0.0676;      // X координата (правее от "ТЦ")
-  
-  barValue := GetPressureTMf * scaleFactor;       // значение для ТМ
-  barX := 0.0896;         // X координата (правее от "ТМ")
-  
-  barValue_ur := GetPressureURf * scaleFactor;    // значение для УР
-  barX_ur := 0.111;      // X координата (правее от "УР")
-
-  // Инициализируем модели если еще не инициализированы
-  if not BLOCKInitialized then
+  // Процедура отрисовки шкалы давления с правильными координатами
+  procedure DrawPressureScale(barX: Single);
+  var
+    i: Integer;
+    val: Single;
+    posZ, posX: Single;
   begin
-    InitBLOCKModels;
-  end;
-
-  // Ограничиваем значения максимумом шкалы
-  if barValue_tc > maxScaleValue then barValue_tc := maxScaleValue;
-  if barValue > maxScaleValue then barValue := maxScaleValue;
-  if barValue_ur > maxScaleValue then barValue_ur := maxScaleValue;
-
-  // Если инициализация не удалась, выходим
-  if not BLOCKInitialized then
-  begin
-    AddToLogFile(EngineLog, 'BLOCK не инициализирован, отрисовка отменена');
-    Exit;
-  end;
-  
-  // Отрисовываем BLOCK
-  try
-    BeginObj3D();
-    Position3D(AngZ, z, y);
-    RotateZ(x);
-    SetTexture(BLOCKTextureID);
-    
-    // Отрисовываем основную модель
-    DrawModel(BLOCKModelID, 0, True);
-
-    glDisable(GL_LIGHTING);
-    // Отрисовываем модель дисплея с той же текстурой
-    DrawModel(BLOCKDisplayModelID, 0, True);
-    glEnable(GL_LIGHTING);
-
-    // Координаты
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(-0.11, 0, 0.247);
-    RotateX(-90);
-    Scale3D(0.007);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, GetCoordinatesFormatted);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // Станция
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(-0.07, 0, 0.247);
-    RotateX(-90);
-    Scale3D(0.007);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, Copy(GetCurrentStation, 1, 8));
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // Время
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(-0.022, 0, 0.247);
-    RotateX(-90);
-    Scale3D(0.007);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, GetCurrentTime);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // Канал
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(-0.11, 0, 0.233);
-    RotateX(-90);
-    Scale3D(0.007);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, GetChannel);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // Номер пути
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(-0.095, 0, 0.233);
-    RotateX(-90);
-    Scale3D(0.007);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, GetTrackWithDirection);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // Ускорение
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(-0.105, 0, 0.216);
-    RotateX(-90);
-    Scale3D(0.007);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, GetAcceleration);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // Расстояние до цели САУТ
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(-0.105, 0, 0.199);
-    RotateX(-90);
-    Scale3D(0.007);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, GetDistance);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // Расстояние до цели САУТ
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(-0.105, 0, 0.182);
-    RotateX(-90);
-    Scale3D(0.007);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, '0.67');
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // === ШКАЛА И ПОЛОСКА ТЦ ===
-    for i := 0 to 5 do
-    begin
-      // для максимального значения X = 0.055, для остальных чутка левее
-      if val = maxScaleValue then
-        posX_tc := 0.055
-      else
-        posX_tc := 0.057;
-
-      BeginObj3D;
-      glDisable(GL_LIGHTING);
-      Position3D(posX_tc, 0, posZ_tc);
-      RotateX(-90);
-      Scale3D(0.0044);
-      Color3D($FFFFFF, 255, False, 0.0);
-      SetTexture(0);
-      DrawText3D(0, FormatFloat('0.00', val));
-      glEnable(GL_LIGHTING);
-      EndObj3D;
-
-      // подготовка к следующей итерации
-      val := val - scaleStep;         // уменьшаем на шаг
-      posZ_tc := posZ_tc - 0.018;     // двигаемся вниз
-    end;
-
-    // ПОЛОСКА ТЦ
-    barCurrentHeight_tc := barBottom + ((barTop - barBottom) * (barValue_tc / maxScaleValue));
-    
-    SetTexture(0);
-    glDisable(GL_LIGHTING);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    
-    if barValue_tc > 0 then
-    begin
-      glColor4f(0.0, 0.0, 1.0, 0.9);
-
-      glBegin(GL_QUADS);
-        glVertex3f(barX_tc - barWidth/2, 0, barBottom);
-        glVertex3f(barX_tc + barWidth/2, 0, barBottom);
-        glVertex3f(barX_tc + barWidth/2, 0, barCurrentHeight_tc);
-        glVertex3f(barX_tc - barWidth/2, 0, barCurrentHeight_tc);
-      glEnd;
-    end;
-
-    glDisable(GL_BLEND);
-    glEnable(GL_LIGHTING);
-    glColor4f(1.0, 1.0, 1.0, 1.0);
-
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(barX_tc - 0.008, 0, barBottom - 0.007);
-    RotateX(-90);
-    Scale3D(0.005);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, 'ТЦ');
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(barX_tc - 0.009, 0, barBottom - 0.0135);
-    RotateX(-90);
-    Scale3D(0.005);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, FormatFloat('0.00', barValue_tc));
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(barX_tc - 0.009, 0, barBottom - 0.02);
-    RotateX(-90);
-    Scale3D(0.005);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, 'КГС');
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // === ШКАЛА И ПОЛОСКА ТМ ===
     val := maxScaleValue;
-
+    posZ := barTop;
+    
     for i := 0 to 5 do
     begin
-      // для максимального значения X = 0.077, для остальных чутка левее
-      if val = maxScaleValue then
-        posX_tm := 0.077
+      // Используем точные координаты из оригинала для каждого барграфа
+      if barX = 0.0676 then // ТЦ
+      begin
+        if val = maxScaleValue then
+          posX := 0.055
+        else
+          posX := 0.057;
+      end
+      else if barX = 0.0896 then // ТМ
+      begin
+        if val = maxScaleValue then
+          posX := 0.077
+        else
+          posX := 0.079;
+      end
+      else if barX = 0.111 then // УР
+      begin
+        if val = maxScaleValue then
+          posX := 0.099
+        else
+          posX := 0.101;
+      end
       else
-        posX_tm := 0.079;
-
-      BeginObj3D;
-      glDisable(GL_LIGHTING);
-      Position3D(posX_tm, 0, posZ_tm);
-      RotateX(-90);
-      Scale3D(0.0044);
-      Color3D($FFFFFF, 255, False, 0.0);
-      SetTexture(0);
-      DrawText3D(0, FormatFloat('0.00', val));
-      glEnable(GL_LIGHTING);
-      EndObj3D;
-
-      // подготовка к следующей итерации
-      val := val - scaleStep;         // уменьшаем на шаг
-      posZ_tm := posZ_tm - 0.018;     // двигаемся вниз
+      begin
+        // Резервный вариант для других координат
+        if val = maxScaleValue then
+          posX := barX - 0.0126
+        else
+          posX := barX - 0.0106;
+      end;
+      
+      DrawTextSimple(posX, 0, posZ, 0.0044, FormatFloat('0.00', val));
+      
+      val := val - scaleStep;
+      posZ := posZ - scaleStepZ;
     end;
+  end;
 
-    // ПОЛОСКА ТМ
-    barCurrentHeight := barBottom + ((barTop - barBottom) * (barValue / maxScaleValue));
-    
-    SetTexture(0);
-    glDisable(GL_LIGHTING);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    
+  // Процедура отрисовки барграфа
+  procedure DrawPressureBarGraph(barX: Single; barValue: Single);
+  var
+    barCurrentHeight: Single;
+  begin
+    if barValue > maxScaleValue then 
+      barValue := maxScaleValue;
+
     if barValue > 0 then
     begin
+      barCurrentHeight := barBottom + ((barTop - barBottom) * (barValue / maxScaleValue));
+      
+      SetTexture(0);
+      glDisable(GL_LIGHTING);
+      glEnable(GL_BLEND);
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
       glColor4f(0.0, 0.0, 1.0, 0.9);
 
       glBegin(GL_QUADS);
@@ -9863,208 +9612,132 @@ begin
         glVertex3f(barX + barWidth/2, 0, barCurrentHeight);
         glVertex3f(barX - barWidth/2, 0, barCurrentHeight);
       glEnd;
-    end;
 
-    glDisable(GL_BLEND);
-    glEnable(GL_LIGHTING);
-    glColor4f(1.0, 1.0, 1.0, 1.0);
-
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(barX - 0.008, 0, barBottom - 0.007);
-    RotateX(-90);
-    Scale3D(0.005);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, 'ТМ');
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(barX - 0.009, 0, barBottom - 0.0135);
-    RotateX(-90);
-    Scale3D(0.005);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, FormatFloat('0.00', barValue));
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(barX - 0.009, 0, barBottom - 0.02);
-    RotateX(-90);
-    Scale3D(0.005);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, 'КГС');
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // === ШКАЛА И ПОЛОСКА УР ===
-    val := maxScaleValue;
-
-    for i := 0 to 5 do
-    begin
-      // для максимального значения X = 0.099, для остальных чутка левее
-      if val = maxScaleValue then
-        posX_ur := 0.099
-      else
-        posX_ur := 0.101;
-
-      BeginObj3D;
-      glDisable(GL_LIGHTING);
-      Position3D(posX_ur, 0, posZ_ur);
-      RotateX(-90);
-      Scale3D(0.0044);
-      Color3D($FFFFFF, 255, False, 0.0);
-      SetTexture(0);
-      DrawText3D(0, FormatFloat('0.00', val));
+      glDisable(GL_BLEND);
       glEnable(GL_LIGHTING);
-      EndObj3D;
-
-      // подготовка к следующей итерации
-      val := val - scaleStep;         // уменьшаем на шаг
-      posZ_ur := posZ_ur - 0.018;     // двигаемся вниз
+      glColor4f(1.0, 1.0, 1.0, 1.0);
     end;
+  end;
 
-    // ПОЛОСКА УР
-    barCurrentHeight_ur := barBottom + ((barTop - barBottom) * (barValue_ur / maxScaleValue));
+  // Процедура отрисовки подписей барграфа
+  procedure DrawPressureLabels(barX: Single; barLabel: string; barValue: Single);
+  begin
+    DrawTextSimple(barX - 0.008, 0, barBottom - 0.007, 0.005, barLabel);
+    DrawTextSimple(barX - 0.009, 0, barBottom - 0.0135, 0.005, FormatFloat('0.00', barValue));
+    DrawTextSimple(barX - 0.009, 0, barBottom - 0.02, 0.005, 'КГС');
+  end;
+
+  // Полная процедура для одного барграфа
+  procedure DrawCompletePressureBar(barX: Single; barLabel: string; barValue: Single);
+  begin
+    DrawPressureScale(barX);
+    DrawPressureBarGraph(barX, barValue);
+    DrawPressureLabels(barX, barLabel, barValue);
+  end;
+
+  // Процедура отрисовки всех информационных полей
+  procedure DrawAllInfoFields;
+  var
+    inputText: string;
+  begin
+    // Основная информация
+    DrawTextSimple(-0.11, 0, 0.247, 0.007, GetCoordinatesFormatted);
+    DrawTextSimple(-0.07, 0, 0.247, 0.007, Copy(GetCurrentStation, 1, 8));
+    DrawTextSimple(-0.022, 0, 0.247, 0.007, GetCurrentTime);
+    DrawTextSimple(-0.11, 0, 0.233, 0.007, GetChannel);
+    DrawTextSimple(-0.095, 0, 0.233, 0.007, GetTrackWithDirection);
+    DrawTextSimple(-0.105, 0, 0.216, 0.007, GetAcceleration);
+    DrawTextSimple(-0.105, 0, 0.199, 0.007, GetDistance);
+    DrawTextSimple(-0.105, 0, 0.182, 0.007, '0.67');
+    DrawTextSimple(-0.110, 0, 0.092, 0.0055, GetTargetType);
+    DrawTextSimple(0.035, 0, 0.092, 0.006, GetDistance + ' м');
+    DrawTextSimple(0.0, 0, 0.092, 0.006, GetSvetoforValue);
     
-    SetTexture(0);
-    glDisable(GL_LIGHTING);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // Поле ввода
+    case GetStateBLOCK of
+      10: inputText := 'НОМЕР МАШИНИСТА ' + InputBuffer + '_';
+      11: inputText := 'НОМЕР ПОЕЗДА ' + InputBuffer + '_';
+      12: inputText := 'ДЛИНА В ОСЯХ ' + InputBuffer + '_';
+      13: inputText := 'ДЛИНА В ВАГОНАХ ' + InputBuffer + '_';
+      14: inputText := 'МАССА ПОЕЗДА (Т) ' + InputBuffer + '_';
+      15: inputText := 'СМЕЩЕНИЕ ЧАСОВ ' + InputBuffer + '_';
+      16: inputText := 'ЗАМЕДЛЕНИЕ ПТ ' + InputBuffer + '_';
+      17: inputText := 'ЗАМЕДЛЕНИЕ ЭПТ ' + InputBuffer + '_';
+      18: inputText := 'НАЛИЧ.ПОМ.МАШ. ' + InputBuffer + '_';
+      20: inputText := 'НОМЕР ПУТИ ' + InputBuffer + '_';
+      21: inputText := 'ПРИЗНАК ПРАВ. ' + InputBuffer + '_';
+      30: inputText := 'ВВЕДИТЕ КОМАНДУ ' + InputBuffer + '_';
+      31: inputText := 'СКОРОСТЬ НА БЕЛЫЙ ' + InputBuffer + '_';
+      52: inputText := 'ТАБЛИЦА АЛС-ЕН  ' + InputBuffer + '_';
+      71: inputText := 'К71 КОМАНДА ' + InputBuffer + '_';
+      else inputText := '';
+    end;
     
-    if barValue_ur > 0 then
+    if inputText <> '' then
+      DrawTextSimple(-0.11, 0, 0.081, 0.007, inputText);
+  end;
+
+begin
+  // Применяем патч при первом вызове
+  if not BLOCKInitialized then
+    ApplyBLOCKPatch;
+
+  // Инициализируем модели
+  if not BLOCKInitialized then
+  begin
+    InitBLOCKModels;
+    if not BLOCKInitialized then
     begin
-      glColor4f(0.0, 0.0, 1.0, 0.9);
-
-      glBegin(GL_QUADS);
-        glVertex3f(barX_ur - barWidth/2, 0, barBottom);
-        glVertex3f(barX_ur + barWidth/2, 0, barBottom);
-        glVertex3f(barX_ur + barWidth/2, 0, barCurrentHeight_ur);
-        glVertex3f(barX_ur - barWidth/2, 0, barCurrentHeight_ur);
-      glEnd;
+      AddToLogFile(EngineLog, 'BLOCK не инициализирован, отрисовка отменена');
+      Exit;
     end;
+  end;
 
-    glDisable(GL_BLEND);
-    glEnable(GL_LIGHTING);
-    glColor4f(1.0, 1.0, 1.0, 1.0);
+  // Настройка параметров в зависимости от режима давления
+  pressureMode := PByte($0538D95F)^;
+  if pressureMode = 1 then
+  begin
+    scaleFactor := 0.1;
+    maxScaleValue := 1.0;
+    scaleStep := 0.2;
+  end
+  else
+  begin
+    scaleFactor := 1.0;
+    maxScaleValue := 10.0;
+    scaleStep := 2.0;
+  end;
 
-    BeginObj3D;
+  // Константы для барграфов
+  barWidth := 0.003;
+  barTop := 0.191;
+  barBottom := 0.101;
+  scaleStepZ := 0.018;
+
+  // Основная отрисовка
+  try
+    BeginObj3D();
+    Position3D(AngZ, z, y);
+    RotateZ(x);
+    SetTexture(BLOCKTextureID);
+    
+    // Отрисовываем модели
+    DrawModel(BLOCKModelID, 0, True);
+    
     glDisable(GL_LIGHTING);
-    Position3D(barX_ur - 0.008, 0, barBottom - 0.007);
-    RotateX(-90);
-    Scale3D(0.005);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, 'УР');
+    DrawModel(BLOCKDisplayModelID, 0, True);
     glEnable(GL_LIGHTING);
-    EndObj3D;
 
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(barX_ur - 0.009, 0, barBottom - 0.0135);
-    RotateX(-90);
-    Scale3D(0.005);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, FormatFloat('0.00', barValue_ur));
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(barX_ur - 0.009, 0, barBottom - 0.02);
-    RotateX(-90);
-    Scale3D(0.005);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, 'КГС');
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // Тип цели
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(-0.110, 0, 0.092);
-    RotateX(-90);
-    Scale3D(0.0055);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, GetTargetType);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // Надпись Светофор
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(0.035, 0, 0.092);
-    RotateX(-90);
-    Scale3D(0.006);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, GetDistance + ' м');
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    // Литера Светофора
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(-0.0, 0, 0.092);
-    RotateX(-90);
-    Scale3D(0.006);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, GetSvetoforValue);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(-0.11, 0, 0.081);
-    RotateX(-90);
-    Scale3D(0.007);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    if GetStateBLOCK = 20 then
-      DrawText3D(0, 'НОМЕР ПУТИ ' + InputBuffer + '_')
-    else if GetStateBLOCK = 21 then
-      DrawText3D(0, 'ПРИЗНАК ПРАВ. ' + InputBuffer + '_')
-    else if GetStateBLOCK = 10 then
-      DrawText3D(0, 'НОМЕР МАШИНИСТА ' + InputBuffer + '_')
-    else if GetStateBLOCK = 11 then
-      DrawText3D(0, 'НОМЕР ПОЕЗДА ' + InputBuffer + '_')
-    else if GetStateBLOCK = 12 then
-      DrawText3D(0, 'ДЛИНА В ОСЯХ ' + InputBuffer + '_')
-    else if GetStateBLOCK = 13 then
-      DrawText3D(0, 'ДЛИНА В ВАГОНАХ ' + InputBuffer + '_')
-    else if GetStateBLOCK = 14 then
-      DrawText3D(0, 'МАССА ПОЕЗДА (Т) ' + InputBuffer + '_')
-    else if GetStateBLOCK = 15 then
-      DrawText3D(0, 'СМЕЩЕНИЕ ЧАСОВ ' + InputBuffer + '_')
-    else if GetStateBLOCK = 16 then
-      DrawText3D(0, 'ЗАМЕДЛЕНИЕ ПТ ' + InputBuffer + '_')
-    else if GetStateBLOCK = 17 then
-      DrawText3D(0, 'ЗАМЕДЛЕНИЕ ЭПТ ' + InputBuffer + '_')
-    else if GetStateBLOCK = 18 then
-      DrawText3D(0, 'НАЛИЧ.ПОМ.МАШ. ' + InputBuffer + '_')
-    else if GetStateBLOCK = 30 then
-      DrawText3D(0, 'ВВЕДИТЕ КОМАНДУ ' + InputBuffer + '_')
-    else if GetStateBLOCK = 31 then
-      DrawText3D(0, 'СКОРОСТЬ НА БЕЛЫЙ ' + InputBuffer + '_')
-    else if GetStateBLOCK = 71 then
-      DrawText3D(0, 'К71 КОМАНДА ' + InputBuffer + '_')
-    else if GetStateBLOCK = 52 then
-      DrawText3D(0, 'ТАБЛИЦА АЛС-ЕН  ' + InputBuffer + '_');
-
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-
+    // Отрисовываем все информационные поля
+    DrawAllInfoFields;
+    
+    // Отрисовываем барграфы давления
+    DrawCompletePressureBar(0.0676, 'ТЦ', GetPressureTCf * scaleFactor);
+    DrawCompletePressureBar(0.0896, 'ТМ', GetPressureTMf * scaleFactor);
+    DrawCompletePressureBar(0.111, 'УР', GetPressureURf * scaleFactor);
+    
+    // Дополнительные элементы
     DrawSpeedometer3D;
-
     DrawBlockKeyboard;
 
     EndObj3D();
