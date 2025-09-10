@@ -704,7 +704,7 @@ begin
 CurrentTime := GetTimer;
   
   // Чтение конфига раз в 2 секунды (2000 мс)
-  if (CurrentTime - LastConfigReadTime) >= 1000 then
+  if (CurrentTime - LastConfigReadTime) >= 100 then
   begin
     ProcessAllModules;
     LastConfigReadTime := CurrentTime;
@@ -1928,6 +1928,8 @@ end;
 
   InitEng;
 
+  InitCheatMenu;
+
 if IsTargetProcess then
 begin
   // БЕЗОПАСНАЯ ПРОВЕРКА ТИПА ЛОКОМОТИВА
@@ -1938,7 +1940,7 @@ begin
       AddToLogFile(EngineLog, 'Locomotive type address not readable yet, hook skipped');
       Exit;
     end;
-    
+
     // Читаем тип локомотива
     LocType := PInteger(Pointer($00400000 + $4F8D93C))^;
     
@@ -1998,7 +2000,6 @@ end;
 
   if @LoadTextures<>nil then LoadTextures;
 
-  InitCheatMenu;
 
  try
     //InitDiscordRPC;

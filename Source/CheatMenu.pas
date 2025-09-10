@@ -984,6 +984,8 @@ begin
     stepforward := Settings.StepForwardSlider.Value;
     maxvisibledistance := Settings.MaxVisibleDistanceSlider.Value;
     newsky := Settings.NewSky;
+
+    SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
     
   except on E: Exception do
     AddToLogFile(EngineLog, 'Ошибка чтения конфига: ' + E.Message);

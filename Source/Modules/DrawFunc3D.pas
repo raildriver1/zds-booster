@@ -568,10 +568,6 @@ begin
   Config_MainCamera := MainCamera;
   Config_MaxDistance := MaxDistance;
   Config_NewSky := NewSky;
-  
-  AddToLogFile(EngineLog, Format('Установлены глобальные переменные: F=%s M=%s D=%s S=%s',
-    [BoolToStr(Config_Freecam, True), BoolToStr(Config_MainCamera, True), 
-     BoolToStr(Config_MaxDistance, True), BoolToStr(Config_NewSky, True)]));
 end;
 
 function GetConfigFreecam: Boolean; stdcall;
@@ -1656,10 +1652,8 @@ begin
     AddToLogFile(EngineLog, 'Конфиг загружен при старте системы');
   end;
   
-  // Ограничиваем частоту обработки всех модулей
-  if (currentTime - LastProcessTime) < PROCESS_INTERVAL then Exit;
   LastProcessTime := currentTime;
-  
+
   // Обрабатываем модули по очереди (round-robin)
   case ModuleIndex of
     0: ProcessFreecam;
@@ -6335,7 +6329,6 @@ begin
       // Восстанавливаем защиту
       VirtualProtect(Pointer(TARGET_ADDRESS), 10, OldProtect, OldProtect);
       
-      AddToLogFile(EngineLog, Format('stepForward записан в память: %.6f', [value]));
     end
     else
     begin
