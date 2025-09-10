@@ -1584,6 +1584,8 @@ begin
 
   LoadConfig;
 
+  SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
+
   // Инициализация окон с transform анимацией
   RenderWindow.Title := GetText('RenderTitle');
   RenderWindow.X := 50;
@@ -1801,7 +1803,7 @@ begin
   end;
   
   // Фон кнопки
-  DrawStyledRect(X, Y, 220, ITEM_HEIGHT, BgColor, Alpha, True, BorderColor);
+  DrawStyledRect(X, Y, 240, ITEM_HEIGHT, BgColor, Alpha, True, BorderColor);
   
   // Текст
   TextX := X + 16;
@@ -1935,7 +1937,7 @@ begin
   // === СОВРЕМЕННАЯ ТЕНЬ ===
   DrawShadow(ScaledX, ScaledY, ScaledWidth, ScaledHeight, Round(Win.ShadowIntensity * Alpha), Win.ShadowIntensity);
   
-  // === ГРАДИЕНТНЫЙ ЗАГОЛОВОК ===
+//  // === ГРАДИЕНТНЫЙ ЗАГОЛОВОК ===
   HeaderGradientStart := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, 0.3);
   HeaderGradientEnd := LerpColor(COLOR_PRIMARY_VARIANT, COLOR_PRIMARY, 0.2);
   
@@ -1943,8 +1945,8 @@ begin
   DrawStyledRect(ScaledX, ScaledY, ScaledWidth, Round(HEADER_HEIGHT * Win.Scale), HeaderGradientStart, Alpha, True, COLOR_BORDER_LIGHT);
   
   // Имитация градиента через несколько слоев
-  DrawStyledRect(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale) - 8, ScaledWidth, 8, HeaderGradientEnd, Alpha div 2, True, 0);
-  
+  //DrawStyledRect(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale) - 8, ScaledWidth, 8, HeaderGradientEnd, Alpha div 2, True, 0);
+
   // Текст заголовка
   DrawModernText(ScaledX + Round(16 * Win.Scale), ScaledY + Round(12 * Win.Scale), Win.Title, COLOR_ON_PRIMARY, Alpha, 0.9);
   
@@ -2355,12 +2357,12 @@ begin
       SectionHeight := Round(150 * Settings.FreecamSection.AnimProgress);
       if SectionHeight > 40 then
       begin
-        if InRect(X, Y, RenderWindow.X + MARGIN + 24, FreecamSectionY + 15, SLIDER_WIDTH + 30, 50) then
+        if InRect(X, Y, RenderWindow.X + MARGIN + 24, FreecamSectionY + 15, SLIDER_WIDTH + 30, 30) then
         begin
           Settings.BasespeedSlider.IsDragging := True;
           Exit;
         end;
-        if InRect(X, Y, RenderWindow.X + MARGIN + 24, FreecamSectionY + 65, SLIDER_WIDTH + 30, 50) then
+        if InRect(X, Y, RenderWindow.X + MARGIN + 24, FreecamSectionY + 65, SLIDER_WIDTH + 30, 30) then
         begin
           Settings.FastspeedSlider.IsDragging := True;
           Exit;
@@ -2410,7 +2412,7 @@ begin
       SectionHeight := Round(200 * Settings.MainCameraSection.AnimProgress);
       
       // Клик по слайдеру StepForward
-      if (SectionHeight > 40) and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 15, SLIDER_WIDTH + 30, 50) then
+      if (SectionHeight > 40) and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 15, SLIDER_WIDTH + 30, 30) then
       begin
         Settings.StepForwardSlider.IsDragging := True;
         Exit;
@@ -2431,7 +2433,7 @@ begin
       end;
       
       // Клик по слайдеру угла обзора
-      if (SectionHeight > 110) and Settings.NewViewAngle and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 85, SLIDER_WIDTH + 30, 50) then
+      if (SectionHeight > 110) and Settings.NewViewAngle and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 85, SLIDER_WIDTH + 30, 30) then
       begin
         Settings.ViewAngleSlider.IsDragging := True;
         Exit;
@@ -2452,7 +2454,7 @@ begin
       end;
       
       // Слайдер чувствительности камеры
-      if (SectionHeight > 170) and Settings.CameraSensitivity and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 155, SLIDER_WIDTH + 30, 50) then
+      if (SectionHeight > 170) and Settings.CameraSensitivity and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 155, SLIDER_WIDTH + 30, 30) then
       begin
         Settings.CameraSensitivitySlider.IsDragging := True;
         Exit;
@@ -2512,7 +2514,7 @@ begin
       if SectionHeight > 40 then
       begin
         // Слайдер дальности
-        if InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 15, SLIDER_WIDTH + 30, 50) then
+        if InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 15, SLIDER_WIDTH + 30, 30) then
         begin
           Settings.MaxVisibleDistanceSlider.IsDragging := True;
           Exit;
@@ -2640,9 +2642,10 @@ begin
     MenuTargetProgress := 1.0;
     
     // Устанавливаем начальные параметры для transform анимации появления
-    RenderWindow.Alpha := 0.0;
+    RenderWindow.Alpha := RenderWindow.Alpha;           // или принудительно к 0
+    RenderWindow.Scale := RenderWindow.Scale;           // или принудительно к 0.3
+    RenderWindow.Rotation := RenderWindow.Rotation;     // или принудительно к 0
     RenderWindow.TargetAlpha := 1.0;
-    RenderWindow.Scale := 0.3;
     RenderWindow.TargetScale := 1.0;
     RenderWindow.TransformProgress := 0.0;
     RenderWindow.TargetTransformProgress := 1.0;
