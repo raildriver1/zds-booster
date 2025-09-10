@@ -30,6 +30,7 @@ function GetRoutePathFromMemory: string; // Получение пути марш
 
 function GetSpeedValue: Integer;     // Скорость как число
 function GetDistanceValue: Integer; // Расстояние как число
+function GetTrackNumberInt: Byte;   // Номер пути в байте
 
 function GetALS: Byte;
 function GetPressureTMf: Single;    // Давление ТМ
@@ -931,6 +932,17 @@ begin
     Result := 'Err';
   end;
 end;
+
+function GetTrackNumberInt: Byte;
+begin
+  try
+    // Читаем байт по адресу BaseAddress + $4F8D958
+    Result := PByte(BaseAddress + $4F8D958)^;
+  except
+    Result := 0; // или можно вернуть $FF, если нужно обозначить ошибку
+  end;
+end;
+
 
 function ConvertToDistance(Value: Integer; AddMeters: Integer = 1101): string;
 var

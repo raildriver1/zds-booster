@@ -9641,7 +9641,10 @@ var
     DrawTextSimple(-0.11, 0, 0.247, 0.007, GetCoordinatesFormatted);
     DrawTextSimple(-0.07, 0, 0.247, 0.007, Copy(GetCurrentStation, 1, 8));
     DrawTextSimple(-0.022, 0, 0.247, 0.007, GetCurrentTime);
-    DrawTextSimple(-0.11, 0, 0.233, 0.007, GetChannel);
+    if GetTrackNumberInt > 0 then
+      DrawTextSimple(-0.11, 0, 0.233, 0.007, 'ЭК')
+    else
+      DrawTextSimple(-0.11, 0, 0.233, 0.007, GetChannel + ' Гц');
     DrawTextSimple(-0.095, 0, 0.233, 0.007, GetTrackWithDirection);
     DrawTextSimple(-0.105, 0, 0.216, 0.007, GetAcceleration);
     DrawTextSimple(-0.105, 0, 0.199, 0.007, GetDistance);
@@ -9667,7 +9670,13 @@ var
       31: inputText := 'СКОРОСТЬ НА БЕЛЫЙ ' + InputBuffer + '_';
       52: inputText := 'ТАБЛИЦА АЛС-ЕН  ' + InputBuffer + '_';
       71: inputText := 'К71 КОМАНДА ' + InputBuffer + '_';
-      else inputText := '';
+      else
+      begin
+        if GetTrackNumberInt = 0 then
+          inputText := 'РЕЖИМ БЕЗ ЭК'
+        else
+          inputText := '';
+      end;
     end;
     
     if inputText <> '' then

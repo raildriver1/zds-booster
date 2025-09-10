@@ -2,7 +2,7 @@
 
 interface
 uses 
-  Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils, ShellAPI;
+  Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils, ShellAPI, Math;
 
 type
   TSlider = record
@@ -10,6 +10,7 @@ type
     MinValue: Single;
     MaxValue: Single;
     IsDragging: Boolean;
+    HoverProgress: Single;
   end;
   
   TExpandableSection = record
@@ -28,6 +29,21 @@ type
     OriginalX, OriginalY: Integer;
     Scale: Single;
     TargetScale: Single;
+    // Transform анимация
+    TransformProgress: Single;
+    TargetTransformProgress: Single;
+    Rotation: Single;
+    TargetRotation: Single;
+    TranslateY: Single;
+    TargetTranslateY: Single;
+    // Drag анимация
+    DragWidthExpansion: Single;
+    TargetDragWidthExpansion: Single;
+    ShadowIntensity: Single;
+    TargetShadowIntensity: Single;
+    OriginalWidth: Integer;
+    // Анимация появления
+    SpawnDelay: Single;
   end;
 
   // ЯЗЫКИ
@@ -103,8 +119,8 @@ var
   // === ПЕРЕМЕННЫЕ ДЛЯ АНИМАЦИИ МЕНЮ ===
   MenuAnimationProgress: Single = 0.0;
   MenuTargetProgress: Single = 0.0;
-  MenuAnimationSpeed: Single = 6.0;
-  
+  MenuAnimationSpeed: Single = 12.0;
+
   // === ОПТИМИЗАЦИЯ: Ограничение частоты применения настроек ===
   LastApplyTime: Cardinal = 0;
   ApplyInterval: Cardinal = 100;
@@ -193,12 +209,29 @@ var
   MenuCallPatched: Boolean = False;
 
 const
-  ITEM_HEIGHT = 28;
-  MARGIN = 12;
-  HEADER_HEIGHT = 35;
-  SLIDER_WIDTH = 190;
-  BUTTON_SIZE = 20;
-  CHECKBOX_SIZE = 16;
+  ITEM_HEIGHT = 32;
+  MARGIN = 16;
+  HEADER_HEIGHT = 42;
+  SLIDER_WIDTH = 180;
+  BUTTON_SIZE = 24;
+  CHECKBOX_SIZE = 18;
+  CORNER_RADIUS = 12.0;
+  DRAG_EXPANSION = 25.0; // Расширение окна при перетаскивании
+
+  // Современные цвета
+  COLOR_BACKGROUND = $1A1A1A;
+  COLOR_SURFACE = $2A2A2A;
+  COLOR_SURFACE_VARIANT = $343434;
+  COLOR_PRIMARY = $0078D4;
+  COLOR_PRIMARY_VARIANT = $005A9E;
+  COLOR_ACCENT = $00BCF2;
+  COLOR_ON_SURFACE = $E1E1E1;
+  COLOR_ON_PRIMARY = $FFFFFF;
+  COLOR_BORDER = $404040;
+  COLOR_BORDER_LIGHT = $505050;
+  COLOR_SUCCESS = $16C60C;
+  COLOR_WARNING = $FF8C00;
+  COLOR_SHADOW = $000000;
 
 // === МАССИВЫ ТЕКСТОВ ДЛЯ РАЗНЫХ ЯЗЫКОВ ===
 type
@@ -242,10 +275,10 @@ const
   LanguageTexts: array[TLanguage] of TLanguageTexts = (
     // Русский
     (
-      RenderTitle: 'РЕНДЕР';
-      WorldTitle: 'МИР';
-      LocomotiveTitle: 'ЛОКОМОТИВ';
-      MenuTitle: 'МЕНЮ';
+      RenderTitle: 'RENDER';
+      WorldTitle: 'WORLD';
+      LocomotiveTitle: 'LOCOMOTIVE';
+      MenuTitle: 'MENU';
       FreeCameraText: 'Свободная Камера';
       MainCameraText: 'Основная Камера';
       MaxDistanceText: 'Макс. дальность';
@@ -261,18 +294,18 @@ const
       WiresText: 'Провода';
       DistantModelsText: 'Дальние модели';
       TrafficLightsText: 'Светофоры';
-      LanguageText: 'Язык:';
-      RussianText: 'RU';
-      UkrainianText: 'UA';
-      EnglishText: 'EN';
+      LanguageText: 'Язык интерфейса';
+      RussianText: 'Русский';
+      UkrainianText: 'Українська';
+      EnglishText: 'English';
       InfoText: 'ZDS-Booster v1.1 | vk.com/raildriver';
     ),
     // Украинский
     (
-      RenderTitle: 'РЕНДЕР';
-      WorldTitle: 'СВІТ';
-      LocomotiveTitle: 'ЛОКОМОТИВ';
-      MenuTitle: 'МЕНЮ';
+      RenderTitle: 'RENDER';
+      WorldTitle: 'WORLD';
+      LocomotiveTitle: 'LOCOMOTIVE';
+      MenuTitle: 'MENU';
       FreeCameraText: 'Вільна Камера';
       MainCameraText: 'Основна Камера';
       MaxDistanceText: 'Макс. відстань';
@@ -288,11 +321,11 @@ const
       WiresText: 'Проводи';
       DistantModelsText: 'Далекі моделі';
       TrafficLightsText: 'Світлофори';
-      LanguageText: 'Мова:';
-      RussianText: 'Російська';
+      LanguageText: 'Мова інтерфейсу';
+      RussianText: 'Русский';
       UkrainianText: 'Українська';
-      EnglishText: 'Англійська';
-      InfoText: 'ZDS-Booster v1.1 | vk.com/raildriver';
+      EnglishText: 'English';
+      InfoText: 'ZDS-Booster v1.1 | t.me/raildrive';
     ),
     // Английский
     (
@@ -315,11 +348,11 @@ const
       WiresText: 'Wires';
       DistantModelsText: 'Distant Models';
       TrafficLightsText: 'Traffic Lights';
-      LanguageText: 'Language:';
-      RussianText: 'Russian';
-      UkrainianText: 'Ukrainian';
+      LanguageText: 'Interface Language';
+      RussianText: 'Русский';
+      UkrainianText: 'Українська';
       EnglishText: 'English';
-      InfoText: 'ZDS-Booster v1.1 | vk.com/raildriver';
+      InfoText: 'ZDS-Booster v1.1 | t.me/raildrive';
     )
   );
 
@@ -350,24 +383,95 @@ begin
   else if TextType = 'UkrainianText' then Result := LanguageTexts[CurrentLanguage].UkrainianText
   else if TextType = 'EnglishText' then Result := LanguageTexts[CurrentLanguage].EnglishText
   else if TextType = 'InfoText' then Result := LanguageTexts[CurrentLanguage].InfoText
-  else Result := TextType; // Возвращаем оригинал если не найден
+  else Result := TextType;
 end;
 
 // === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 function Min(A, B: Integer): Integer;
 begin
-  if A < B then
-    Result := A
-  else
-    Result := B;
+  if A < B then Result := A else Result := B;
 end;
 
 function Max(A, B: Integer): Integer;
 begin
-  if A > B then
-    Result := A
+  if A > B then Result := A else Result := B;
+end;
+
+function MinF(A, B: Single): Single;
+begin
+  if A < B then Result := A else Result := B;
+end;
+
+function MaxF(A, B: Single): Single;
+begin
+  if A > B then Result := A else Result := B;
+end;
+
+function LerpF(A, B, T: Single): Single;
+begin
+  Result := A + (B - A) * T;
+end;
+
+function LerpColor(ColorA, ColorB: Integer; T: Single): Integer;
+var
+  RA, GA, BA: Byte;
+  RB, GB, BB: Byte;
+  RT, GT, BT: Byte;
+begin
+  // Извлекаем компоненты цвета A
+  RA := ColorA and $FF;
+  GA := (ColorA shr 8) and $FF;
+  BA := (ColorA shr 16) and $FF;
+  
+  // Извлекаем компоненты цвета B
+  RB := ColorB and $FF;
+  GB := (ColorB shr 8) and $FF;
+  BB := (ColorB shr 16) and $FF;
+  
+  // Интерполируем каждый компонент
+  RT := Round(RA + (RB - RA) * T);
+  GT := Round(GA + (GB - GA) * T);
+  BT := Round(BA + (BB - BA) * T);
+  
+  // Собираем результирующий цвет
+  Result := RT or (GT shl 8) or (BT shl 16);
+end;
+
+function EaseOutBack(T: Single): Single;
+var
+  c1, c3: Single;
+begin
+  c1 := 1.70158;
+  c3 := c1 + 1;
+  Result := 1 + c3 * Power(T - 1, 3) + c1 * Power(T - 1, 2);
+end;
+
+function EaseOutCubic(T: Single): Single;
+begin
+  T := T - 1;
+  Result := 1 + T * T * T;
+end;
+
+function EaseInOutQuart(T: Single): Single;
+begin
+  if T < 0.5 then
+    Result := 8 * T * T * T * T
   else
-    Result := B;
+    Result := 1 - Power(-2 * T + 2, 4) / 2;
+end;
+
+function EaseOutElastic(T: Single): Single;
+var
+  c4: Single;
+begin
+  c4 := (2 * PI) / 3;
+  
+  if T = 0 then
+    Result := 0
+  else if T = 1 then
+    Result := 1
+  else
+    Result := Power(2, -10 * T) * Sin((T * 10 - 0.75) * c4) + 1;
 end;
 
 function GetFreecamBasespeed: Single; stdcall;
@@ -385,11 +489,39 @@ begin
   Result := Settings.TurnspeedSlider.Value;
 end;
 
-// Простая отрисовка текста
-procedure DrawText(X, Y: Integer; Text: string; Color: Integer; Alpha: Integer = 255);
+// Современная отрисовка текста с тенью
+procedure DrawModernText(X, Y: Integer; Text: string; Color: Integer; Alpha: Integer = 255; Size: Single = 0.8);
 begin
-  DrawText2D(0, X + 1, Y + 1, Text, $000000, Alpha div 3, 0.8);
-  DrawText2D(0, X, Y, Text, Color, Alpha, 0.8);
+  // Тень
+  DrawText2D(0, X + 1, Y + 1, Text, COLOR_SHADOW, Alpha div 4, Size);
+  // Основной текст
+  DrawText2D(0, X, Y, Text, Color, Alpha, Size);
+end;
+
+// Простая но эффективная отрисовка прямоугольника с границами
+procedure DrawStyledRect(X, Y, Width, Height: Integer; Color: Integer; Alpha: Integer; Filled: Boolean; BorderColor: Integer = 0);
+begin
+  if Filled then
+    DrawRectangle2D(X, Y, Width, Height, Color, Alpha, True);
+  
+  // Рамка
+  DrawRectangle2D(X, Y, Width, Height, BorderColor, Alpha div 2, False);
+end;
+
+// Отрисовка тени
+procedure DrawShadow(X, Y, Width, Height: Integer; Alpha: Integer; Intensity: Single = 1.0);
+var
+  ShadowOffset: Integer;
+  ShadowAlpha: Integer;
+  i: Integer;
+begin
+  ShadowOffset := Round(6 * Intensity);
+  
+  for i := 0 to Round(4 * Intensity) do
+  begin
+    ShadowAlpha := Round(Alpha * Intensity / (8 + i * 2));
+    DrawRectangle2D(X + ShadowOffset + i, Y + ShadowOffset + i, Width, Height, COLOR_SHADOW, ShadowAlpha, True);
+  end;
 end;
 
 function InRect(X, Y, RX, RY, RW, RH: Integer): Boolean;
@@ -1190,6 +1322,26 @@ begin
   end;
 end;
 
+// Функция трансформации координат с поворотом
+procedure TransformCoords(var X, Y: Integer; CenterX, CenterY: Integer; Scale, Rotation: Single);
+var
+  DX, DY: Single;
+  NewX, NewY: Single;
+begin
+  // Смещаем в начало координат
+  DX := (X - CenterX) * Scale;
+  DY := (Y - CenterY) * Scale;
+  
+  // Поворачиваем
+  NewX := DX * Cos(Rotation) - DY * Sin(Rotation);
+  NewY := DX * Sin(Rotation) + DY * Cos(Rotation);
+  
+  // Возвращаем обратно
+  X := Round(CenterX + NewX);
+  Y := Round(CenterY + NewY);
+end;
+
+
 procedure UpdateAnimations;
 var
   CurrentTime: Cardinal;
@@ -1317,6 +1469,7 @@ begin
   end;
 end;
 
+
 procedure InitCheatMenu; stdcall;
 begin
   FillChar(Settings, SizeOf(Settings), 0);
@@ -1325,37 +1478,45 @@ begin
   Settings.BrightnessSlider.Value := 0.0;
   Settings.BrightnessSlider.MinValue := 0.0;
   Settings.BrightnessSlider.MaxValue := 255.0;
+  Settings.BrightnessSlider.HoverProgress := 0.0;
   
   // Инициализация слайдеров FREECAM
   Settings.BasespeedSlider.Value := 0.01;
   Settings.BasespeedSlider.MinValue := 0.01;
   Settings.BasespeedSlider.MaxValue := 1.00;
+  Settings.BasespeedSlider.HoverProgress := 0.0;
   
   Settings.FastspeedSlider.Value := 1.5;
   Settings.FastspeedSlider.MinValue := 0.01;
   Settings.FastspeedSlider.MaxValue := 2.0;
+  Settings.FastspeedSlider.HoverProgress := 0.0;
   
   Settings.TurnspeedSlider.Value := 1.5;
   Settings.TurnspeedSlider.MinValue := 0.01;
   Settings.TurnspeedSlider.MaxValue := 2.0;
+  Settings.TurnspeedSlider.HoverProgress := 0.0;
   
   Settings.StepForwardSlider.Value := 0.5;
   Settings.StepForwardSlider.MinValue := 0.01;
   Settings.StepForwardSlider.MaxValue := 1.0;
+  Settings.StepForwardSlider.HoverProgress := 0.0;
   
   Settings.MaxVisibleDistanceSlider.Value := 1200;
   Settings.MaxVisibleDistanceSlider.MinValue := 800;
   Settings.MaxVisibleDistanceSlider.MaxValue := 1600;
+  Settings.MaxVisibleDistanceSlider.HoverProgress := 0.0;
   
   // Слайдер угла обзора
   Settings.ViewAngleSlider.Value := 3.0;
   Settings.ViewAngleSlider.MinValue := 0.0;
   Settings.ViewAngleSlider.MaxValue := 7.0;
+  Settings.ViewAngleSlider.HoverProgress := 0.0;
   
   // Слайдер чувствительности камеры
   Settings.CameraSensitivitySlider.Value := 5.0;
   Settings.CameraSensitivitySlider.MinValue := 1.0;
   Settings.CameraSensitivitySlider.MaxValue := 9.0;
+  Settings.CameraSensitivitySlider.HoverProgress := 0.0;
 
   // Адреса для угла обзора
   ViewAngleNopAddr1 := $723909;
@@ -1423,176 +1584,265 @@ begin
 
   LoadConfig;
 
-  // Инициализация окон с анимацией
+  // Инициализация окон с transform анимацией
   RenderWindow.Title := GetText('RenderTitle');
   RenderWindow.X := 50;
-  RenderWindow.Y := 40;
-  RenderWindow.Width := 240;
+  RenderWindow.Y := 50;
+  RenderWindow.Width := 280;
+  RenderWindow.OriginalWidth := 280;
   RenderWindow.Height := 120;
   RenderWindow.Alpha := 0.0;
   RenderWindow.TargetAlpha := 1.0;
   RenderWindow.OriginalX := 50;
-  RenderWindow.OriginalY := 40;
-  RenderWindow.Scale := 0.7;
+  RenderWindow.OriginalY := 50;
+  RenderWindow.Scale := 0.3;
   RenderWindow.TargetScale := 1.0;
+  RenderWindow.TransformProgress := 0.0;
+  RenderWindow.TargetTransformProgress := 1.0;
+  RenderWindow.Rotation := 0.0;
+  RenderWindow.TargetRotation := 0.0;
+  RenderWindow.TranslateY := -200.0;
+  RenderWindow.TargetTranslateY := 0.0;
+  RenderWindow.DragWidthExpansion := 0.0;
+  RenderWindow.TargetDragWidthExpansion := 0.0;
+  RenderWindow.ShadowIntensity := 0.8;
+  RenderWindow.TargetShadowIntensity := 0.8;
+  RenderWindow.SpawnDelay := 0.0;
   
   WorldWindow.Title := GetText('WorldTitle');
-  WorldWindow.X := 310;
-  WorldWindow.Y := 40;
-  WorldWindow.Width := 240;
+  WorldWindow.X := 350;
+  WorldWindow.Y := 50;
+  WorldWindow.Width := 280;
+  WorldWindow.OriginalWidth := 280;
   WorldWindow.Height := 100;
   WorldWindow.Alpha := 0.0;
   WorldWindow.TargetAlpha := 1.0;
-  WorldWindow.OriginalX := 310;
-  WorldWindow.OriginalY := 40;
-  WorldWindow.Scale := 0.7;
+  WorldWindow.OriginalX := 350;
+  WorldWindow.OriginalY := 50;
+  WorldWindow.Scale := 0.3;
   WorldWindow.TargetScale := 1.0;
+  WorldWindow.TransformProgress := 0.0;
+  WorldWindow.TargetTransformProgress := 1.0;
+  WorldWindow.Rotation := 0.0;
+  WorldWindow.TargetRotation := 0.0;
+  WorldWindow.TranslateY := -150.0;
+  WorldWindow.TargetTranslateY := 0.0;
+  WorldWindow.DragWidthExpansion := 0.0;
+  WorldWindow.TargetDragWidthExpansion := 0.0;
+  WorldWindow.ShadowIntensity := 0.8;
+  WorldWindow.TargetShadowIntensity := 0.8;
+  WorldWindow.SpawnDelay := 0.1;
   
   LocomotiveWindow.Title := GetText('LocomotiveTitle');
-  LocomotiveWindow.X := 570;
-  LocomotiveWindow.Y := 40;
-  LocomotiveWindow.Width := 240;
+  LocomotiveWindow.X := 650;
+  LocomotiveWindow.Y := 50;
+  LocomotiveWindow.Width := 280;
+  LocomotiveWindow.OriginalWidth := 280;
   LocomotiveWindow.Height := 100;
   LocomotiveWindow.Alpha := 0.0;
   LocomotiveWindow.TargetAlpha := 1.0;
-  LocomotiveWindow.OriginalX := 570;
-  LocomotiveWindow.OriginalY := 40;
-  LocomotiveWindow.Scale := 0.7;
+  LocomotiveWindow.OriginalX := 650;
+  LocomotiveWindow.OriginalY := 50;
+  LocomotiveWindow.Scale := 0.3;
   LocomotiveWindow.TargetScale := 1.0;
+  LocomotiveWindow.TransformProgress := 0.0;
+  LocomotiveWindow.TargetTransformProgress := 1.0;
+  LocomotiveWindow.Rotation := 0.0;
+  LocomotiveWindow.TargetRotation := 0.0;
+  LocomotiveWindow.TranslateY := -100.0;
+  LocomotiveWindow.TargetTranslateY := 0.0;
+  LocomotiveWindow.DragWidthExpansion := 0.0;
+  LocomotiveWindow.TargetDragWidthExpansion := 0.0;
+  LocomotiveWindow.ShadowIntensity := 0.8;
+  LocomotiveWindow.TargetShadowIntensity := 0.8;
+  LocomotiveWindow.SpawnDelay := 0.2;
   
   MenuWindow.Title := GetText('MenuTitle');
-  MenuWindow.X := 830;
-  MenuWindow.Y := 40;
-  MenuWindow.Width := 280;
-  MenuWindow.Height := 180;
+  MenuWindow.X := 950;
+  MenuWindow.Y := 50;
+  MenuWindow.Width := 320;
+  MenuWindow.OriginalWidth := 320;
+  MenuWindow.Height := 200;
   MenuWindow.Alpha := 0.0;
   MenuWindow.TargetAlpha := 1.0;
-  MenuWindow.OriginalX := 830;
-  MenuWindow.OriginalY := 40;
-  MenuWindow.Scale := 0.7;
+  MenuWindow.OriginalX := 950;
+  MenuWindow.OriginalY := 50;
+  MenuWindow.Scale := 0.3;
   MenuWindow.TargetScale := 1.0;
+  MenuWindow.TransformProgress := 0.0;
+  MenuWindow.TargetTransformProgress := 1.0;
+  MenuWindow.Rotation := 0.0;
+  MenuWindow.TargetRotation := 0.0;
+  MenuWindow.TranslateY := -250.0;
+  MenuWindow.TargetTranslateY := 0.0;
+  MenuWindow.DragWidthExpansion := 0.0;
+  MenuWindow.TargetDragWidthExpansion := 0.0;
+  MenuWindow.ShadowIntensity := 0.8;
+  MenuWindow.TargetShadowIntensity := 0.8;
+  MenuWindow.SpawnDelay := 0.3;
 end;
 
-procedure DrawExpandButton(X, Y: Integer; Expanded: Boolean; Alpha: Integer);
+// Современная кнопка развертывания
+procedure DrawModernExpandButton(X, Y: Integer; Expanded: Boolean; Alpha: Integer; HoverProgress: Single = 0.0);
 var
   CenterX, CenterY: Integer;
+  ButtonColor: Integer;
+  IconColor: Integer;
+  Size: Integer;
 begin
   CenterX := X + BUTTON_SIZE div 2;
   CenterY := Y + BUTTON_SIZE div 2;
+  Size := Round(10 + HoverProgress * 2);
   
-  DrawCircle2D_Fill(CenterX, CenterY, 8, $404040, Alpha);
-  DrawCircle2D(CenterX, CenterY, 8, $CCCCCC, Alpha div 2);
+  ButtonColor := LerpColor(COLOR_SURFACE_VARIANT, COLOR_PRIMARY, HoverProgress);
+  IconColor := LerpColor(COLOR_ON_SURFACE, COLOR_ON_PRIMARY, HoverProgress);
   
-  DrawLine2D(CenterX - 4, CenterY, CenterX + 4, CenterY, $CCCCCC, Alpha, 2.0);
+  // Фон кнопки
+  DrawCircle2D_Fill(CenterX, CenterY, Size, ButtonColor, Alpha);
+  DrawCircle2D(CenterX, CenterY, Size, COLOR_BORDER_LIGHT, Alpha div 3);
+  
+  // Иконка
+  DrawLine2D(CenterX - 5, CenterY, CenterX + 5, CenterY, IconColor, Alpha, 2.0);
   if not Expanded then
-    DrawLine2D(CenterX, CenterY - 4, CenterX, CenterY + 4, $CCCCCC, Alpha, 2.0);
+    DrawLine2D(CenterX, CenterY - 5, CenterX, CenterY + 5, IconColor, Alpha, 2.0);
 end;
 
-procedure DrawCheckbox(X, Y: Integer; Text: string; Checked: Boolean; Alpha: Integer);
+// Современный чекбокс
+procedure DrawModernCheckbox(X, Y: Integer; Text: string; Checked: Boolean; Alpha: Integer; HoverProgress: Single = 0.0);
 var
-  BgColor, TextColor: Integer;
+  BgColor, BorderColor, TextColor, CheckColor: Integer;
 begin
   if Checked then
   begin
-    BgColor := $0066FF;
-    TextColor := $FFFFFF;
+    BgColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, HoverProgress);
+    BorderColor := BgColor;
+    TextColor := COLOR_ON_SURFACE;
+    CheckColor := COLOR_ON_PRIMARY;
   end
   else
   begin
-    BgColor := $2A2A2A;
-    TextColor := $BBBBBB;
+    BgColor := LerpColor(COLOR_SURFACE, COLOR_SURFACE_VARIANT, HoverProgress);
+    BorderColor := LerpColor(COLOR_BORDER, COLOR_BORDER_LIGHT, HoverProgress);
+    TextColor := COLOR_ON_SURFACE;
+    CheckColor := COLOR_ON_PRIMARY;
   end;
   
-  DrawRectangle2D(X, Y, CHECKBOX_SIZE, CHECKBOX_SIZE, BgColor, Alpha, True);
-  DrawRectangle2D(X, Y, CHECKBOX_SIZE, CHECKBOX_SIZE, $444444, Alpha, False);
+  // Фон чекбокса
+  DrawStyledRect(X, Y, CHECKBOX_SIZE, CHECKBOX_SIZE, BgColor, Alpha, True, BorderColor);
   
+  // Галочка
   if Checked then
   begin
-    DrawLine2D(X + 4, Y + 8, X + 7, Y + 11, $FFFFFF, Alpha, 2.0);
-    DrawLine2D(X + 7, Y + 11, X + 12, Y + 5, $FFFFFF, Alpha, 2.0);
+    DrawLine2D(X + 4, Y + 9, X + 7, Y + 12, CheckColor, Alpha, 2.0);
+    DrawLine2D(X + 7, Y + 12, X + 13, Y + 6, CheckColor, Alpha, 2.0);
   end;
   
-  DrawText(X + CHECKBOX_SIZE + 8, Y - 1, Text, TextColor, Alpha);
+  // Текст
+  DrawModernText(X + CHECKBOX_SIZE + 10, Y - 1, Text, TextColor, Alpha, 0.75);
 end;
 
-procedure DrawSlider(X, Y: Integer; var Slider: TSlider; Text: string; Alpha: Integer);
+// Современный слайдер
+procedure DrawModernSlider(X, Y: Integer; var Slider: TSlider; Text: string; Alpha: Integer; WinScale: Single = 1.0);
 var
   Progress: Single;
   SliderX: Integer;
   ValueText: string;
+  TrackColor, ActiveColor, ThumbColor: Integer;
+  ThumbSize: Integer;
+  ScaledWidth: Integer;
 begin
   if Alpha <= 0 then Exit;
   
+  ScaledWidth := Round(SLIDER_WIDTH * WinScale);
   Progress := (Slider.Value - Slider.MinValue) / (Slider.MaxValue - Slider.MinValue);
-  SliderX := X + Round(Progress * SLIDER_WIDTH);
+  SliderX := X + Round(Progress * ScaledWidth);
   
   ValueText := FormatValue(Slider.Value);
   
-  DrawText2D(0, X, Y - 20, Text + ': ' + ValueText, $FFFFFF, Alpha, 0.55);
+  // Цвета в зависимости от состояния
+  TrackColor := COLOR_SURFACE_VARIANT;
+  ActiveColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, Slider.HoverProgress);
+  ThumbColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, Slider.HoverProgress);
+  ThumbSize := Round(8 + Slider.HoverProgress * 3);
   
-  // Трек
-  DrawRectangle2D(X, Y + 8, SLIDER_WIDTH, 6, $1A1A1A, Alpha, True);
+  // Заголовок и значение
+  DrawModernText(X, Y - 22, Text + ': ' + ValueText, COLOR_ON_SURFACE, Alpha, 0.7);
+  
+  // Трек слайдера
+  DrawStyledRect(X, Y + 8, ScaledWidth, 6, TrackColor, Alpha, True, COLOR_BORDER);
   
   // Активная часть
   if Progress > 0 then
-    DrawRectangle2D(X, Y + 8, Round(Progress * SLIDER_WIDTH), 6, $0066FF, Alpha, True);
+    DrawStyledRect(X, Y + 8, Round(Progress * ScaledWidth), 6, ActiveColor, Alpha, True, ActiveColor);
   
   // Ползунок
-  DrawCircle2D_Fill(SliderX, Y + 11, 12, $0088FF, Alpha);
-  DrawCircle2D_Fill(SliderX, Y + 11, 8, $00AAFF, Alpha);
+  DrawCircle2D_Fill(SliderX, Y + 11, ThumbSize + 2, COLOR_SURFACE, Alpha);
+  DrawCircle2D_Fill(SliderX, Y + 11, ThumbSize, ThumbColor, Alpha);
+  DrawCircle2D(SliderX, Y + 11, ThumbSize + 1, COLOR_BORDER_LIGHT, Alpha div 3);
 end;
 
-procedure DrawToggle(X, Y: Integer; Text: string; Enabled: Boolean; Alpha: Integer; HasExpandButton: Boolean = False; ExpandButtonX: Integer = 0; Expanded: Boolean = False);
+// Современная кнопка переключения
+procedure DrawModernToggle(X, Y: Integer; Text: string; Enabled: Boolean; Alpha: Integer; HasExpandButton: Boolean = False; ExpandButtonX: Integer = 0; Expanded: Boolean = False; HoverProgress: Single = 0.0);
 var
-  BgColor, TextColor: Integer;
+  BgColor, BorderColor, TextColor: Integer;
+  TextX: Integer;
 begin
   if Enabled then
   begin
-    BgColor := $0066FF;
-    TextColor := $FFFFFF;
+    BgColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, HoverProgress);
+    BorderColor := BgColor;
+    TextColor := COLOR_ON_PRIMARY;
   end
   else
   begin
-    BgColor := $2A2A2A;
-    TextColor := $BBBBBB;
+    BgColor := LerpColor(COLOR_SURFACE, COLOR_SURFACE_VARIANT, HoverProgress);
+    BorderColor := LerpColor(COLOR_BORDER, COLOR_BORDER_LIGHT, HoverProgress);
+    TextColor := LerpColor(COLOR_ON_SURFACE, COLOR_ON_SURFACE, HoverProgress);
   end;
   
-  DrawRectangle2D(X, Y, 220, ITEM_HEIGHT, BgColor, Alpha, True);
-  DrawRectangle2D(X, Y, 220, ITEM_HEIGHT, $444444, Alpha, False);
+  // Фон кнопки
+  DrawStyledRect(X, Y, 220, ITEM_HEIGHT, BgColor, Alpha, True, BorderColor);
   
-  DrawText(X + 12, Y, Text, TextColor, Alpha);
+  // Текст
+  TextX := X + 16;
+  DrawModernText(TextX, Y + 6, Text, TextColor, Alpha, 0.8);
   
+  // Кнопка развертывания
   if HasExpandButton then
-    DrawExpandButton(ExpandButtonX, Y + 4, Expanded, Alpha);
+    DrawModernExpandButton(ExpandButtonX, Y + 6, Expanded, Alpha, HoverProgress);
 end;
 
-procedure DrawLanguageButton(X, Y, Width, Height: Integer; Text: string; Alpha: Integer; Selected: Boolean = False);
+// Современная кнопка языка
+procedure DrawModernLanguageButton(X, Y, Width, Height: Integer; Text: string; Alpha: Integer; Selected: Boolean = False; HoverProgress: Single = 0.0);
 var
-  BgColor, TextColor: Integer;
+  BgColor, BorderColor, TextColor: Integer;
   TextWidth, TextX: Integer;
 begin
   if Selected then
   begin
-    BgColor := $0066FF;
-    TextColor := $FFFFFF;
+    BgColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, HoverProgress);
+    BorderColor := BgColor;
+    TextColor := COLOR_ON_PRIMARY;
   end
   else
   begin
-    BgColor := $404040;
-    TextColor := $CCCCCC;
+    BgColor := LerpColor(COLOR_SURFACE, COLOR_SURFACE_VARIANT, HoverProgress);
+    BorderColor := LerpColor(COLOR_BORDER, COLOR_BORDER_LIGHT, HoverProgress);
+    TextColor := COLOR_ON_SURFACE;
   end;
   
-  DrawRectangle2D(X, Y, Width, Height, BgColor, Alpha, True);
-  DrawRectangle2D(X, Y, Width, Height, $666666, Alpha, False);
+  // Фон кнопки
+  DrawStyledRect(X, Y, Width, Height, BgColor, Alpha, True, BorderColor);
   
-  // Центрируем текст
-  TextWidth := Length(Text) * 7;
+  // Центрированный текст
+  TextWidth := Length(Text) * 8;
   TextX := X + (Width - TextWidth) div 2;
   
-  DrawText(TextX, Y + (Height - 20) div 2, Text, TextColor, Alpha);
+  DrawModernText(TextX, Y + (Height - 20) div 2, Text, TextColor, Alpha, 0.75);
 end;
 
-procedure DrawWindow(var Win: TWindow; WindowType: Integer);
+// Главная функция отрисовки окна с transform эффектами
+procedure DrawTransformWindow(var Win: TWindow; WindowType: Integer);
 var
   Alpha: Integer;
   ContentY: Integer;
@@ -1602,6 +1852,11 @@ var
   ScaledWidth, ScaledHeight: Integer;
   ScaledX, ScaledY: Integer;
   OffsetX, OffsetY: Integer;
+  HeaderGradientStart, HeaderGradientEnd: Integer;
+  // Transform координаты
+  TransformX1, TransformY1, TransformX2, TransformY2: Integer;
+  TransformX3, TransformY3, TransformX4, TransformY4: Integer;
+  CenterX, CenterY: Integer;
 begin
   Alpha := Round(Win.Alpha * 255);
   if Alpha <= 0 then Exit;
@@ -1625,18 +1880,18 @@ begin
     begin
       TotalHeight := TotalHeight + ITEM_HEIGHT;
       if Settings.FreecamSection.AnimProgress > 0.01 then
-        TotalHeight := TotalHeight + Round(140 * Settings.FreecamSection.AnimProgress) + MARGIN;
+        TotalHeight := TotalHeight + Round(150 * Settings.FreecamSection.AnimProgress) + MARGIN;
       
       TotalHeight := TotalHeight + ITEM_HEIGHT;
       if Settings.MainCameraSection.AnimProgress > 0.01 then
-        TotalHeight := TotalHeight + Round(180 * Settings.MainCameraSection.AnimProgress) + MARGIN;
+        TotalHeight := TotalHeight + Round(200 * Settings.MainCameraSection.AnimProgress) + MARGIN;
     end;
     
     1: // WORLD окно
     begin
       TotalHeight := TotalHeight + ITEM_HEIGHT;
       if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
-        TotalHeight := TotalHeight + Round(150 * Settings.MaxVisibleDistanceSection.AnimProgress) + MARGIN;
+        TotalHeight := TotalHeight + Round(180 * Settings.MaxVisibleDistanceSection.AnimProgress) + MARGIN;
       
       TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;
     end;
@@ -1648,7 +1903,7 @@ begin
     
     3: // MENU окно
     begin
-      TotalHeight := 180;
+      TotalHeight := 220;
     end;
   end;
   
@@ -1657,17 +1912,44 @@ begin
   OffsetY := (Win.Height - ScaledHeight) div 2;
   ScaledY := Win.Y + OffsetY;
   
-  // Тень (с учётом масштаба)
-  DrawRectangle2D(ScaledX + 4, ScaledY + 4, ScaledWidth, ScaledHeight, $000000, Alpha div 4, True);
+  // Центр для трансформации
+  CenterX := ScaledX + ScaledWidth div 2;
+  CenterY := ScaledY + ScaledHeight div 2;
   
-  // Заголовок (с учётом масштаба)
-  DrawRectangle2D(ScaledX, ScaledY, ScaledWidth, Round(HEADER_HEIGHT * Win.Scale), $404080, Alpha, True);
-  DrawRectangle2D(ScaledX, ScaledY, ScaledWidth, Round(HEADER_HEIGHT * Win.Scale), $6060A0, Alpha, False);
-  DrawText(ScaledX + Round(12 * Win.Scale), ScaledY + Round(11 * Win.Scale), Win.Title, $FFFFFF, Alpha);
+  // Вычисляем углы прямоугольника с учетом трансформации
+  TransformX1 := ScaledX;
+  TransformY1 := ScaledY;
+  TransformX2 := ScaledX + ScaledWidth;
+  TransformY2 := ScaledY;
+  TransformX3 := ScaledX + ScaledWidth;
+  TransformY3 := ScaledY + ScaledHeight;
+  TransformX4 := ScaledX;
+  TransformY4 := ScaledY + ScaledHeight;
   
-  // Тело
-  DrawRectangle2D(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale), ScaledWidth, ScaledHeight - Round(HEADER_HEIGHT * Win.Scale), $2A2A2A, Alpha, True);
-  DrawRectangle2D(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale), ScaledWidth, ScaledHeight - Round(HEADER_HEIGHT * Win.Scale), $404040, Alpha, False);
+  // Применяем трансформацию к углам
+  TransformCoords(TransformX1, TransformY1, CenterX, CenterY, 1.0, Win.Rotation);
+  TransformCoords(TransformX2, TransformY2, CenterX, CenterY, 1.0, Win.Rotation);
+  TransformCoords(TransformX3, TransformY3, CenterX, CenterY, 1.0, Win.Rotation);
+  TransformCoords(TransformX4, TransformY4, CenterX, CenterY, 1.0, Win.Rotation);
+  
+  // === СОВРЕМЕННАЯ ТЕНЬ ===
+  DrawShadow(ScaledX, ScaledY, ScaledWidth, ScaledHeight, Round(Win.ShadowIntensity * Alpha), Win.ShadowIntensity);
+  
+  // === ГРАДИЕНТНЫЙ ЗАГОЛОВОК ===
+  HeaderGradientStart := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, 0.3);
+  HeaderGradientEnd := LerpColor(COLOR_PRIMARY_VARIANT, COLOR_PRIMARY, 0.2);
+  
+  // Основной фон заголовка
+  DrawStyledRect(ScaledX, ScaledY, ScaledWidth, Round(HEADER_HEIGHT * Win.Scale), HeaderGradientStart, Alpha, True, COLOR_BORDER_LIGHT);
+  
+  // Имитация градиента через несколько слоев
+  DrawStyledRect(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale) - 8, ScaledWidth, 8, HeaderGradientEnd, Alpha div 2, True, 0);
+  
+  // Текст заголовка
+  DrawModernText(ScaledX + Round(16 * Win.Scale), ScaledY + Round(12 * Win.Scale), Win.Title, COLOR_ON_PRIMARY, Alpha, 0.9);
+  
+  // === ТЕЛО ОКНА ===
+  DrawStyledRect(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale), ScaledWidth, ScaledHeight - Round(HEADER_HEIGHT * Win.Scale), COLOR_BACKGROUND, Alpha, True, COLOR_BORDER);
   
   ContentY := ScaledY + Round(HEADER_HEIGHT * Win.Scale) + Round(MARGIN * Win.Scale);
   
@@ -1675,52 +1957,54 @@ begin
     0: // RENDER окно
     begin
       // Freecam
-      ExpandButtonX := ScaledX + Round(200 * Win.Scale);
-      DrawToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FreeCameraText'), Settings.Freecam, Alpha, True, ExpandButtonX, Settings.FreecamSection.Expanded);
+      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FreeCameraText'), Settings.Freecam, Alpha, True, ExpandButtonX, Settings.FreecamSection.Expanded, Settings.FreecamSection.AnimProgress);
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
       // Freecam секция
       if Settings.FreecamSection.AnimProgress > 0.01 then
       begin
-        SectionHeight := Round(140 * Settings.FreecamSection.AnimProgress * Win.Scale);
-        DrawRectangle2D(ScaledX + Round((MARGIN + 10) * Win.Scale), ContentY, Round(210 * Win.Scale), SectionHeight, $202020, Alpha, True);
-        DrawRectangle2D(ScaledX + Round((MARGIN + 10) * Win.Scale), ContentY, Round(210 * Win.Scale), SectionHeight, $353535, Alpha, False);
+        SectionHeight := Round(150 * Settings.FreecamSection.AnimProgress * Win.Scale);
         
-        if SectionHeight > Round(30 * Win.Scale) then
+        // Фон секции
+        DrawStyledRect(ScaledX + Round((MARGIN + 12) * Win.Scale), ContentY, Round(240 * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+        
+        if SectionHeight > Round(40 * Win.Scale) then
         begin
-          DrawSlider(ScaledX + Round((MARGIN + 20) * Win.Scale), ContentY + Round(20 * Win.Scale), Settings.BasespeedSlider, GetText('BaseSpeedText'), Alpha);
-          DrawSlider(ScaledX + Round((MARGIN + 20) * Win.Scale), ContentY + Round(60 * Win.Scale), Settings.FastspeedSlider, GetText('FastSpeedText'), Alpha);
+          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.BasespeedSlider, GetText('BaseSpeedText'), Alpha, Win.Scale);
+          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(75 * Win.Scale), Settings.FastspeedSlider, GetText('FastSpeedText'), Alpha, Win.Scale);
         end;
         
         Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
       
       // Main Camera
-      ExpandButtonX := ScaledX + Round(200 * Win.Scale);
-      DrawToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MainCameraText'), Settings.MainCamera, Alpha, True, ExpandButtonX, Settings.MainCameraSection.Expanded);
+      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MainCameraText'), Settings.MainCamera, Alpha, True, ExpandButtonX, Settings.MainCameraSection.Expanded, Settings.MainCameraSection.AnimProgress);
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
       // Main Camera секция
       if Settings.MainCameraSection.AnimProgress > 0.01 then
       begin
-        SectionHeight := Round(180 * Settings.MainCameraSection.AnimProgress * Win.Scale);
-        DrawRectangle2D(ScaledX + Round((MARGIN + 10) * Win.Scale), ContentY, Round(210 * Win.Scale), SectionHeight, $202020, Alpha, True);
-        DrawRectangle2D(ScaledX + Round((MARGIN + 10) * Win.Scale), ContentY, Round(210 * Win.Scale), SectionHeight, $353535, Alpha, False);
+        SectionHeight := Round(200 * Settings.MainCameraSection.AnimProgress * Win.Scale);
         
-        if SectionHeight > Round(30 * Win.Scale) then
-          DrawSlider(ScaledX + Round((MARGIN + 20) * Win.Scale), ContentY + Round(20 * Win.Scale), Settings.StepForwardSlider, GetText('StepForwardText'), Alpha);
+        // Фон секции
+        DrawStyledRect(ScaledX + Round((MARGIN + 12) * Win.Scale), ContentY, Round(240 * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
         
-        if SectionHeight > Round(60 * Win.Scale) then
-          DrawCheckbox(ScaledX + Round((MARGIN + 20) * Win.Scale), ContentY + Round(50 * Win.Scale), GetText('NewZoomText'), Settings.NewViewAngle, Alpha);
+        if SectionHeight > Round(40 * Win.Scale) then
+          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.StepForwardSlider, GetText('StepForwardText'), Alpha, Win.Scale);
         
-        if (SectionHeight > Round(90 * Win.Scale)) and Settings.NewViewAngle then
-          DrawSlider(ScaledX + Round((MARGIN + 20) * Win.Scale), ContentY + Round(80 * Win.Scale), Settings.ViewAngleSlider, GetText('ValueText'), Alpha);
+        if SectionHeight > Round(70 * Win.Scale) then
+          DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(60 * Win.Scale), GetText('NewZoomText'), Settings.NewViewAngle, Alpha);
         
-        if SectionHeight > Round(120 * Win.Scale) then
-          DrawCheckbox(ScaledX + Round((MARGIN + 20) * Win.Scale), ContentY + Round(110 * Win.Scale), GetText('SensitivityText'), Settings.CameraSensitivity, Alpha);
+        if (SectionHeight > Round(110 * Win.Scale)) and Settings.NewViewAngle then
+          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(95 * Win.Scale), Settings.ViewAngleSlider, GetText('ValueText'), Alpha, Win.Scale);
         
-        if (SectionHeight > Round(150 * Win.Scale)) and Settings.CameraSensitivity then
-          DrawSlider(ScaledX + Round((MARGIN + 20) * Win.Scale), ContentY + Round(140 * Win.Scale), Settings.CameraSensitivitySlider, GetText('ValueText'), Alpha);
+        if SectionHeight > Round(140 * Win.Scale) then
+          DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(130 * Win.Scale), GetText('SensitivityText'), Settings.CameraSensitivity, Alpha);
+        
+        if (SectionHeight > Round(170 * Win.Scale)) and Settings.CameraSensitivity then
+          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(165 * Win.Scale), Settings.CameraSensitivitySlider, GetText('ValueText'), Alpha, Win.Scale);
         
         Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
@@ -1729,85 +2013,95 @@ begin
     1: // WORLD окно
     begin
       // Max Visible Distance
-      ExpandButtonX := ScaledX + Round(200 * Win.Scale);
-      DrawToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MaxDistanceText'), Settings.MaxVisibleDistance, Alpha, True, ExpandButtonX, Settings.MaxVisibleDistanceSection.Expanded);
+      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MaxDistanceText'), Settings.MaxVisibleDistance, Alpha, True, ExpandButtonX, Settings.MaxVisibleDistanceSection.Expanded, Settings.MaxVisibleDistanceSection.AnimProgress);
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
       // Max Visible Distance секция
       if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
       begin
-        SectionHeight := Round(150 * Settings.MaxVisibleDistanceSection.AnimProgress * Win.Scale);
-        DrawRectangle2D(ScaledX + Round((MARGIN + 10) * Win.Scale), ContentY, Round(210 * Win.Scale), SectionHeight, $202020, Alpha, True);
-        DrawRectangle2D(ScaledX + Round((MARGIN + 10) * Win.Scale), ContentY, Round(210 * Win.Scale), SectionHeight, $353535, Alpha, False);
+        SectionHeight := Round(180 * Settings.MaxVisibleDistanceSection.AnimProgress * Win.Scale);
         
-        if SectionHeight > Round(30 * Win.Scale) then
+        // Фон секции
+        DrawStyledRect(ScaledX + Round((MARGIN + 12) * Win.Scale), ContentY, Round(240 * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+        
+        if SectionHeight > Round(40 * Win.Scale) then
         begin
-          DrawSlider(ScaledX + Round((MARGIN + 20) * Win.Scale), ContentY + Round(20 * Win.Scale), Settings.MaxVisibleDistanceSlider, GetText('DistanceText'), Alpha);
+          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.MaxVisibleDistanceSlider, GetText('DistanceText'), Alpha, Win.Scale);
           
-          if SectionHeight > Round(60 * Win.Scale) then
+          if SectionHeight > Round(70 * Win.Scale) then
           begin
-            DrawCheckbox(ScaledX + Round((MARGIN + 20) * Win.Scale), ContentY + Round(50 * Win.Scale), GetText('WiresText'), Settings.ShowWires, Alpha);
-            DrawCheckbox(ScaledX + Round((MARGIN + 20) * Win.Scale), ContentY + Round(75 * Win.Scale), GetText('DistantModelsText'), Settings.ShowDistantModels, Alpha);
+            DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(60 * Win.Scale), GetText('WiresText'), Settings.ShowWires, Alpha);
+            DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(90 * Win.Scale), GetText('DistantModelsText'), Settings.ShowDistantModels, Alpha);
           end;
-          if SectionHeight > Round(100 * Win.Scale) then
-            DrawCheckbox(ScaledX + Round((MARGIN + 20) * Win.Scale), ContentY + Round(100 * Win.Scale), GetText('TrafficLightsText'), Settings.ShowTrafficLights, Alpha);
+          if SectionHeight > Round(120 * Win.Scale) then
+            DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(120 * Win.Scale), GetText('TrafficLightsText'), Settings.ShowTrafficLights, Alpha);
         end;
         
         Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
       
       // New Sky
-      DrawToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('NewSkyText'), Settings.NewSky, Alpha);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('NewSkyText'), Settings.NewSky, Alpha);
     end;
     
     2: // LOCOMOTIVE окно
     begin
       // Исправления КЛУБ
-      DrawToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('ClubFixesText'), Settings.NewClubPositions, Alpha);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('ClubFixesText'), Settings.NewClubPositions, Alpha);
     end;
     
     3: // MENU окно
     begin
       // Заголовок языка
-      DrawText(ScaledX + Round((MARGIN + 20) * Win.Scale), ContentY + Round(10 * Win.Scale), GetText('LanguageText'), $FFFFFF, Alpha);
-      Inc(ContentY, Round(40 * Win.Scale));
+      DrawModernText(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(15 * Win.Scale), GetText('LanguageText'), COLOR_ON_SURFACE, Alpha, 0.85);
+      Inc(ContentY, Round(50 * Win.Scale));
       
-      // Кнопки языков
-      DrawLanguageButton(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(80 * Win.Scale), Round(30 * Win.Scale), GetText('RussianText'), Alpha, CurrentLanguage = langRussian);
-      DrawLanguageButton(ScaledX + Round((MARGIN + 90) * Win.Scale), ContentY, Round(80 * Win.Scale), Round(30 * Win.Scale), GetText('UkrainianText'), Alpha, CurrentLanguage = langUkrainian);
-      DrawLanguageButton(ScaledX + Round((MARGIN + 180) * Win.Scale), ContentY, Round(80 * Win.Scale), Round(30 * Win.Scale), GetText('EnglishText'), Alpha, CurrentLanguage = langEnglish);
+      // Кнопки языков в ряд
+      DrawModernLanguageButton(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale), GetText('RussianText'), Alpha, CurrentLanguage = langRussian);
+      DrawModernLanguageButton(ScaledX + Round((MARGIN + 100) * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale), GetText('UkrainianText'), Alpha, CurrentLanguage = langUkrainian);
+      DrawModernLanguageButton(ScaledX + Round((MARGIN + 200) * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale), GetText('EnglishText'), Alpha, CurrentLanguage = langEnglish);
     end;
   end;
 end;
 
-procedure DrawInfoBar;
+// Современная информационная панель
+procedure DrawModernInfoBar;
 var
   Alpha, BarWidth, BarHeight, BarX, BarY: Integer;
   InfoText: string;
+  GradientColor1, GradientColor2: Integer;
 begin
-  Alpha := Round(RenderWindow.Alpha * 255);
+  Alpha := Round(RenderWindow.Alpha * 200); // Немного прозрачнее чем окна
   if Alpha <= 0 then Exit;
   
   InfoText := GetText('InfoText');
-  BarWidth := 320;
-  BarHeight := 30;
-  BarX := 10;
-  BarY := InitResY - BarHeight - 10;
+  BarWidth := 400;
+  BarHeight := 38;
+  BarX := 16;
+  BarY := InitResY - BarHeight - 16;
+  
+  GradientColor1 := COLOR_SURFACE;
+  GradientColor2 := COLOR_SURFACE_VARIANT;
   
   // Тень
-  DrawRectangle2D(BarX + 3, BarY + 3, BarWidth, BarHeight, $000000, Alpha div 4, True);
+  DrawShadow(BarX, BarY, BarWidth, BarHeight, Alpha div 2, 0.6);
   
-  // Основной прямоугольник в стиле заголовка окна
-  DrawRectangle2D(BarX, BarY, BarWidth, BarHeight, $404080, Alpha, True);
-  DrawRectangle2D(BarX, BarY, BarWidth, BarHeight, $6060A0, Alpha, False);
+  // Основной фон с градиентом
+  DrawStyledRect(BarX, BarY, BarWidth, BarHeight, GradientColor1, Alpha, True, COLOR_BORDER_LIGHT);
+  DrawStyledRect(BarX, BarY + BarHeight - 8, BarWidth, 8, GradientColor2, Alpha div 2, True, 0);
   
-  // Текст чуть повыше
-  DrawText(BarX + 8, BarY + 3, InfoText, $FFFFFF, Alpha);
+  // Иконка (простая точка)
+  DrawCircle2D_Fill(BarX + 16, BarY + BarHeight div 2, 5, COLOR_ACCENT, Alpha);
+  
+  // Текст
+  DrawModernText(BarX + 32, BarY + 9, InfoText, COLOR_ON_SURFACE, Alpha, 0.8);
 end;
 
 procedure DrawCheatMenu; stdcall;
 var
   BackgroundAlpha: Integer;
+  OverlayColor: Integer;
 begin
   if not MenuVisible then Exit;
   
@@ -1817,18 +2111,20 @@ begin
 
   Begin2D;
   try
-    // Затемнение фона
+    // Современное затемнение фона
     if Settings.BrightnessSlider.Value > 0 then
     begin
-      BackgroundAlpha := Round(Settings.BrightnessSlider.Value * RenderWindow.Alpha);
-      DrawRectangle2D(0, 0, InitResX, InitResY, $000011, BackgroundAlpha, True);
+      BackgroundAlpha := Round(Settings.BrightnessSlider.Value * RenderWindow.Alpha * 0.7);
+      OverlayColor := LerpColor(COLOR_BACKGROUND, COLOR_SHADOW, 0.3);
+      DrawRectangle2D(0, 0, InitResX, InitResY, OverlayColor, BackgroundAlpha, True);
     end;
     
-    DrawWindow(RenderWindow, 0);      // RENDER окно
-    DrawWindow(WorldWindow, 1);       // WORLD окно  
-    DrawWindow(LocomotiveWindow, 2);  // LOCOMOTIVE окно
-    DrawWindow(MenuWindow, 3);        // MENU окно
-    DrawInfoBar;
+    // Отрисовка окон с transform эффектами
+    DrawTransformWindow(RenderWindow, 0);      // RENDER окно
+    DrawTransformWindow(WorldWindow, 1);       // WORLD окно  
+    DrawTransformWindow(LocomotiveWindow, 2);  // LOCOMOTIVE окно
+    DrawTransformWindow(MenuWindow, 3);        // MENU окно
+    DrawModernInfoBar;
   finally
     End2D;
   end;
@@ -1885,14 +2181,21 @@ procedure HandleMenuHover(X, Y: Integer); stdcall;
 begin
   if not MenuVisible then Exit;
   
-  // Обработка драггинга окон
+  // Обработка драггинга окон с анимацией расширения
   if RenderWindow.IsDragging then
   begin
     RenderWindow.X := X - RenderWindow.DragOffsetX;
     RenderWindow.Y := Y - RenderWindow.DragOffsetY;
-    // Сохраняем новую позицию как оригинальную для анимации
     RenderWindow.OriginalX := RenderWindow.X;
     RenderWindow.OriginalY := RenderWindow.Y;
+    // Анимация расширения при перетаскивании
+    RenderWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
+    RenderWindow.TargetShadowIntensity := 1.5;
+  end
+  else
+  begin
+    RenderWindow.TargetDragWidthExpansion := 0.0;
+    RenderWindow.TargetShadowIntensity := 0.8;
   end;
   
   if WorldWindow.IsDragging then
@@ -1901,6 +2204,13 @@ begin
     WorldWindow.Y := Y - WorldWindow.DragOffsetY;
     WorldWindow.OriginalX := WorldWindow.X;
     WorldWindow.OriginalY := WorldWindow.Y;
+    WorldWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
+    WorldWindow.TargetShadowIntensity := 1.5;
+  end
+  else
+  begin
+    WorldWindow.TargetDragWidthExpansion := 0.0;
+    WorldWindow.TargetShadowIntensity := 0.8;
   end;
   
   if LocomotiveWindow.IsDragging then
@@ -1909,6 +2219,13 @@ begin
     LocomotiveWindow.Y := Y - LocomotiveWindow.DragOffsetY;
     LocomotiveWindow.OriginalX := LocomotiveWindow.X;
     LocomotiveWindow.OriginalY := LocomotiveWindow.Y;
+    LocomotiveWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
+    LocomotiveWindow.TargetShadowIntensity := 1.5;
+  end
+  else
+  begin
+    LocomotiveWindow.TargetDragWidthExpansion := 0.0;
+    LocomotiveWindow.TargetShadowIntensity := 0.8;
   end;
   
   if MenuWindow.IsDragging then
@@ -1917,25 +2234,32 @@ begin
     MenuWindow.Y := Y - MenuWindow.DragOffsetY;
     MenuWindow.OriginalX := MenuWindow.X;
     MenuWindow.OriginalY := MenuWindow.Y;
+    MenuWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
+    MenuWindow.TargetShadowIntensity := 1.5;
+  end
+  else
+  begin
+    MenuWindow.TargetDragWidthExpansion := 0.0;
+    MenuWindow.TargetShadowIntensity := 0.8;
   end;
   
   // Обработка драггинга слайдеров
   if Settings.BrightnessSlider.IsDragging then
-    HandleSliderDrag(X, Settings.BrightnessSlider, RenderWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.BrightnessSlider, RenderWindow.X + MARGIN + 24);
   if Settings.BasespeedSlider.IsDragging then
-    HandleSliderDrag(X, Settings.BasespeedSlider, RenderWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.BasespeedSlider, RenderWindow.X + MARGIN + 24);
   if Settings.FastspeedSlider.IsDragging then
-    HandleSliderDrag(X, Settings.FastspeedSlider, RenderWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.FastspeedSlider, RenderWindow.X + MARGIN + 24);
   if Settings.TurnspeedSlider.IsDragging then
-    HandleSliderDrag(X, Settings.TurnspeedSlider, RenderWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.TurnspeedSlider, RenderWindow.X + MARGIN + 24);
   if Settings.StepForwardSlider.IsDragging then
-    HandleSliderDrag(X, Settings.StepForwardSlider, RenderWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.StepForwardSlider, RenderWindow.X + MARGIN + 24);
   if Settings.MaxVisibleDistanceSlider.IsDragging then
-    HandleSliderDrag(X, Settings.MaxVisibleDistanceSlider, WorldWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.MaxVisibleDistanceSlider, WorldWindow.X + MARGIN + 24);
   if Settings.ViewAngleSlider.IsDragging then
-    HandleSliderDrag(X, Settings.ViewAngleSlider, RenderWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.ViewAngleSlider, RenderWindow.X + MARGIN + 24);
   if Settings.CameraSensitivitySlider.IsDragging then
-    HandleSliderDrag(X, Settings.CameraSensitivitySlider, RenderWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.CameraSensitivitySlider, RenderWindow.X + MARGIN + 24);
 end;
 
 procedure HandleMenuClick(X, Y: Integer); stdcall;
@@ -1963,10 +2287,10 @@ begin
     end;
     
     // Кнопки языков
-    Inc(ContentY, 40); // Пропускаем заголовок
+    Inc(ContentY, 50); // Пропускаем заголовок
     
     // Русский
-    if InRect(X, Y, MenuWindow.X + MARGIN, ContentY, 80, 30) then
+    if InRect(X, Y, MenuWindow.X + MARGIN, ContentY, 90, 35) then
     begin
       CurrentLanguage := langRussian;
       SaveConfig;
@@ -1974,7 +2298,7 @@ begin
     end;
     
     // Украинский
-    if InRect(X, Y, MenuWindow.X + MARGIN + 90, ContentY, 80, 30) then
+    if InRect(X, Y, MenuWindow.X + MARGIN + 100, ContentY, 90, 35) then
     begin
       CurrentLanguage := langUkrainian;
       SaveConfig;
@@ -1982,7 +2306,7 @@ begin
     end;
     
     // Английский
-    if InRect(X, Y, MenuWindow.X + MARGIN + 180, ContentY, 80, 30) then
+    if InRect(X, Y, MenuWindow.X + MARGIN + 200, ContentY, 90, 35) then
     begin
       CurrentLanguage := langEnglish;
       SaveConfig;
@@ -2005,7 +2329,7 @@ begin
     end;
     
     // Freecam expand button
-    if InRect(X, Y, RenderWindow.X + 200, ContentY + 4, BUTTON_SIZE, BUTTON_SIZE) then
+    if InRect(X, Y, RenderWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
       Settings.FreecamSection.Expanded := not Settings.FreecamSection.Expanded;
       Exit;
@@ -2018,13 +2342,8 @@ begin
       if Settings.Freecam then Settings.FreecamSection.Expanded := True;
   
       SaveConfig;
-  
-      // ИСПРАВЛЯЕМ: вызываем синхронизацию ПОСЛЕ сохранения
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
-  
-      // ДОБАВЛЯЕМ ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ
-      LoadConfigForced; // Принудительно перечитываем конфиг
-  
+      LoadConfigForced;
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
@@ -2033,15 +2352,15 @@ begin
     FreecamSectionY := ContentY;
     if Settings.FreecamSection.AnimProgress > 0.01 then
     begin
-      SectionHeight := Round(140 * Settings.FreecamSection.AnimProgress);
-      if SectionHeight > 30 then
+      SectionHeight := Round(150 * Settings.FreecamSection.AnimProgress);
+      if SectionHeight > 40 then
       begin
-        if InRect(X, Y, RenderWindow.X + MARGIN + 20, FreecamSectionY + 10, SLIDER_WIDTH + 25, 40) then
+        if InRect(X, Y, RenderWindow.X + MARGIN + 24, FreecamSectionY + 15, SLIDER_WIDTH + 30, 50) then
         begin
           Settings.BasespeedSlider.IsDragging := True;
           Exit;
         end;
-        if InRect(X, Y, RenderWindow.X + MARGIN + 20, FreecamSectionY + 50, SLIDER_WIDTH + 25, 40) then
+        if InRect(X, Y, RenderWindow.X + MARGIN + 24, FreecamSectionY + 65, SLIDER_WIDTH + 30, 50) then
         begin
           Settings.FastspeedSlider.IsDragging := True;
           Exit;
@@ -2051,7 +2370,7 @@ begin
     end;
     
     // Main Camera expand button
-    if InRect(X, Y, RenderWindow.X + 200, ContentY + 4, BUTTON_SIZE, BUTTON_SIZE) then
+    if InRect(X, Y, RenderWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
       Settings.MainCameraSection.Expanded := not Settings.MainCameraSection.Expanded;
       Exit;
@@ -2065,13 +2384,11 @@ begin
         Settings.MainCameraSection.Expanded := True
       else
       begin
-        // При выключении MainCamera - отключаем патч угла обзора и чувствительности
         if ViewAnglePatched then
           RemoveViewAnglePatch;
         RestoreCameraSensitivity;
       end;
       
-      // При включении MainCamera - проверяем нужно ли включить патчи
       if Settings.MainCamera then
       begin
         if Settings.NewViewAngle then
@@ -2086,25 +2403,24 @@ begin
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
     
-    // Main Camera section (УВЕЛИЧЕНА СО 120 ДО 180)
+    // Main Camera section
     MainCameraSectionY := ContentY;
     if Settings.MainCameraSection.AnimProgress > 0.01 then
     begin
-      SectionHeight := Round(180 * Settings.MainCameraSection.AnimProgress);
+      SectionHeight := Round(200 * Settings.MainCameraSection.AnimProgress);
       
       // Клик по слайдеру StepForward
-      if (SectionHeight > 30) and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 10, SLIDER_WIDTH + 25, 40) then
+      if (SectionHeight > 40) and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 15, SLIDER_WIDTH + 30, 50) then
       begin
         Settings.StepForwardSlider.IsDragging := True;
         Exit;
       end;
       
-      // НОВАЯ ГАЛОЧКА - клик по галочке "Новый угол обзора"
-      if (SectionHeight > 60) and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 50, 180, CHECKBOX_SIZE) then
+      // Клик по галочке "Новый угол обзора"
+      if (SectionHeight > 70) and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 60, 200, 20) then
       begin
         Settings.NewViewAngle := not Settings.NewViewAngle;
         
-        // Применяем или убираем патч в зависимости от состояния MainCamera И NewViewAngle
         if Settings.MainCamera and Settings.NewViewAngle then
           ApplyViewAnglePatch
         else
@@ -2114,19 +2430,18 @@ begin
         Exit;
       end;
       
-      // НОВЫЙ СЛАЙДЕР - клик по слайдеру угла обзора
-      if (SectionHeight > 90) and Settings.NewViewAngle and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 70, SLIDER_WIDTH + 25, 40) then
+      // Клик по слайдеру угла обзора
+      if (SectionHeight > 110) and Settings.NewViewAngle and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 85, SLIDER_WIDTH + 30, 50) then
       begin
         Settings.ViewAngleSlider.IsDragging := True;
         Exit;
       end;
       
-      // ГАЛОЧКА ЧУВСТВИТЕЛЬНОСТИ КАМЕРЫ
-      if (SectionHeight > 120) and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 110, 180, CHECKBOX_SIZE) then
+      // Галочка чувствительности камеры
+      if (SectionHeight > 140) and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 130, 200, 20) then
       begin
         Settings.CameraSensitivity := not Settings.CameraSensitivity;
         
-        // Применяем или убираем чувствительность в зависимости от состояния MainCamera И CameraSensitivity
         if Settings.MainCamera and Settings.CameraSensitivity then
           ApplyCameraSensitivity
         else
@@ -2136,8 +2451,8 @@ begin
         Exit;
       end;
       
-      // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ КАМЕРЫ
-      if (SectionHeight > 150) and Settings.CameraSensitivity and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 130, SLIDER_WIDTH + 25, 40) then
+      // Слайдер чувствительности камеры
+      if (SectionHeight > 170) and Settings.CameraSensitivity and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 155, SLIDER_WIDTH + 30, 50) then
       begin
         Settings.CameraSensitivitySlider.IsDragging := True;
         Exit;
@@ -2162,7 +2477,7 @@ begin
     end;
     
     // Max Visible Distance expand button
-    if InRect(X, Y, WorldWindow.X + 200, ContentY + 4, BUTTON_SIZE, BUTTON_SIZE) then
+    if InRect(X, Y, WorldWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
       Settings.MaxVisibleDistanceSection.Expanded := not Settings.MaxVisibleDistanceSection.Expanded;
       Exit;
@@ -2179,18 +2494,12 @@ begin
       end
       else
       begin
-        // При выключении восстанавливаем оригинальные значения
         RestoreOriginalDistanceValues;
       end;
       
-      // Сначала сохраняем, потом синхронизируем
       SaveConfig;
-      
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
-      
-      // Принудительно обновляем время последнего чтения конфига
       LastConfigReadTime := GetTickCount;
-      
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
@@ -2199,39 +2508,36 @@ begin
     MaxVisibleDistanceSectionY := ContentY;
     if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
     begin
-      SectionHeight := Round(150 * Settings.MaxVisibleDistanceSection.AnimProgress);
-      if SectionHeight > 30 then
+      SectionHeight := Round(180 * Settings.MaxVisibleDistanceSection.AnimProgress);
+      if SectionHeight > 40 then
       begin
         // Слайдер дальности
-        if InRect(X, Y, WorldWindow.X + MARGIN + 20, MaxVisibleDistanceSectionY + 10, SLIDER_WIDTH + 25, 40) then
+        if InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 15, SLIDER_WIDTH + 30, 50) then
         begin
           Settings.MaxVisibleDistanceSlider.IsDragging := True;
           Exit;
         end;
         
-        // Чекбоксы с исправленной логикой
-        if (SectionHeight > 60) and InRect(X, Y, WorldWindow.X + MARGIN + 20, MaxVisibleDistanceSectionY + 50, 180, CHECKBOX_SIZE) then
+        // Чекбоксы
+        if (SectionHeight > 70) and InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 60, 200, 20) then
         begin
           Settings.ShowWires := not Settings.ShowWires;
-          // Применяем настройки только если главный переключатель включен
           if Settings.MaxVisibleDistance then 
             ApplyDistanceSettings;
           SaveConfig;
           Exit;
         end;
-        if (SectionHeight > 85) and InRect(X, Y, WorldWindow.X + MARGIN + 20, MaxVisibleDistanceSectionY + 75, 180, CHECKBOX_SIZE) then
+        if (SectionHeight > 100) and InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 90, 200, 20) then
         begin
           Settings.ShowDistantModels := not Settings.ShowDistantModels;
-          // Применяем настройки только если главный переключатель включен
           if Settings.MaxVisibleDistance then 
             ApplyDistanceSettings;
           SaveConfig;
           Exit;
         end;
-        if (SectionHeight > 110) and InRect(X, Y, WorldWindow.X + MARGIN + 20, MaxVisibleDistanceSectionY + 100, 180, CHECKBOX_SIZE) then
+        if (SectionHeight > 130) and InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 120, 200, 20) then
         begin
           Settings.ShowTrafficLights := not Settings.ShowTrafficLights;
-          // Применяем настройки только если главный переключатель включен
           if Settings.MaxVisibleDistance then 
             ApplyDistanceSettings;
           SaveConfig;
@@ -2265,7 +2571,7 @@ begin
       Exit;
     end;
     
-    // ПРЯМО "Исправления КЛУБ" (без секции)
+    // Исправления КЛУБ
     if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
     begin
       Settings.NewClubPositions := not Settings.NewClubPositions;
@@ -2284,27 +2590,39 @@ procedure HandleMenuMouseUp; stdcall;
 begin
   if not MenuVisible then Exit;
   
+  // Останавливаем драггинг окон
   RenderWindow.IsDragging := False;
   WorldWindow.IsDragging := False;
   LocomotiveWindow.IsDragging := False;
   MenuWindow.IsDragging := False;
   
+  // Возвращаем размеры окон к нормальным
+  RenderWindow.TargetDragWidthExpansion := 0.0;
+  WorldWindow.TargetDragWidthExpansion := 0.0;
+  LocomotiveWindow.TargetDragWidthExpansion := 0.0;
+  MenuWindow.TargetDragWidthExpansion := 0.0;
+  
+  // Возвращаем тени к нормальным
+  RenderWindow.TargetShadowIntensity := 0.8;
+  WorldWindow.TargetShadowIntensity := 0.8;
+  LocomotiveWindow.TargetShadowIntensity := 0.8;
+  MenuWindow.TargetShadowIntensity := 0.8;
+  
+  // Останавливаем драггинг слайдеров
   Settings.BrightnessSlider.IsDragging := False;
   Settings.BasespeedSlider.IsDragging := False;
   Settings.FastspeedSlider.IsDragging := False;
   Settings.TurnspeedSlider.IsDragging := False;
   Settings.StepForwardSlider.IsDragging := False;
   Settings.MaxVisibleDistanceSlider.IsDragging := False;
-  Settings.ViewAngleSlider.IsDragging := False;      // НОВЫЙ СЛАЙДЕР
-  Settings.CameraSensitivitySlider.IsDragging := False; // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ
+  Settings.ViewAngleSlider.IsDragging := False;
+  Settings.CameraSensitivitySlider.IsDragging := False;
 
-  // ПРИНУДИТЕЛЬНО применяем все настройки при отпускании мыши
+  // Применяем все настройки при отпускании мыши
   if Settings.MaxVisibleDistance then
     ApplyDistanceSettings;
   if Settings.MainCamera and Settings.CameraSensitivity then
     ApplyCameraSensitivity;
-  
-  // Конфиг уже сохранен в HandleSliderDrag, дублировать не нужно
 end;
 
 procedure ToggleMenu; stdcall;
@@ -2315,58 +2633,107 @@ begin
   begin
     ShowCursor(True);
     
-    // === ПРИНУДИТЕЛЬНО ЧИТАЕМ КОНФИГ ПРИ ОТКРЫТИИ МЕНЮ ===
     LoadConfigForced;
     
-    // === ИНИЦИАЛИЗАЦИЯ АНИМАЦИИ ОТКРЫТИЯ ===
+    // === ИНИЦИАЛИЗАЦИЯ TRANSFORM АНИМАЦИИ ОТКРЫТИЯ ===
     MenuAnimationProgress := 0.0;
     MenuTargetProgress := 1.0;
     
-    // Устанавливаем начальные параметры для анимации появления
+    // Устанавливаем начальные параметры для transform анимации появления
     RenderWindow.Alpha := 0.0;
     RenderWindow.TargetAlpha := 1.0;
-    RenderWindow.Scale := 0.7;
+    RenderWindow.Scale := 0.3;
     RenderWindow.TargetScale := 1.0;
+    RenderWindow.TransformProgress := 0.0;
+    RenderWindow.TargetTransformProgress := 1.0;
+    RenderWindow.Rotation := 15.0 * PI / 180.0;
+    RenderWindow.TargetRotation := 0.0;
+    RenderWindow.TranslateY := -200.0;
+    RenderWindow.TargetTranslateY := 0.0;
+    RenderWindow.DragWidthExpansion := 0.0;
+    RenderWindow.TargetDragWidthExpansion := 0.0;
+    RenderWindow.ShadowIntensity := 0.0;
+    RenderWindow.TargetShadowIntensity := 0.8;
     
     WorldWindow.Alpha := 0.0;
     WorldWindow.TargetAlpha := 1.0;
-    WorldWindow.Scale := 0.7;
+    WorldWindow.Scale := 0.3;
     WorldWindow.TargetScale := 1.0;
+    WorldWindow.TransformProgress := 0.0;
+    WorldWindow.TargetTransformProgress := 1.0;
+    WorldWindow.Rotation := -10.0 * PI / 180.0;
+    WorldWindow.TargetRotation := 0.0;
+    WorldWindow.TranslateY := -150.0;
+    WorldWindow.TargetTranslateY := 0.0;
+    WorldWindow.DragWidthExpansion := 0.0;
+    WorldWindow.TargetDragWidthExpansion := 0.0;
+    WorldWindow.ShadowIntensity := 0.0;
+    WorldWindow.TargetShadowIntensity := 0.8;
     
     LocomotiveWindow.Alpha := 0.0;
     LocomotiveWindow.TargetAlpha := 1.0;
-    LocomotiveWindow.Scale := 0.7;
+    LocomotiveWindow.Scale := 0.3;
     LocomotiveWindow.TargetScale := 1.0;
+    LocomotiveWindow.TransformProgress := 0.0;
+    LocomotiveWindow.TargetTransformProgress := 1.0;
+    LocomotiveWindow.Rotation := 20.0 * PI / 180.0;
+    LocomotiveWindow.TargetRotation := 0.0;
+    LocomotiveWindow.TranslateY := -100.0;
+    LocomotiveWindow.TargetTranslateY := 0.0;
+    LocomotiveWindow.DragWidthExpansion := 0.0;
+    LocomotiveWindow.TargetDragWidthExpansion := 0.0;
+    LocomotiveWindow.ShadowIntensity := 0.0;
+    LocomotiveWindow.TargetShadowIntensity := 0.8;
     
     MenuWindow.Alpha := 0.0;
     MenuWindow.TargetAlpha := 1.0;
-    MenuWindow.Scale := 0.7;
+    MenuWindow.Scale := 0.3;
     MenuWindow.TargetScale := 1.0;
+    MenuWindow.TransformProgress := 0.0;
+    MenuWindow.TargetTransformProgress := 1.0;
+    MenuWindow.Rotation := -25.0 * PI / 180.0;
+    MenuWindow.TargetRotation := 0.0;
+    MenuWindow.TranslateY := -250.0;
+    MenuWindow.TargetTranslateY := 0.0;
+    MenuWindow.DragWidthExpansion := 0.0;
+    MenuWindow.TargetDragWidthExpansion := 0.0;
+    MenuWindow.ShadowIntensity := 0.0;
+    MenuWindow.TargetShadowIntensity := 0.8;
     
-    // Патчим вызов при открытии меню
     ApplyMenuPatch;
   end
   else
   begin
     ShowCursor(False);
     
-    // === ИНИЦИАЛИЗАЦИЯ АНИМАЦИИ ЗАКРЫТИЯ ===
+    // === ИНИЦИАЛИЗАЦИЯ TRANSFORM АНИМАЦИИ ЗАКРЫТИЯ ===
     MenuTargetProgress := 0.0;
     
-    // Устанавливаем целевые параметры для анимации исчезновения
+    // Устанавливаем целевые параметры для transform анимации исчезновения
     RenderWindow.TargetAlpha := 0.0;
-    RenderWindow.TargetScale := 0.7;
+    RenderWindow.TargetScale := 0.3;
+    RenderWindow.TargetTransformProgress := 0.0;
+    RenderWindow.TargetRotation := -15.0 * PI / 180.0;
+    RenderWindow.TargetTranslateY := -200.0;
     
     WorldWindow.TargetAlpha := 0.0;
-    WorldWindow.TargetScale := 0.7;
+    WorldWindow.TargetScale := 0.3;
+    WorldWindow.TargetTransformProgress := 0.0;
+    WorldWindow.TargetRotation := 10.0 * PI / 180.0;
+    WorldWindow.TargetTranslateY := -150.0;
     
     LocomotiveWindow.TargetAlpha := 0.0;
-    LocomotiveWindow.TargetScale := 0.7;
+    LocomotiveWindow.TargetScale := 0.3;
+    LocomotiveWindow.TargetTransformProgress := 0.0;
+    LocomotiveWindow.TargetRotation := -20.0 * PI / 180.0;
+    LocomotiveWindow.TargetTranslateY := -100.0;
     
     MenuWindow.TargetAlpha := 0.0;
-    MenuWindow.TargetScale := 0.7;
+    MenuWindow.TargetScale := 0.3;
+    MenuWindow.TargetTransformProgress := 0.0;
+    MenuWindow.TargetRotation := 25.0 * PI / 180.0;
+    MenuWindow.TargetTranslateY := -250.0;
     
-    // Восстанавливаем вызов при закрытии меню
     RemoveMenuPatch;
   end;
 end;
