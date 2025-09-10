@@ -9397,7 +9397,7 @@ var
         Exit;
       end;
 
-      NopMemory(Pointer($0073880D), 5);
+      //NopMemory(Pointer($0073880D), 5);
 
       BLOCKModelID := LoadModel(blockModelPath, 0, False);
       if BLOCKModelID > 0 then
