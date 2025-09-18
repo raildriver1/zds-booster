@@ -21,6 +21,7 @@ function GetCurrentStation: string;   // Текущая станция
 function GetChannel: string;
 function GetTrackWithDirection: string;
 function GetTargetType: string;
+function GetRezim: string;
 
 // Новые функции интегрированные из Python кода
 function GetSvetoforValue: string;  // Получение значения светофора
@@ -35,12 +36,32 @@ function GetTrackNumberInt: Byte;   // Номер пути в байте
 function GetALS: Byte;
 function GetPressureTMf: Single;    // Давление ТМ
 function GetPressureURf: Single;    // Давление УР
-function GetPressureTCf: Single;    // Давление ТЦ  
+function GetPressureTCf: Single;    // Давление ТЦ 
+
+function ReadSettingsValue(const ParamName: string): string;  // Универсальная функция чтения параметров из settings.ini
+function GetRoutePathFromSettings: string;   // Чтение RoutePath из settings.ini
+function GetSpeedLimitByTRACK: Integer;      // Получение ограничения скорости по треку
 
 implementation
 
 const
   BaseAddress: Cardinal = $00400000;
+
+// Глобальные переменные для кеширования
+var
+  CachedSpeedData: TStringList = nil;
+  CachedRoutePath: string = '';
+  CachedRouteValue: string = '';
+  CachedFileName: string = '';
+  LastSettingsCheck: Cardinal = 0;
+
+// Структура для хранения диапазона скоростей
+type
+  TSpeedRange = record
+    MinRange: Integer;
+    MaxRange: Integer;
+    SpeedLimit: Integer;
+  end;
 
 procedure WriteToLog(const Message: string);
 var
@@ -95,6 +116,282 @@ function Min(A, B: Integer): Integer;
 begin
   if A < B then Result := A else Result := B;
 end;
+
+// Функция для чтения параметров из settings.ini
+function ReadSettingsValue(const ParamName: string): string;
+var
+  IniFile: TextFile;
+  Line: string;
+  SettingsPath: string;
+  EqualPos: Integer;
+  Key, Value: string;
+begin
+  Result := '';
+  
+  try
+    // Формируем путь к файлу settings.ini
+    SettingsPath := ExtractFilePath(ParamStr(0)) + 'settings.ini';
+    
+    if not FileExists(SettingsPath) then
+    begin
+      WriteToLog('Файл settings.ini не найден: ' + SettingsPath);
+      Exit;
+    end;
+    
+    AssignFile(IniFile, SettingsPath);
+    Reset(IniFile);
+    try
+      while not Eof(IniFile) do
+      begin
+        ReadLn(IniFile, Line);
+        Line := Trim(Line);
+        
+        // Пропускаем пустые строки и комментарии
+        if (Line = '') or (Line[1] = ';') or (Line[1] = '#') then
+          Continue;
+        
+        // Ищем знак равенства
+        EqualPos := Pos('=', Line);
+        if EqualPos > 0 then
+        begin
+          Key := Trim(Copy(Line, 1, EqualPos - 1));
+          Value := Trim(Copy(Line, EqualPos + 1, Length(Line)));
+          
+          // Ищем нужный параметр
+          if UpperCase(Key) = UpperCase(ParamName) then
+          begin
+            Result := Value;
+            WriteToLog(Format('%s найден в settings.ini: %s', [ParamName, Result]));
+            Break;
+          end;
+        end;
+      end;
+    finally
+      CloseFile(IniFile);
+    end;
+    
+  except
+    on E: Exception do
+    begin
+      WriteToLog('Ошибка при чтении settings.ini: ' + E.Message);
+      Result := '';
+    end;
+  end;
+end;
+
+// Функция для чтения RoutePath из settings.ini (обертка для совместимости)
+function GetRoutePathFromSettings: string;
+begin
+  Result := ReadSettingsValue('RoutePath');
+end;
+
+var
+  SpeedRanges: array of TSpeedRange;
+  RangesCount: Integer = 0;
+
+// Быстрая загрузка настроек (с кешированием)
+function GetCachedSettings: Boolean;
+var
+  CurrentTick: Cardinal;
+  RoutePath, RouteValue: string;
+begin
+  Result := False;
+  CurrentTick := GetTickCount;
+  
+  // Проверяем настройки только раз в секунду
+  if (CurrentTick - LastSettingsCheck) < 1000 then
+  begin
+    Result := (CachedRoutePath <> '') and (CachedRouteValue <> '');
+    Exit;
+  end;
+  
+  LastSettingsCheck := CurrentTick;
+  
+  try
+    RoutePath := ReadSettingsValue('RoutePath');
+    RouteValue := ReadSettingsValue('Route');
+    if RouteValue = '' then RouteValue := '1';
+    
+    // Проверяем, изменились ли настройки
+    if (RoutePath = CachedRoutePath) and (RouteValue = CachedRouteValue) then
+    begin
+      Result := True;
+      Exit;
+    end;
+    
+    // Настройки изменились - сбрасываем кеш
+    CachedRoutePath := RoutePath;
+    CachedRouteValue := RouteValue;
+    RangesCount := 0;
+    
+    Result := (CachedRoutePath <> '');
+  except
+    Result := False;
+  end;
+end;
+
+// Загрузка и парсинг файла скоростей в массив
+procedure LoadSpeedRanges;
+var
+  SpeedFileName: string;
+  SpeedFilePath: string;
+  SpeedFile: TextFile;
+  Line: string;
+  Parts: TStringList;
+  StartRange, EndRange, SpeedLimit: Integer;
+  i, j: Integer;
+  TempRange: TSpeedRange;
+begin
+  if not GetCachedSettings then Exit;
+  
+  // Определяем имя файла
+  if CachedRouteValue = '2' then
+    SpeedFileName := 'speeds2.dat'
+  else
+    SpeedFileName := 'speeds1.dat';
+  
+  // Если файл тот же - не перезагружаем
+  if SpeedFileName = CachedFileName then Exit;
+  
+  CachedFileName := SpeedFileName;
+  RangesCount := 0;
+  
+  SpeedFilePath := ExtractFilePath(ParamStr(0)) + 'routes\' + CachedRoutePath + '\' + SpeedFileName;
+  
+  if not FileExists(SpeedFilePath) then Exit;
+  
+  Parts := TStringList.Create;
+  try
+    AssignFile(SpeedFile, SpeedFilePath);
+    Reset(SpeedFile);
+    try
+      // Предварительно выделяем память
+      SetLength(SpeedRanges, 200);
+      
+      while not Eof(SpeedFile) do
+      begin
+        ReadLn(SpeedFile, Line);
+        Line := Trim(Line);
+        if Line = '' then Continue;
+        
+        Parts.Clear;
+        Parts.Delimiter := #9;
+        Parts.DelimitedText := Line;
+        
+        if Parts.Count < 3 then
+        begin
+          Parts.Clear;
+          Parts.Delimiter := ' ';
+          Parts.DelimitedText := Line;
+        end;
+        
+        if Parts.Count >= 3 then
+        begin
+          try
+            StartRange := StrToInt(Trim(Parts[0]));
+            EndRange := StrToInt(Trim(Parts[1]));
+            SpeedLimit := StrToInt(Trim(Parts[2]));
+            
+            // Увеличиваем массив при необходимости
+            if RangesCount >= Length(SpeedRanges) then
+              SetLength(SpeedRanges, Length(SpeedRanges) * 2);
+            
+            // Сохраняем отсортированный диапазон
+            if StartRange <= EndRange then
+            begin
+              SpeedRanges[RangesCount].MinRange := StartRange;
+              SpeedRanges[RangesCount].MaxRange := EndRange;
+            end
+            else
+            begin
+              SpeedRanges[RangesCount].MinRange := EndRange;
+              SpeedRanges[RangesCount].MaxRange := StartRange;
+            end;
+            SpeedRanges[RangesCount].SpeedLimit := SpeedLimit;
+            
+            Inc(RangesCount);
+          except
+            Continue;
+          end;
+        end;
+      end;
+    finally
+      CloseFile(SpeedFile);
+    end;
+    
+    // Сортируем диапазоны по MinRange для быстрого поиска
+    for i := 0 to RangesCount - 2 do
+      for j := i + 1 to RangesCount - 1 do
+        if SpeedRanges[i].MinRange > SpeedRanges[j].MinRange then
+        begin
+          TempRange := SpeedRanges[i];
+          SpeedRanges[i] := SpeedRanges[j];
+          SpeedRanges[j] := TempRange;
+        end;
+        
+  finally
+    Parts.Free;
+  end;
+end;
+
+// Оптимизированная основная функция
+function GetSpeedLimitByTRACK: Integer;
+var
+  CurrentTrackValue: Integer;
+  i: Integer;
+begin
+  Result := 0;
+  
+  try
+    // Быстрое чтение из памяти
+    CurrentTrackValue := PInteger(BaseAddress + $349A0C)^;
+    
+    // Загружаем данные только при необходимости
+    if RangesCount = 0 then
+      LoadSpeedRanges;
+    
+    // Быстрый поиск в отсортированном массиве
+    for i := 0 to RangesCount - 1 do
+    begin
+      // Если текущее значение меньше начала диапазона - дальше искать бесполезно
+      if CurrentTrackValue < SpeedRanges[i].MinRange then
+        Break;
+        
+      // Проверяем попадание в диапазон
+      if (CurrentTrackValue >= SpeedRanges[i].MinRange) and 
+         (CurrentTrackValue <= SpeedRanges[i].MaxRange) then
+      begin
+        Result := SpeedRanges[i].SpeedLimit;
+        Exit;
+      end;
+    end;
+    
+  except
+    Result := 0;
+  end;
+end;
+
+function GetRezim: string;
+var
+  b: Byte;
+begin
+  try
+    // Читаем байт по адресу 0x00749888 = BaseAddress + $349888
+    b := PByte(BaseAddress + $349888)^;
+
+    case b of
+      0: Result := 'П';
+      1: Result := 'М';
+    else
+      Result := 'П';
+    end;
+  except
+    // В случае ошибки возвращаем значение по умолчанию 'П'
+    Result := 'П';
+  end;
+end;
+
+
 
 // Новая функция: получение пути маршрута из памяти (аналог Python self.map_)
 function GetRoutePathFromMemory: string;

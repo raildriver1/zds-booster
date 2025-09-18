@@ -133,6 +133,7 @@ procedure SceneSetObj( SceneIdent, ObjIdent : cardinal; SceneMesh : TSceneMesh )
 function  SceneGetObj( SceneIdent, ObjIdent : cardinal ) : TSceneMesh; stdcall;
 
 function ApplyKPD3Patch: Boolean;
+function ApplyBLOKPatch: Boolean;
 function HandleBlockKeyboardClick(mouseX, mouseY: Integer): Boolean;
 
 
@@ -7396,6 +7397,24 @@ begin
   end;
 end;
 
+// Функция получения адреса патча для BLOK по типу локомотива
+function GetBLOKPatchOffset(locType: Integer): Cardinal;
+begin
+  case locType of
+    621: Result := $05DF68A;   // ЧС4Т
+    822: Result := $27795A;   // ЧС7
+    812: Result := $D5A85;    // ЧС8
+    811: Result := $2BB937;   // ВЛ11М
+    882: Result := $1461D5;   // ВЛ82М
+    880: Result := $18D236;   // ВЛ80Т
+    2070: Result := $281156;  // ТЭП70
+    21014: Result := $20F90F; // 2ТЭ10У
+    1462: Result := $1C842B;  // М62
+    else
+      Result := 0; // Неподдерживаемый тип
+  end;
+end;
+
 // Функция проверки наличия KPD-3 файлов
 function CheckKPD3FilesExist(locType: Integer; locNum: string): Boolean;
 var
@@ -7614,6 +7633,129 @@ begin
     end;
   end;
 end;
+
+
+// Функция проверки наличия KPD-3 файлов
+function CheckBLOKFilesExist(locType: Integer; locNum: string): Boolean;
+var
+  locFolder, kpdPath: string;
+  kpdModelPath, kpdTexturePath, arrowModelPath: string;
+begin
+  Result := False;
+  
+  try
+    locFolder := GetLocomotiveFolder(locType);
+    kpdPath := 'data\' + locFolder + '\' + GetLocNum + '\blok\';
+    
+    // Проверяем существование папки
+    if not DirectoryExists(kpdPath) then
+    begin
+      AddToLogFile(EngineLog, 'blok папка не найдена: ' + kpdPath);
+      Exit;
+    end;
+    
+    // Проверяем наличие необходимых файлов
+    kpdModelPath := kpdPath + 'BI-BLOK.dmd';
+    kpdTexturePath := kpdPath + 'blok.bmp';
+    arrowModelPath := kpdPath + 'BI-blok-displ.dmd';
+    
+    Result := FileExists(kpdModelPath) and 
+              FileExists(kpdTexturePath) and 
+              FileExists(arrowModelPath);
+              
+    if Result then
+      AddToLogFile(EngineLog, 'blok файлы найдены для ' + locFolder + ' ' + locNum)
+    else
+      AddToLogFile(EngineLog, 'blok файлы неполные для ' + locFolder + ' ' + locNum);
+
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'Ошибка проверки blok файлов: ' + E.Message);
+      Result := False;
+    end;
+  end;
+end;
+
+
+// Функция применения патча KPD-3
+function ApplyBLOKPatch: Boolean;
+var
+  currentLocType: Integer;
+  patchOffset: Cardinal;
+  patchAddress: Cardinal;
+  drawBLOKAddress: Cardinal;
+  newOffset: Integer;
+  OldProtect: DWORD;
+begin
+  Result := False;
+  
+  try
+    currentLocType := GetLocomotiveTypeFromMemory;
+    
+    // Проверяем, поддерживается ли этот тип локомотива
+    patchAddress := GetBLOKPatchOffset(currentLocType);
+if (patchAddress = 0) and ((currentLocType = 822) or (currentLocType = 812) or (currentLocType = 3154)) then
+begin
+  Exit;
+end;
+
+
+    
+    // Проверяем наличие BLOK файлов
+    if not CheckBLOKFilesExist(currentLocType, LocNum) then
+    begin
+      AddToLogFile(EngineLog, 'BLOK файлы не найдены, патч не применяется');
+      Exit;
+    end;
+
+
+//    if not KPD3Initialized then
+//    begin
+//      AddToLogFile(EngineLog, 'Не удалось инициализировать BLOK, патч не применяется');
+//      Exit;
+//    end;
+    
+drawBLOKAddress := Cardinal(@DrawBLOCK);
+
+// Вычисляем relative offset для инструкции CALL
+newOffset := Integer(drawBLOKAddress) - Integer(patchAddress + 5);
+
+AddToLogFile(EngineLog, Format('Применяем BLOK патч для %s:', [GetLocomotiveFolder(currentLocType)]));
+AddToLogFile(EngineLog, Format('Адрес патча: $%X', [patchAddress]));
+AddToLogFile(EngineLog, Format('Адрес DrawBLOCK: $%X', [drawBLOKAddress]));
+
+if VirtualProtect(Pointer(patchAddress + 1), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+begin
+  try
+    PInteger(patchAddress + 1)^ := newOffset;  // перезаписываем offset CALL
+    VirtualProtect(Pointer(patchAddress + 1), 4, OldProtect, OldProtect);
+    Result := True;
+    AddToLogFile(EngineLog, 'BLOK патч применен успешно');
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'ОШИБКА записи BLOK патча: ' + E.Message);
+      Result := False;
+    end;
+  end;
+end
+else
+begin
+  AddToLogFile(EngineLog, 'ОШИБКА: Не удалось изменить защиту памяти для BLOK патча');
+  Result := False;
+end;
+
+    
+  except
+    on E: Exception do
+    begin
+      AddToLogFile(EngineLog, 'ИСКЛЮЧЕНИЕ при применении BLOK патча: ' + E.Message);
+      Result := False;
+    end;
+  end;
+end;
+
 
 // Функция для вызова из основного кода (например, в InitEng или другом месте)
 procedure InitializeKPD3System;
@@ -7850,7 +7992,7 @@ const
 begin
   try
     speed := GetSpeedValue2;
-    speedLimit := GetLimitSpeedValue;
+    speedLimit := GetSpeedLimitByTRACK + 3;
     maxSpeed := MAX_SPEED;
     tc := StrToFloatDef(GetPressureTC, 0);
     tm := StrToFloatDef(GetPressureTM, 0);
@@ -7874,7 +8016,7 @@ begin
     Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
 
-    if speedLimit > 0 then
+    if GetALS > 0 then
       segments := Round((speedLimit / maxSpeed) * SPEED_RANGE)
     else
       segments := SPEED_RANGE;
@@ -7882,7 +8024,7 @@ begin
     glBegin(GL_TRIANGLE_STRIP);
     for i := 0 to segments do
     begin
-      if speedLimit > 0 then
+      if GetALS > 0 then
         angle := (START_ANGLE - (i * (speedLimit / maxSpeed) * SPEED_RANGE / segments)) * (Pi / 180.0)
       else
         angle := (START_ANGLE - (i * SPEED_RANGE / segments)) * (Pi / 180.0);
@@ -7899,7 +8041,7 @@ begin
     EndObj3D;
 
     // === КРАСНАЯ ЗОНА ===
-    if speedLimit > 0 then
+    if GetALS > 0 then
     begin
       BeginObj3D;
       Position3D(-0.01, 0, 0.18);
@@ -7975,7 +8117,7 @@ begin
     RotateX(-90);
     Scale3D(0.0009);
 
-    if (speed > speedLimit - 3) and (speedLimit > 0) and (speed > 0) then
+    if (speed > speedLimit - 3) and (GetALS > 0) and (speed > 0) then
     begin
       if blinkState then
         Color3D($FFFFFF, 255, False, 0.0)
@@ -8021,7 +8163,7 @@ begin
     RotateX(-90);
     Scale3D(0.0009);
 
-    if (speed > speedLimit - 3) and (speedLimit > 0) and (speed > 0) then
+    if (speed > speedLimit - 3) and (GetALS > 0) and (speed > 0) then
     begin
       if blinkState then
         Color3D($FFFFFF, 255, False, 0.0)
@@ -8072,11 +8214,11 @@ begin
 speedText := FormatFloat('000', Trunc(speed));
 
 BeginObj3D;
-Position3D(-0.019, -0.005, 0.177); // Увеличил Z с 0.177 до 0.178 - чуть вперед
+Position3D(-0.019, -0.001, 0.177); // Увеличил Z с 0.177 до 0.178 - чуть вперед
 RotateX(-90);
 Scale3D(0.012);
 
-if (speed > speedLimit - 3) and (speedLimit > 0) and (speed > 0) and blinkState then
+if (speed > speedLimit - 3) and (GetALS > 0) and (speed > 0) and blinkState then
   Color3D($FF6600, 255, False, 0.0)
 else
   Color3D($FFFFFF, 255, False, 0.0);
@@ -8086,7 +8228,7 @@ DrawText3D(0, speedText);
 EndObj3D;
 
     // === ТЕКСТ ОГРАНИЧЕНИЯ ===
-    if speedLimit > 0 then
+    if GetALS > 0 then
     begin
       BeginObj3D;
       Position3D(-0.019, 0, 0.157); // Выдвигаем вперед
@@ -8179,6 +8321,7 @@ var
   BLOCKModelID: Integer = 0;
   BLOCKDisplayModelID: Integer = 0;
   BLOCKTextureID: Integer = 0;
+  BLOCKPSSModelID: Integer = 0;
   BLOCKInitialized: Boolean = False;
   BLOCKPatchApplied: Boolean = False;
 
@@ -9400,7 +9543,18 @@ var
         AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить BLOCK модель: ' + blockModelPath);
         Exit;
       end;
-      
+
+
+
+      BLOCKPSSModelID := LoadModel(blockPath + 'blok_displ_pss.dmd', 0, False);
+      if BLOCKModelID > 0 then
+        AddToLogFile(EngineLog, 'BLOCKPSSModelID модель загружена, ID: ' + IntToStr(BLOCKModelID))
+      else
+      begin
+        AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить BLOCKPSSModelID модель: ' + blockModelPath);
+        Exit;
+      end;
+
       BLOCKDisplayModelID := LoadModel(blockDisplayModelPath, 0, False);
       if BLOCKDisplayModelID > 0 then
         AddToLogFile(EngineLog, 'BLOCK модель дисплея загружена, ID: ' + IntToStr(BLOCKDisplayModelID))
@@ -9634,6 +9788,7 @@ var
     DrawTextSimple(-0.11, 0, 0.247, 0.007, GetCoordinatesFormatted);
     DrawTextSimple(-0.07, 0, 0.247, 0.007, Copy(GetCurrentStation, 1, 8));
     DrawTextSimple(-0.022, 0, 0.247, 0.007, GetCurrentTime);
+    DrawTextSimple(0.01, 0, 0.247, 0.007, GetRezim);
     if GetTrackNumberInt > 0 then
       DrawTextSimple(-0.11, 0, 0.233, 0.007, 'ЭК')
     else
@@ -9645,7 +9800,24 @@ var
     DrawTextSimple(-0.110, 0, 0.092, 0.0055, GetTargetType);
     DrawTextSimple(0.035, 0, 0.092, 0.006, GetDistance + ' м');
     DrawTextSimple(0.0, 0, 0.092, 0.006, GetSvetoforValue);
-    
+
+
+try
+  if PByte($0074AC58)^ = 0 then
+  begin
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(0.00, 0.00, 0.00);
+    SetTexture(0);
+    Color3D($0000FF, 255, False, 0);
+    DrawModel(BLOCKPSSModelID, 0, True);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+  end;
+except
+  // если будет ошибка доступа к памяти — игнорируем
+end;
+
     // Поле ввода
     case GetStateBLOCK of
       10: inputText := 'НОМЕР МАШИНИСТА ' + InputBuffer + '_';
@@ -9662,7 +9834,7 @@ var
       30: inputText := 'ВВЕДИТЕ КОМАНДУ ' + InputBuffer + '_';
       31: inputText := 'СКОРОСТЬ НА БЕЛЫЙ ' + InputBuffer + '_';
       52: inputText := 'ТАБЛИЦА АЛС-ЕН  ' + InputBuffer + '_';
-      71: inputText := 'К71 КОМАНДА ' + InputBuffer + '_';
+      71: inputText := '123456-8-АВ';
       else
       begin
         if GetTrackNumberInt = 0 then
@@ -9719,7 +9891,9 @@ begin
     Position3D(AngZ, z, y);
     RotateZ(x);
     SetTexture(BLOCKTextureID);
-    
+
+
+
     // Отрисовываем модели
     DrawModel(BLOCKModelID, 0, True);
     
@@ -11175,7 +11349,7 @@ begin
 
   BeginObj3D;
   glDisable(GL_LIGHTING);
-  Position3D(0,0.01,0);
+  Position3D(0,0,0);
   SetTexture(UsavppDisplayTextureID);
   DrawModel(UsavppDisplayModelID, 0, False); // Читаем из памяти
   glEnable(GL_LIGHTING);

@@ -1978,6 +1978,7 @@ begin
           end;
 
           else
+            //ApplyBLOKPatch;
             AddToLogFile(EngineLog, 'Hook not supported for locomotive type: ' + IntToStr(LocType));
         end;
 
