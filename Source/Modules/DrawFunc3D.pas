@@ -9753,7 +9753,9 @@ var
     
     try
       currentLocType := GetLocomotiveTypeFromMemory;
-      
+
+      ApplyNOPPatch($00738588, 3);
+
       case currentLocType of
         822: // ЧС7
         begin
@@ -9928,7 +9930,7 @@ var
     DrawTextSimple(-0.105, 0, 0.182, 0.007, '0.67');
     DrawTextSimple(-0.110, 0, 0.092, 0.0055, GetTargetType);
     DrawTextSimple(0.035, 0, 0.092, 0.006, GetDistance + ' м');
-    DrawTextSimple(0.0, 0, 0.092, 0.006, GetSvetoforValue);
+    DrawTextSimple(0.002, 0, 0.092, 0.006, GetSvetoforValue);
 
 
 try
@@ -9963,7 +9965,7 @@ end;
       30: inputText := 'ВВЕДИТЕ КОМАНДУ ' + InputBuffer + '_';
       31: inputText := 'СКОРОСТЬ НА БЕЛЫЙ ' + InputBuffer + '_';
       52: inputText := 'ТАБЛИЦА АЛС-ЕН  ' + InputBuffer + '_';
-      71: inputText := '123456-8-АВ';
+      71: inputText := '123456789АВ';
       else
       begin
         if GetTrackNumberInt = 0 then
