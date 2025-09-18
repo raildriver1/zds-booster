@@ -9325,6 +9325,134 @@ begin
   end;
 end;
 
+var
+  RMPState: Byte = 0; // 0, 1, 2 - циклические значения (теперь читается из памяти)
+  BlinkTimer: Cardinal = 0; // Таймер для мигания
+  BlinkVisible: Boolean = True; // Флаг видимости мигающего текста
+
+// Обновление мигания для РМП
+procedure UpdateRMPBlink;
+var
+  currentTime: Cardinal;
+  currentRMPState: Byte;
+begin
+  try
+    // Читаем текущее состояние из памяти
+    currentRMPState := PByte($00400000 + $349888)^;
+    
+    if currentRMPState = 2 then
+    begin
+      currentTime := GetTickCount;
+      
+      // Инициализируем таймер при первом входе в режим 2
+      if BlinkTimer = 0 then
+      begin
+        BlinkTimer := currentTime;
+        BlinkVisible := True;
+      end;
+      
+      // Проверяем прошло ли 500 мс
+      if (currentTime - BlinkTimer) >= 500 then
+      begin
+        BlinkVisible := not BlinkVisible; // Переключаем видимость
+        BlinkTimer := currentTime; // Сбрасываем таймер
+        AddToLogFile(EngineLog, '[РМП МИГАНИЕ] Переключение видимости: ' + BoolToStr(BlinkVisible, True));
+      end;
+    end
+    else
+    begin
+      // Если не в режиме 2, сбрасываем таймер и делаем видимым
+      BlinkTimer := 0;
+      BlinkVisible := True;
+    end;
+  except
+    // В случае ошибки сбрасываем состояние
+    BlinkTimer := 0;
+    BlinkVisible := True;
+  end;
+end;
+
+// ОБНОВЛЕННАЯ функция GetRezim с поддержкой мигания
+function GetRezim: string;
+var
+  b: Byte;
+begin
+  try
+    // Обновляем состояние мигания
+    UpdateRMPBlink;
+    
+    // Читаем байт по адресу BaseAddress + $349888
+    b := PByte($00400000 + $349888)^;
+    case b of
+      0: Result := 'П';
+      1: Result := 'М';
+      2: begin
+           // При состоянии 2 мигаем
+           if BlinkVisible then
+             Result := 'П'
+           else
+             Result := '';  // Пустая строка когда не видим
+         end;
+    else
+      Result := 'П';
+    end;
+  except
+    // В случае ошибки возвращаем значение по умолчанию 'П'
+    Result := 'П';
+  end;
+end;
+
+function ShouldShowRMPText: Boolean;
+begin
+  UpdateRMPBlink; // Обновляем состояние мигания
+  
+  case RMPState of
+    0: Result := False;        // Не показываем при состоянии 0
+    1: Result := True;         // Всегда показываем при состоянии 1
+    2: Result := BlinkVisible; // Мигаем при состоянии 2
+    else Result := False;
+  end;
+end;
+
+// Обработка нажатия кнопки РМП
+procedure ProcessButtonRMP;
+var
+  currentSpeed: Single;
+begin
+  AddToLogFile(EngineLog, '[КНОПКА РМП] Обработка нажатия кнопки РМП');
+  
+  try
+    // Проверяем текущую скорость
+    currentSpeed := GetSpeedValue;
+    AddToLogFile(EngineLog, '[КНОПКА РМП] Текущая скорость: ' + FormatFloat('0.00', currentSpeed));
+    
+    // Проверяем условие: скорость должна быть равна 0
+    if currentSpeed <> 0.0 then
+    begin
+      AddToLogFile(EngineLog, '[КНОПКА РМП] ✗ РМП недоступна при движении (скорость: ' + FormatFloat('0.00', currentSpeed) + ')');
+      Exit;
+    end;
+    
+    // Циклическое переключение: 0 -> 1 -> 2 -> 0
+    case RMPState of
+      0: RMPState := 1;
+      1: RMPState := 2;
+      2: RMPState := 0;
+      else RMPState := 1; // На всякий случай сброс в 1
+    end;
+    
+    AddToLogFile(EngineLog, '[КНОПКА РМП] Переключение на состояние: ' + IntToStr(RMPState));
+    
+    // Записываем новое значение в память
+    WriteByteToMemory(Pointer($00749888), RMPState);
+    AddToLogFile(EngineLog, '[КНОПКА РМП] ✓ Записано значение ' + IntToStr(RMPState) + ' по адресу 0x00749888');
+    
+  except
+    on E: Exception do
+      AddToLogFile(EngineLog, '[КНОПКА РМП] ✗ ОШИБКА: ' + E.Message);
+  end;
+end;
+
 // Функция для обработки кликов по кнопкам клавиатуры
 function HandleBlockKeyboardClick(mouseX, mouseY: Integer): Boolean;
 var
@@ -9396,6 +9524,7 @@ begin
                  ProcessButtonPCycle(1, i);  // Новая логика для кнопки "К"
              end;
           4: ProcessButtonPCycle(0);  // Кнопка К
+          12: ProcessButtonRMP;  // НОВАЯ СТРОКА: Кнопка РМП
           21: begin
                 // Сначала проверяем логику кнопки "П"  
                 if ButtonPState > 0 then

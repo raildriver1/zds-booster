@@ -21,7 +21,6 @@ function GetCurrentStation: string;   // Текущая станция
 function GetChannel: string;
 function GetTrackWithDirection: string;
 function GetTargetType: string;
-function GetRezim: string;
 
 // Новые функции интегрированные из Python кода
 function GetSvetoforValue: string;  // Получение значения светофора
@@ -368,26 +367,6 @@ begin
     
   except
     Result := 0;
-  end;
-end;
-
-function GetRezim: string;
-var
-  b: Byte;
-begin
-  try
-    // Читаем байт по адресу 0x00749888 = BaseAddress + $349888
-    b := PByte(BaseAddress + $349888)^;
-
-    case b of
-      0: Result := 'П';
-      1: Result := 'М';
-    else
-      Result := 'П';
-    end;
-  except
-    // В случае ошибки возвращаем значение по умолчанию 'П'
-    Result := 'П';
   end;
 end;
 
