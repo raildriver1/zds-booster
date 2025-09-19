@@ -9032,6 +9032,22 @@ begin
   AddToLogFile(EngineLog, '[К-ВВОД] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
 end;
 
+// Обработка нажатия кнопки ВК
+procedure ProcessButtonVK;
+begin
+  AddToLogFile(EngineLog, '[КНОПКА ВК] Обработка нажатия кнопки ВК');
+  
+  try
+    // Записываем 0 по адресу 0x400000 + 0x4F8D940
+    WriteByteToMemory(Pointer($400000 + $4F8D940), 0);
+    AddToLogFile(EngineLog, '[КНОПКА ВК] ✓ Записан 0 по адресу 0x' + IntToHex($400000 + $4F8D940, 8));
+    
+  except
+    on E: Exception do
+      AddToLogFile(EngineLog, '[КНОПКА ВК] ✗ ОШИБКА: ' + E.Message);
+  end;
+end;
+
 // Инициализация позиций кнопок
 procedure InitializeButtonPositions;
 begin
@@ -9511,27 +9527,28 @@ begin
           end;
         end;
         
-        case i of
-          0: ProcessButtonP;  // Кнопка П (старая логика)
-          1, 2, 3, 7, 8, 9, 13, 14, 15, 20: begin
-               // Сначала проверяем логику кнопки "П"
-               if ButtonPState > 0 then
-                 ProcessNumberInput(i)  // Старая логика для кнопки "П"
-               else
-                 ProcessButtonPCycle(1, i);  // Новая логика для кнопки "К"
-             end;
-          4: ProcessButtonPCycle(0);  // Кнопка К
-          12: ProcessButtonRMP;  // НОВАЯ СТРОКА: Кнопка РМП
-          21: begin
-                // Сначала проверяем логику кнопки "П"  
-                if ButtonPState > 0 then
-                  ProcessButtonEnter  // Старая логика для кнопки "П"
-                else
-                  ProcessButtonPCycle(2);  // Новая логика для кнопки "К"
-              end;
-          else
-            AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
-        end;
+case i of
+  0: ProcessButtonP;  // Кнопка П (старая логика)
+  1, 2, 3, 7, 8, 9, 13, 14, 15, 20: begin
+       // Сначала проверяем логику кнопки "П"
+       if ButtonPState > 0 then
+         ProcessNumberInput(i)  // Старая логика для кнопки "П"
+       else
+         ProcessButtonPCycle(1, i);  // Новая логика для кнопки "К"
+     end;
+  4: ProcessButtonPCycle(0);  // Кнопка К
+  6: ProcessButtonVK;  // НОВАЯ СТРОКА: Кнопка ВК
+  12: ProcessButtonRMP;  // Кнопка РМП
+  21: begin
+        // Сначала проверяем логику кнопки "П"  
+        if ButtonPState > 0 then
+          ProcessButtonEnter  // Старая логика для кнопки "П"
+        else
+          ProcessButtonPCycle(2);  // Новая логика для кнопки "К"
+      end;
+  else
+    AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
+end;
 
         Result := True;
         Exit;
