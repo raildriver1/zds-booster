@@ -10243,23 +10243,25 @@ begin
   with StaticData[11] do begin X:=1.019; Y:=7.3585; Z:=3.665; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.008; Text:='Путь'; Color:=$FFFFFF; FuncType:=0; end;
   with StaticData[12] do begin X:=1.022; Y:=7.3584; Z:=3.656; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.008; Text:='n'; Color:=$FFFFFF; FuncType:=10; end;
   with StaticData[13] do begin X:=1.01; Y:=7.3842; Z:=3.575; RotX:=-105; RotY:=34; RotZ:=-8.0; Scale:=0.008; Text:='222'; Color:=$FFFFFF; FuncType:=11; end;
-  
+
   // Элементы 14-16 - Скорость (желтый, 3 позиции)
-  with StaticData[14] do begin X:=0.9235; Y:=7.455; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$00FFFF; FuncType:=20; end; // 1-я позиция скорости
-  with StaticData[15] do begin X:=0.935; Y:=7.451; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$00FFFF; FuncType:=21; end; // 2-я позиция скорости
-  with StaticData[16] do begin X:=0.9465; Y:=7.447; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$00FFFF; FuncType:=22; end; // 3-я позиция скорости
-  
+  with StaticData[14] do begin X:=0.9235; Y:=7.455; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$00FFFF; FuncType:=20; end;
+  with StaticData[15] do begin X:=0.935;  Y:=7.451; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$00FFFF; FuncType:=21; end;
+  with StaticData[16] do begin X:=0.9465; Y:=7.447; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$00FFFF; FuncType:=22; end;
+
   // Элементы 17-19 - Допустимая скорость (красный, 3 позиции)
-  with StaticData[17] do begin X:=0.922; Y:=7.450; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$0000FF; FuncType:=23; end; // 1-я позиция допустимой
-  with StaticData[18] do begin X:=0.9335; Y:=7.446; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='5'; Color:=$0000FF; FuncType:=24; end; // 2-я позиция допустимой
-  with StaticData[19] do begin X:=0.945; Y:=7.442; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='6'; Color:=$0000FF; FuncType:=25; end; // 3-я позиция допустимой
-  
+  with StaticData[17] do begin X:=0.922;  Y:=7.450; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$0000FF; FuncType:=23; end;
+  with StaticData[18] do begin X:=0.9335; Y:=7.446; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='5'; Color:=$0000FF; FuncType:=24; end;
+  with StaticData[19] do begin X:=0.945;  Y:=7.442; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='6'; Color:=$0000FF; FuncType:=25; end;
+
   // Элементы 20-23 - Расстояние до цели (красный, 4 позиции)
-  with StaticData[20] do begin X:=0.852; Y:=7.471; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$0000FF; FuncType:=26; end; // 1-я позиция расстояния
-  with StaticData[21] do begin X:=0.863; Y:=7.4674; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$0000FF; FuncType:=27; end; // 2-я позиция расстояния
-  with StaticData[22] do begin X:=0.874; Y:=7.4638; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$0000FF; FuncType:=28; end; // 3-я позиция расстояния
-  with StaticData[23] do begin X:=0.885; Y:=7.4602; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$0000FF; FuncType:=29; end; // 4-я позиция расстояния
-  
+  with StaticData[20] do begin X:=0.852;  Y:=7.471;  Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$0000FF; FuncType:=26; end;
+  with StaticData[21] do begin X:=0.863;  Y:=7.4674; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$0000FF; FuncType:=27; end;
+  with StaticData[22] do begin X:=0.874;  Y:=7.4638; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$0000FF; FuncType:=28; end;
+  with StaticData[23] do begin X:=0.885;  Y:=7.4602; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$0000FF; FuncType:=29; end;
+
+
+
   // Элементы 24-27 - Светофорная система АЛС
   with StaticData[24] do begin X:=1.111; Y:=7.239; Z:=3.729; RotX:=-90; RotY:=40; RotZ:=-90; Scale:=0.015; Text:='|'; Color:=$00FF00; FuncType:=30; end;
   with StaticData[25] do begin X:=1.113; Y:=7.237; Z:=3.733; RotX:=-90; RotY:=40; RotZ:=-90; Scale:=0.015; Text:='l'; Color:=$00FF00; FuncType:=31; end;
@@ -10303,20 +10305,20 @@ begin
   with StaticData[13] do begin X:=1.01; Y:=7.28; Z:=3.575; RotX:=-105; RotY:=34; RotZ:=-8.0; Scale:=0.008; Text:='222'; Color:=$FFFFFF; FuncType:=11; end;
 
   // Элементы 14-16 - Скорость (желтый, 3 позиции)
-  with StaticData[14] do begin X:=0.9235; Y:=7.455; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$00FFFF; FuncType:=20; end;
-  with StaticData[15] do begin X:=0.935; Y:=7.451; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$00FFFF; FuncType:=21; end;
-  with StaticData[16] do begin X:=0.9465; Y:=7.447; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$00FFFF; FuncType:=22; end;
+  with StaticData[14] do begin X:=0.204; Y:=7.529; Z:=3.353; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='1'; Color:=$00FFFF; FuncType:=20; end;
+  with StaticData[15] do begin X:=0.217; Y:=7.532; Z:=3.353; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='2'; Color:=$00FFFF; FuncType:=21; end;
+  with StaticData[16] do begin X:=0.23;  Y:=7.533; Z:=3.353; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='3'; Color:=$00FFFF; FuncType:=22; end;
 
   // Элементы 17-19 - Допустимая скорость (красный, 3 позиции)
-  with StaticData[17] do begin X:=0.922; Y:=7.450; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$FF0000; FuncType:=23; end;
-  with StaticData[18] do begin X:=0.9335; Y:=7.446; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='5'; Color:=$FF0000; FuncType:=24; end;
-  with StaticData[19] do begin X:=0.945; Y:=7.442; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='6'; Color:=$FF0000; FuncType:=25; end;
+  with StaticData[17] do begin X:=0.204; Y:=7.523; Z:=3.329; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='4'; Color:=$0000FF; FuncType:=23; end;
+  with StaticData[18] do begin X:=0.217; Y:=7.526; Z:=3.329; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='5'; Color:=$0000FF; FuncType:=24; end;
+  with StaticData[19] do begin X:=0.23;  Y:=7.529; Z:=3.329; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='6'; Color:=$0000FF; FuncType:=25; end;
 
   // Элементы 20-23 - Расстояние до цели (красный, 4 позиции)
-  with StaticData[20] do begin X:=0.852; Y:=7.471; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$FF0000; FuncType:=26; end;
-  with StaticData[21] do begin X:=0.863; Y:=7.4674; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$FF0000; FuncType:=27; end;
-  with StaticData[22] do begin X:=0.874; Y:=7.4638; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$FF0000; FuncType:=28; end;
-  with StaticData[23] do begin X:=0.885; Y:=7.4602; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$FF0000; FuncType:=29; end;
+  with StaticData[20] do begin X:=0.135;  Y:=7.506;  Z:=3.331; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='1'; Color:=$0000FF; FuncType:=26; end;
+  with StaticData[21] do begin X:=0.1455; Y:=7.508;  Z:=3.331; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='2'; Color:=$0000FF; FuncType:=27; end;
+  with StaticData[22] do begin X:=0.157;  Y:=7.511;  Z:=3.331; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='3'; Color:=$0000FF; FuncType:=28; end;
+  with StaticData[23] do begin X:=0.169;  Y:=7.514;  Z:=3.331; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='4'; Color:=$0000FF; FuncType:=29; end;
 
 
   // Элементы 30-33 - Задание и расписание
@@ -11605,7 +11607,7 @@ begin
     RotateY(34.2);
     RotateZ(-7.0); // Поворот против часовой на 15 градусов
     if GetLocomotiveTypeFromMemory = 812 then
-      Scale3D(0.00017)
+      Scale3D(0.0017)
     else
       Scale3D(0.002);
     Color3D($00FFFF, 255, False, 0.0); // Желтый
@@ -11625,7 +11627,7 @@ begin
     RotateY(34.2);
     RotateZ(-7.0); // Тот же поворот для совпадения
     if GetLocomotiveTypeFromMemory = 812 then
-      Scale3D(0.00017)
+      Scale3D(0.0017)
     else
       Scale3D(0.002);
     Color3D($0000FF, 255, False, 0.0); // Красный
