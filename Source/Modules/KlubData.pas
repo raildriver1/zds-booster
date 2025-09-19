@@ -340,7 +340,12 @@ var
   i: Integer;
 begin
   Result := 0;
-  
+
+  Result := PWord(BaseAddress + $34987C)^;
+  if GetALS <= 4 then
+    Exit;
+
+
   try
     // Быстрое чтение из памяти
     CurrentTrackValue := PInteger(BaseAddress + $349A0C)^;
@@ -360,7 +365,7 @@ begin
       if (CurrentTrackValue >= SpeedRanges[i].MinRange) and 
          (CurrentTrackValue <= SpeedRanges[i].MaxRange) then
       begin
-        Result := SpeedRanges[i].SpeedLimit;
+        Result := SpeedRanges[i].SpeedLimit + 3;
         Exit;
       end;
     end;

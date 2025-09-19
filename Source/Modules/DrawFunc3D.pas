@@ -7401,15 +7401,12 @@ end;
 function GetBLOKPatchOffset(locType: Integer): Cardinal;
 begin
   case locType of
-    621: Result := $05DF68A;   // ЧС4Т
-    822: Result := $27795A;   // ЧС7
-    812: Result := $D5A85;    // ЧС8
-    811: Result := $2BB937;   // ВЛ11М
-    882: Result := $1461D5;   // ВЛ82М
-    880: Result := $18D236;   // ВЛ80Т
-    2070: Result := $281156;  // ТЭП70
-    21014: Result := $20F90F; // 2ТЭ10У
-    1462: Result := $1C842B;  // М62
+    621: Result := $5DD854;   // ЧС4Т
+//    822: Result := $27795A;   // ЧС7
+//    812: Result := $D5A85;    // ЧС8
+    880: Result := $58D217;   // ВЛ80Т
+    2070: Result := $681137;  // ТЭП70
+    885: Result := $6C2FBB;
     else
       Result := 0; // Неподдерживаемый тип
   end;
@@ -7992,7 +7989,7 @@ const
 begin
   try
     speed := GetSpeedValue2;
-    speedLimit := GetSpeedLimitByTRACK + 3;
+    speedLimit := GetSpeedLimitByTRACK;
     maxSpeed := MAX_SPEED;
     tc := StrToFloatDef(GetPressureTC, 0);
     tm := StrToFloatDef(GetPressureTM, 0);
@@ -9783,6 +9780,38 @@ var
         3154: // ЭД4М
         begin
           if ApplyNOPPatch($6297EF, 5) then
+          begin
+            BLOCKPatchApplied := True;
+            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
+          end;
+        end;
+        621: // ЧС4Т
+        begin
+          if ApplyNOPPatch($5DF68A, 5) then
+          begin
+            BLOCKPatchApplied := True;
+            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
+          end;
+        end;
+        880:
+        begin // ВЛ80Т
+          if ApplyNOPPatch($58E8D2, 5) then
+          begin
+            BLOCKPatchApplied := True;
+            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
+          end;
+        end;
+        2070: // ТЭП70
+        begin
+          if ApplyNOPPatch($681B04, 5) then
+          begin
+            BLOCKPatchApplied := True;
+            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
+          end;
+        end;
+        885: // ВЛ85
+        begin
+          if ApplyNOPPatch($6C41FE, 5) then
           begin
             BLOCKPatchApplied := True;
             AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
