@@ -40,6 +40,7 @@ function GetPressureTCf: Single;    // Давление ТЦ
 function ReadSettingsValue(const ParamName: string): string;  // Универсальная функция чтения параметров из settings.ini
 function GetRoutePathFromSettings: string;   // Чтение RoutePath из settings.ini
 function GetSpeedLimitByTRACK: Integer;      // Получение ограничения скорости по треку
+function GetSpeedTargetByTRACK: Integer;
 
 implementation
 
@@ -333,18 +334,23 @@ begin
   end;
 end;
 
-// Оптимизированная основная функция
+// Модифицированная функция GetSpeedLimitByTRACK с патчингом
 function GetSpeedLimitByTRACK: Integer;
+const
+  PATCH_ADDRESS = $004970BE + 3; // Адрес где находятся байты A0 00
 var
   CurrentTrackValue: Integer;
   i: Integer;
+  SpeedLimit: Word;
+  OldProtect: DWORD;
+  BytesWritten: DWORD;
 begin
   Result := 0;
 
+  // Сначала получаем обычный результат
   Result := PWord(BaseAddress + $34987C)^;
   if GetALS <= 4 then
     Exit;
-
 
   try
     // Быстрое чтение из памяти
@@ -366,16 +372,97 @@ begin
          (CurrentTrackValue <= SpeedRanges[i].MaxRange) then
       begin
         Result := SpeedRanges[i].SpeedLimit + 3;
+        
+        // ПАТЧИМ БАЙТЫ В ЛАУНЧЕРЕ
+        SpeedLimit := Word(Result);
+        
+        // Изменяем защиту памяти для записи
+        if VirtualProtect(Pointer(PATCH_ADDRESS), 2, PAGE_EXECUTE_READWRITE, OldProtect) then
+        begin
+          try
+            // Прямая запись в память
+            PWord(PATCH_ADDRESS)^ := SpeedLimit;
+            WriteToLog(Format('Патч применен: адрес %s, новое значение %.4X', 
+              [IntToHex(PATCH_ADDRESS, 8), SpeedLimit]));
+          finally
+            // Восстанавливаем защиту памяти
+            VirtualProtect(Pointer(PATCH_ADDRESS), 2, OldProtect, OldProtect);
+          end;
+        end
+        else
+        begin
+          WriteToLog('Ошибка: не удалось изменить защиту памяти для патча');
+        end;
+        
         Exit;
       end;
     end;
     
   except
-    Result := 0;
+    on E: Exception do
+    begin
+      WriteToLog('Ошибка в GetSpeedLimitByTRACK: ' + E.Message);
+      Result := 0;
+    end;
   end;
 end;
 
+function GetSpeedTargetByTRACK: Integer;
+var
+  CurrentTrackValue: Integer;
+  TargetTrackValue: Integer;
+  i: Integer;
+begin
+  Result := 0;
 
+  // Получаем базовое значение как в оригинальной функции
+  Result := PWord(BaseAddress + $34987C)^;
+  if GetALS <= 4 then
+    Exit;
+
+  try
+    // Быстрое чтение из памяти
+    CurrentTrackValue := PInteger(BaseAddress + $349A0C)^;
+    
+    // Берем следующее значение (+1)
+    TargetTrackValue := CurrentTrackValue + 1;
+    
+    // Загружаем данные только при необходимости
+    if RangesCount = 0 then
+      LoadSpeedRanges;
+    
+    // Быстрый поиск в отсортированном массиве для целевого значения
+    for i := 0 to RangesCount - 1 do
+    begin
+      // Если целевое значение меньше начала диапазона - дальше искать бесполезно
+      if TargetTrackValue < SpeedRanges[i].MinRange then
+        Break;
+        
+      // Проверяем попадание в диапазон
+      if (TargetTrackValue >= SpeedRanges[i].MinRange) and 
+         (TargetTrackValue <= SpeedRanges[i].MaxRange) then
+      begin
+        Result := SpeedRanges[i].SpeedLimit + 3;
+        
+        WriteToLog(Format('GetSpeedTargetByTRACK: Текущий пикет %d, целевой пикет %d, найден лимит %d', 
+          [CurrentTrackValue, TargetTrackValue, Result]));
+        
+        Exit;
+      end;
+    end;
+    
+    // Если не найден диапазон для следующего значения, возвращаем текущий лимит
+    WriteToLog(Format('GetSpeedTargetByTRACK: Для целевого пикета %d диапазон не найден, используем текущий лимит', 
+      [TargetTrackValue]));
+    
+  except
+    on E: Exception do
+    begin
+      WriteToLog('Ошибка в GetSpeedTargetByTRACK: ' + E.Message);
+      Result := 0;
+    end;
+  end;
+end;
 
 // Новая функция: получение пути маршрута из памяти (аналог Python self.map_)
 function GetRoutePathFromMemory: string;
