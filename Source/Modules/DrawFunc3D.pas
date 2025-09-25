@@ -9102,13 +9102,38 @@ end;
 
 // Обработка нажатия кнопки ВК
 procedure ProcessButtonVK;
+var
+  alsValue: Integer;
+  addr349914: Byte;
+  addr349910: Byte;
 begin
   AddToLogFile(EngineLog, '[КНОПКА ВК] Обработка нажатия кнопки ВК');
   
   try
-    // Записываем 0 по адресу 0x400000 + 0x4F8D940
+    // Существующая логика - записываем 0 по адресу 0x400000 + 0x4F8D940
     WriteByteToMemory(Pointer($400000 + $4F8D940), 0);
     AddToLogFile(EngineLog, '[КНОПКА ВК] ✓ Записан 0 по адресу 0x' + IntToHex($400000 + $4F8D940, 8));
+    
+    // НОВАЯ ЛОГИКА: проверяем условия для записи в 0x538D940
+    alsValue := GetALS;
+    addr349914 := PByte($400000 + $349914)^;
+    addr349910 := PByte($400000 + $349910)^;
+    
+    AddToLogFile(EngineLog, '[КНОПКА ВК] Проверка условий: GetALS=' + IntToStr(alsValue) + 
+                           ', addr349914=' + IntToStr(addr349914) + 
+                           ', addr349910=' + IntToStr(addr349910));
+    
+    // Проверяем все условия
+    if (alsValue = 2) and (addr349914 = 1) and (addr349910 = 1) then
+    begin
+      // Все условия выполнены - записываем 1 по адресу 0x538D940
+      WriteByteToMemory(Pointer($538D940), 1);
+      AddToLogFile(EngineLog, '[КНОПКА ВК] ✓ Условия выполнены! Записана 1 по адресу 0x538D940');
+    end
+    else
+    begin
+      AddToLogFile(EngineLog, '[КНОПКА ВК] Условия не выполнены, пропускаем запись в 0x538D940');
+    end;
     
   except
     on E: Exception do
