@@ -7968,17 +7968,25 @@ begin
   DrawKPD3(25.0, 25, 3.50, 10.346, 1.34);
 end;
 
+type
+  TVertexArray = array of array[0..2] of GLfloat;
+
+var
+  YellowZoneVerts: TVertexArray;
+  LastTarget, LastLimit: Single;
+
 procedure DrawSpeedometer3D;
 var
   i: Integer;
   angle, needleAngle: Single;
-  speed, speedLimit, maxSpeed: Single;
+  speed, speedLimit, maxSpeed, speedTarget: Single;
   tc, tm, ur: Single;
   speedText: string;
   segments: Integer;
   x, y: Single;
   blinkState: Boolean;
   innerRadius, outerRadius: Single;
+
 const
   MIN_SPEED = 0;
   MAX_SPEED = 300;
@@ -7986,10 +7994,49 @@ const
   END_ANGLE = -45;
   SPEED_RANGE = 270;
   BASE_RADIUS = 60;
+
+procedure UpdateYellowZone(speedTarget, speedLimit, maxSpeed: Single);
+var
+  i, segments: Integer;
+  angle: Single;
+  x, y: Single;
+begin
+  if (Abs(LastTarget - speedTarget) < 0.1) and
+     (Abs(LastLimit - speedLimit) < 0.1) then Exit;
+
+  LastTarget := speedTarget;
+  LastLimit := speedLimit;
+
+  segments := Round(((speedLimit - speedTarget) / maxSpeed) * SPEED_RANGE * 0.5);
+  if segments > 20 then segments := 20;
+  if segments < 3 then segments := 3;
+
+  SetLength(YellowZoneVerts, (segments+1) * 2);
+
+  for i := 0 to segments do
+  begin
+    angle := (START_ANGLE - (speedTarget / maxSpeed) * SPEED_RANGE -
+              (i * (speedLimit - speedTarget) / maxSpeed * SPEED_RANGE / segments)) * (Pi / 180.0);
+
+    x := outerRadius * cos(angle);
+    y := outerRadius * sin(angle);
+    YellowZoneVerts[i*2][0] := x;
+    YellowZoneVerts[i*2][1] := y;
+    YellowZoneVerts[i*2][2] := 0.2;
+
+    x := innerRadius * cos(angle);
+    y := innerRadius * sin(angle);
+    YellowZoneVerts[i*2+1][0] := x;
+    YellowZoneVerts[i*2+1][1] := y;
+    YellowZoneVerts[i*2+1][2] := 0.2;
+  end;
+end;
+
 begin
   try
     speed := GetSpeedValue2;
-    speedLimit := GetSpeedLimitByTRACK;
+    speedLimit := GetLimitSpeedValue;
+    speedTarget := GetTargetSpeedValue;
     maxSpeed := MAX_SPEED;
     tc := StrToFloatDef(GetPressureTC, 0);
     tm := StrToFloatDef(GetPressureTM, 0);
@@ -8068,6 +8115,27 @@ begin
       end;
       EndObj3D;
     end;
+//
+// === ЖЕЛТАЯ ЗОНА ===
+if (GetALS > 0) and (speedTarget > 0) and (speedTarget < speedLimit) and
+   (speedLimit - speedTarget > 3) then
+begin
+  UpdateYellowZone(speedTarget, speedLimit, maxSpeed);
+
+  BeginObj3D;
+  Position3D(-0.01, 0, 0.18);
+  RotateX(-90);
+  Scale3D(0.0009);
+  Color3D($00FFFF, 255, False, 0.0);
+  SetTexture(0);
+
+  glBegin(GL_TRIANGLE_STRIP);
+    for i := 0 to High(YellowZoneVerts) do
+      glVertex3fv(@YellowZoneVerts[i]);
+  glEnd;
+
+  EndObj3D;
+end;
 
     // === ДЕЛЕНИЯ + ЦИФРЫ ===
     for i := 0 to 15 do
@@ -9639,7 +9707,7 @@ var
   scaleFactor: Single;
   maxScaleValue: Single;
   scaleStep: Single;
-  
+
   // Переменные для барграфов
   barWidth: Single;
   barTop: Single;
@@ -9762,6 +9830,7 @@ var
   var
     currentLocType: Integer;
     patchAddress: Cardinal;
+    OldProtect: DWORD;
   begin
     if BLOCKPatchApplied then Exit;
     
@@ -9770,73 +9839,78 @@ var
 
       ApplyNOPPatch($00738588, 3);
 
-      case currentLocType of
-        822: // ЧС7
-        begin
-          patchAddress := $00677AB3;
-          AddToLogFile(EngineLog, '=== ПРИМЕНЕНИЕ BLOCK ПАТЧА ===');
-          AddToLogFile(EngineLog, 'Тип локомотива: ЧС7 (822)');
-          AddToLogFile(EngineLog, 'Адрес патча: $' + IntToHex(patchAddress, 8));
-          
-          if ApplyNOPPatch(patchAddress, 5) then
-          begin
-            BLOCKPatchApplied := True;
-            AddToLogFile(EngineLog, 'BLOCK патч для ЧС7 применен успешно');
-          end
-          else
-            AddToLogFile(EngineLog, 'ОШИБКА применения BLOCK патча для ЧС7');
-        end;
-        812: // ЧС8
-        begin
-          if ApplyNOPPatch($4D835F, 5) then
-          begin
-            BLOCKPatchApplied := True;
-            AddToLogFile(EngineLog, 'BLOCK патч для ЧС8 применен успешно');
-          end;
-        end;
-        3154: // ЭД4М
-        begin
-          if ApplyNOPPatch($6297EF, 5) then
-          begin
-            BLOCKPatchApplied := True;
-            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
-          end;
-        end;
-        621: // ЧС4Т
-        begin
-          if ApplyNOPPatch($5DF68A, 5) then
-          begin
-            BLOCKPatchApplied := True;
-            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
-          end;
-        end;
-        880:
-        begin // ВЛ80Т
-          if ApplyNOPPatch($58E8D2, 5) then
-          begin
-            BLOCKPatchApplied := True;
-            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
-          end;
-        end;
-        2070: // ТЭП70
-        begin
-          if ApplyNOPPatch($681B04, 5) then
-          begin
-            BLOCKPatchApplied := True;
-            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
-          end;
-        end;
-        885: // ВЛ85
-        begin
-          if ApplyNOPPatch($6C41FE, 5) then
-          begin
-            BLOCKPatchApplied := True;
-            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
-          end;
-        end;
-        else
-          AddToLogFile(EngineLog, 'BLOCK патч не поддерживается для типа локомотива: ' + IntToStr(currentLocType));
-      end;
+  VirtualProtect(Pointer($00484AF5 + 2), 1, PAGE_EXECUTE_READWRITE, OldProtect);
+  PByte($00484AF5 + 2)^ := $02;
+  FlushInstructionCache(GetCurrentProcess, Pointer($00484AF5 + 2), 1);
+  VirtualProtect(Pointer($00484AF5 + 2), 1, OldProtect, OldProtect);
+
+//      case currentLocType of
+//        822: // ЧС7
+//        begin
+//          patchAddress := $00677AB3;
+//          AddToLogFile(EngineLog, '=== ПРИМЕНЕНИЕ BLOCK ПАТЧА ===');
+//          AddToLogFile(EngineLog, 'Тип локомотива: ЧС7 (822)');
+//          AddToLogFile(EngineLog, 'Адрес патча: $' + IntToHex(patchAddress, 8));
+//          
+//          if ApplyNOPPatch(patchAddress, 5) then
+//          begin
+//            BLOCKPatchApplied := True;
+//            AddToLogFile(EngineLog, 'BLOCK патч для ЧС7 применен успешно');
+//          end
+//          else
+//            AddToLogFile(EngineLog, 'ОШИБКА применения BLOCK патча для ЧС7');
+//        end;
+//        812: // ЧС8
+//        begin
+//          if ApplyNOPPatch($4D835F, 5) then
+//          begin
+//            BLOCKPatchApplied := True;
+//            AddToLogFile(EngineLog, 'BLOCK патч для ЧС8 применен успешно');
+//          end;
+//        end;
+//        3154: // ЭД4М
+//        begin
+//          if ApplyNOPPatch($6297EF, 5) then
+//          begin
+//            BLOCKPatchApplied := True;
+//            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
+//          end;
+//        end;
+//        621: // ЧС4Т
+//        begin
+//          if ApplyNOPPatch($5DF68A, 5) then
+//          begin
+//            BLOCKPatchApplied := True;
+//            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
+//          end;
+//        end;
+//        880:
+//        begin // ВЛ80Т
+//          if ApplyNOPPatch($58E8D2, 5) then
+//          begin
+//            BLOCKPatchApplied := True;
+//            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
+//          end;
+//        end;
+//        2070: // ТЭП70
+//        begin
+//          if ApplyNOPPatch($681B04, 5) then
+//          begin
+//            BLOCKPatchApplied := True;
+//            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
+//          end;
+//        end;
+//        885: // ВЛ85
+//        begin
+//          if ApplyNOPPatch($6C41FE, 5) then
+//          begin
+//            BLOCKPatchApplied := True;
+//            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
+//          end;
+//        end;
+//        else
+//          AddToLogFile(EngineLog, 'BLOCK патч не поддерживается для типа локомотива: ' + IntToStr(currentLocType));
+//      end;
       
     except
       on E: Exception do

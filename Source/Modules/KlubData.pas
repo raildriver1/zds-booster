@@ -29,6 +29,8 @@ function GetSvetoforFileName: string; // Получение имени файл�
 function GetRoutePathFromMemory: string; // Получение пути маршрута из памяти
 
 function GetSpeedValue: Integer;     // Скорость как число
+function GetTargetSpeedValue: Integer;     // Целевая Скорость как число
+
 function GetDistanceValue: Integer; // Расстояние как число
 function GetTrackNumberInt: Byte;   // Номер пути в байте
 
@@ -40,7 +42,7 @@ function GetPressureTCf: Single;    // Давление ТЦ
 function ReadSettingsValue(const ParamName: string): string;  // Универсальная функция чтения параметров из settings.ini
 function GetRoutePathFromSettings: string;   // Чтение RoutePath из settings.ini
 function GetSpeedLimitByTRACK: Integer;      // Получение ограничения скорости по треку
-function GetSpeedTargetByTRACK: Integer;
+function GetSpeedTargetByTRACK_NextRange: Integer;
 
 implementation
 
@@ -407,61 +409,55 @@ begin
   end;
 end;
 
-function GetSpeedTargetByTRACK: Integer;
+var
+  LastTrackValue: Integer = -1;
+  LastResult: Integer = 0;
+
+function GetSpeedTargetByTRACK_NextRange: Integer;
 var
   CurrentTrackValue: Integer;
-  TargetTrackValue: Integer;
-  i: Integer;
+  i, FoundIndex: Integer;
 begin
   Result := 0;
 
-  // Получаем базовое значение как в оригинальной функции
-  Result := PWord(BaseAddress + $34987C)^;
   if GetALS <= 4 then
     Exit;
 
-  try
-    // Быстрое чтение из памяти
-    CurrentTrackValue := PInteger(BaseAddress + $349A0C)^;
-    
-    // Берем следующее значение (+1)
-    TargetTrackValue := CurrentTrackValue + 1;
-    
-    // Загружаем данные только при необходимости
-    if RangesCount = 0 then
-      LoadSpeedRanges;
-    
-    // Быстрый поиск в отсортированном массиве для целевого значения
-    for i := 0 to RangesCount - 1 do
+  CurrentTrackValue := PInteger(BaseAddress + $349A0C)^;
+
+if CurrentTrackValue = LastTrackValue then
+begin
+  Result := LastResult;
+  Exit;
+end;
+
+
+  LastTrackValue := CurrentTrackValue;
+
+  if RangesCount = 0 then
+    LoadSpeedRanges;
+
+  FoundIndex := -1;
+
+  for i := 0 to RangesCount - 1 do
+  begin
+    if CurrentTrackValue < SpeedRanges[i].MinRange then
+      Break;
+
+    if (CurrentTrackValue >= SpeedRanges[i].MinRange) and
+       (CurrentTrackValue <= SpeedRanges[i].MaxRange) then
     begin
-      // Если целевое значение меньше начала диапазона - дальше искать бесполезно
-      if TargetTrackValue < SpeedRanges[i].MinRange then
-        Break;
-        
-      // Проверяем попадание в диапазон
-      if (TargetTrackValue >= SpeedRanges[i].MinRange) and 
-         (TargetTrackValue <= SpeedRanges[i].MaxRange) then
-      begin
-        Result := SpeedRanges[i].SpeedLimit + 3;
-        
-        WriteToLog(Format('GetSpeedTargetByTRACK: Текущий пикет %d, целевой пикет %d, найден лимит %d', 
-          [CurrentTrackValue, TargetTrackValue, Result]));
-        
-        Exit;
-      end;
-    end;
-    
-    // Если не найден диапазон для следующего значения, возвращаем текущий лимит
-    WriteToLog(Format('GetSpeedTargetByTRACK: Для целевого пикета %d диапазон не найден, используем текущий лимит', 
-      [TargetTrackValue]));
-    
-  except
-    on E: Exception do
-    begin
-      WriteToLog('Ошибка в GetSpeedTargetByTRACK: ' + E.Message);
-      Result := 0;
+      FoundIndex := i;
+      Break;
     end;
   end;
+
+  if (FoundIndex >= 0) and (FoundIndex + 1 < RangesCount) then
+    Result := SpeedRanges[FoundIndex + 1].SpeedLimit + 3
+  else
+    Result := 0;
+
+  LastResult := Result;
 end;
 
 // Новая функция: получение пути маршрута из памяти (аналог Python self.map_)
@@ -935,7 +931,7 @@ var
 begin
   try
     val := PSingle(BaseAddress + $04F8C28C)^;
-    roundedSpeed := Round(val);
+    roundedSpeed := Round(Abs(val));  // Добавлена функция Abs()
     Result := IntToStr(roundedSpeed);
   except
     Result := 'Err';
@@ -966,7 +962,7 @@ end;
 function GetSpeedValue2: Single;
 begin
   try
-    Result := PSingle(BaseAddress + $04F8C28C)^;
+    Result := Round(Abs(PSingle(BaseAddress + $04F8C28C)^));
   except
     Result := 0;
   end;
@@ -986,6 +982,16 @@ begin
   try
     // Используй тот же адрес, что и в GetLimitSpeed, но возвращай число
     Result := PWord(BaseAddress + $34987C)^;
+    Result := Abs(Result);
+  except
+    Result := 0;
+  end;
+end;
+
+function GetTargetSpeedValue: Integer;
+begin
+  try
+    Result := PWord(BaseAddress + $349880)^;
     Result := Abs(Result);
   except
     Result := 0;
