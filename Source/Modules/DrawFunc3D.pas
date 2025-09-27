@@ -8843,6 +8843,24 @@ begin
          begin
            AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Продолжение цикла, текущее состояние: ' + IntToStr(currentState));
            
+           // СПЕЦИАЛЬНАЯ ОБРАБОТКА ДЛЯ СОСТОЯНИЯ 13 (ДЛИНА В ВАГОНАХ)
+           if currentState = 13 then
+           begin
+             if InputBuffer <> '' then
+             begin
+               NumberValue := StrToIntDef(InputBuffer, 0);
+               // Умножаем на 4 и записываем по адресу 0x538D95C
+               NumberValue := NumberValue * 4;
+               AddToLogFile(EngineLog, '[СОСТОЯНИЕ 13] Записываем (число * 4): ' + IntToStr(NumberValue) + ' в 0x538D95C');
+               WriteDWordToMemory(Pointer($538D95C), NumberValue);
+             end
+             else
+             begin
+               AddToLogFile(EngineLog, '[СОСТОЯНИЕ 13] Буфер пустой, записываем 0');
+               WriteDWordToMemory(Pointer($538D95C), 0);
+             end;
+           end;
+           
            // Очищаем буфер и переходим к следующему состоянию
            InputBuffer := '';
            
@@ -10043,7 +10061,12 @@ var
   procedure DrawPressureLabels(barX: Single; barLabel: string; barValue: Single);
   begin
     DrawTextSimple(barX - 0.008, 0, barBottom - 0.007, 0.005, barLabel);
-    DrawTextSimple(barX - 0.009, 0, barBottom - 0.0135, 0.005, FormatFloat('0.00', barValue));
+
+    if pressureMode = 0 then
+      DrawTextSimple(barX - 0.008, 0, barBottom - 0.0135, 0.005, FormatFloat('0.0', barValue * scaleFactor))
+    else
+      DrawTextSimple(barX - 0.009, 0, barBottom - 0.0135, 0.005, FormatFloat('0.00', barValue));
+
     DrawTextSimple(barX - 0.009, 0, barBottom - 0.02, 0.005, 'КГС');
   end;
 

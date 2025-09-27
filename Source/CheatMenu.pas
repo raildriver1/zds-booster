@@ -44,8 +44,6 @@ type
     OriginalWidth: Integer;
     // Анимация появления
     SpawnDelay: Single;
-    AnimStartX, AnimStartY: Integer;  // Стартовые позиции для анимации
-    AnimEndX, AnimEndY: Integer;      // Конечные позиции для анимац
   end;
 
   // ЯЗЫКИ
@@ -1380,51 +1378,51 @@ begin
   if Abs(MenuWindow.Alpha - MenuWindow.TargetAlpha) > 0.01 then
     MenuWindow.Alpha := MenuWindow.Alpha + (MenuWindow.TargetAlpha - MenuWindow.Alpha) * 5.0 * DeltaTime;
   
- // === АНИМАЦИЯ МАСШТАБА И ПОЗИЦИИ ОКОН ===
-with RenderWindow do
-begin
-  if Abs(Scale - TargetScale) > 0.01 then
-    Scale := Scale + (TargetScale - Scale) * MenuAnimationSpeed * DeltaTime;
-  // Интерполяция позиции с отдельными координатами анимации
-  if not IsDragging then
+  // === АНИМАЦИЯ МАСШТАБА И ПОЗИЦИИ ОКОН ===
+  with RenderWindow do
   begin
-    X := Round(AnimStartX + (AnimEndX - AnimStartX) * MenuAnimationProgress);
-    Y := Round(AnimStartY + (AnimEndY - AnimStartY) * MenuAnimationProgress);
+    if Abs(Scale - TargetScale) > 0.01 then
+      Scale := Scale + (TargetScale - Scale) * MenuAnimationSpeed * DeltaTime;
+    // Интерполяция позиции от центра к оригинальной позиции
+    if not IsDragging then
+    begin
+      X := Round(CenterX + (OriginalX - CenterX) * MenuAnimationProgress);
+      Y := Round(CenterY + (OriginalY - CenterY) * MenuAnimationProgress);
+    end;
   end;
-end;
-
-with WorldWindow do
-begin
-  if Abs(Scale - TargetScale) > 0.01 then
-    Scale := Scale + (TargetScale - Scale) * MenuAnimationSpeed * DeltaTime;
-  if not IsDragging then
+  
+  with WorldWindow do
   begin
-    X := Round(AnimStartX + (AnimEndX - AnimStartX) * MenuAnimationProgress);
-    Y := Round(AnimStartY + (AnimEndY - AnimStartY) * MenuAnimationProgress);
+    if Abs(Scale - TargetScale) > 0.01 then
+      Scale := Scale + (TargetScale - Scale) * MenuAnimationSpeed * DeltaTime;
+    if not IsDragging then
+    begin
+      X := Round(CenterX + (OriginalX - CenterX) * MenuAnimationProgress);
+      Y := Round(CenterY + (OriginalY - CenterY) * MenuAnimationProgress);
+    end;
   end;
-end;
-
-with LocomotiveWindow do
-begin
-  if Abs(Scale - TargetScale) > 0.01 then
-    Scale := Scale + (TargetScale - Scale) * MenuAnimationSpeed * DeltaTime;
-  if not IsDragging then
+  
+  with LocomotiveWindow do
   begin
-    X := Round(AnimStartX + (AnimEndX - AnimStartX) * MenuAnimationProgress);
-    Y := Round(AnimStartY + (AnimEndY - AnimStartY) * MenuAnimationProgress);
+    if Abs(Scale - TargetScale) > 0.01 then
+      Scale := Scale + (TargetScale - Scale) * MenuAnimationSpeed * DeltaTime;
+    if not IsDragging then
+    begin
+      X := Round(CenterX + (OriginalX - CenterX) * MenuAnimationProgress);
+      Y := Round(CenterY + (OriginalY - CenterY) * MenuAnimationProgress);
+    end;
   end;
-end;
-
-with MenuWindow do
-begin
-  if Abs(Scale - TargetScale) > 0.01 then
-    Scale := Scale + (TargetScale - Scale) * MenuAnimationSpeed * DeltaTime;
-  if not IsDragging then
+  
+  with MenuWindow do
   begin
-    X := Round(AnimStartX + (AnimEndX - AnimStartX) * MenuAnimationProgress);
-    Y := Round(AnimStartY + (AnimEndY - AnimStartY) * MenuAnimationProgress);
+    if Abs(Scale - TargetScale) > 0.01 then
+      Scale := Scale + (TargetScale - Scale) * MenuAnimationSpeed * DeltaTime;
+    if not IsDragging then
+    begin
+      X := Round(CenterX + (OriginalX - CenterX) * MenuAnimationProgress);
+      Y := Round(CenterY + (OriginalY - CenterY) * MenuAnimationProgress);
+    end;
   end;
-end;
   
   // Анимация секций
   with Settings do
@@ -2632,79 +2630,78 @@ begin
 end;
 
 procedure ToggleMenu; stdcall;
-var
-  CenterX, CenterY: Integer;
 begin
   MenuVisible := not MenuVisible;
-  
-  // Вычисляем центр экрана
-  CenterX := InitResX div 2;
-  CenterY := InitResY div 2;
   
   if MenuVisible then
   begin
     ShowCursor(True);
+    
     LoadConfigForced;
     
-    // === ПРИНУДИТЕЛЬНЫЙ СБРОС АНИМАЦИИ ОТКРЫТИЯ ===
+    // === ИНИЦИАЛИЗАЦИЯ TRANSFORM АНИМАЦИИ ОТКРЫТИЯ ===
     MenuAnimationProgress := 0.0;
     MenuTargetProgress := 1.0;
     
-    // === НАСТРОЙКА АНИМАЦИИ ПОЗИЦИЙ - ОТ ЦЕНТРА К КРАЯМ ===
-    
-    // RenderWindow - от центра к исходной позиции
-    RenderWindow.AnimStartX := CenterX - RenderWindow.Width div 2;
-    RenderWindow.AnimStartY := CenterY - RenderWindow.Height div 2;
-    RenderWindow.AnimEndX := RenderWindow.OriginalX;  // Исходная позиция
-    RenderWindow.AnimEndY := RenderWindow.OriginalY;
-    RenderWindow.Alpha := 0.0;
-    RenderWindow.Scale := 0.3;
-    RenderWindow.Rotation := 15.0 * PI / 180.0;
+    // Устанавливаем начальные параметры для transform анимации появления
+    RenderWindow.Alpha := RenderWindow.Alpha;           // или принудительно к 0
+    RenderWindow.Scale := RenderWindow.Scale;           // или принудительно к 0.3
+    RenderWindow.Rotation := RenderWindow.Rotation;     // или принудительно к 0
     RenderWindow.TargetAlpha := 1.0;
     RenderWindow.TargetScale := 1.0;
+    RenderWindow.TransformProgress := 0.0;
+    RenderWindow.TargetTransformProgress := 1.0;
+    RenderWindow.Rotation := 15.0 * PI / 180.0;
     RenderWindow.TargetRotation := 0.0;
+    RenderWindow.TranslateY := -200.0;
+    RenderWindow.TargetTranslateY := 0.0;
+    RenderWindow.DragWidthExpansion := 0.0;
+    RenderWindow.TargetDragWidthExpansion := 0.0;
     RenderWindow.ShadowIntensity := 0.0;
     RenderWindow.TargetShadowIntensity := 0.8;
     
-    // WorldWindow
-    WorldWindow.AnimStartX := CenterX - WorldWindow.Width div 2;
-    WorldWindow.AnimStartY := CenterY - WorldWindow.Height div 2;
-    WorldWindow.AnimEndX := WorldWindow.OriginalX;
-    WorldWindow.AnimEndY := WorldWindow.OriginalY;
     WorldWindow.Alpha := 0.0;
-    WorldWindow.Scale := 0.3;
-    WorldWindow.Rotation := -10.0 * PI / 180.0;
     WorldWindow.TargetAlpha := 1.0;
+    WorldWindow.Scale := 0.3;
     WorldWindow.TargetScale := 1.0;
+    WorldWindow.TransformProgress := 0.0;
+    WorldWindow.TargetTransformProgress := 1.0;
+    WorldWindow.Rotation := -10.0 * PI / 180.0;
     WorldWindow.TargetRotation := 0.0;
+    WorldWindow.TranslateY := -150.0;
+    WorldWindow.TargetTranslateY := 0.0;
+    WorldWindow.DragWidthExpansion := 0.0;
+    WorldWindow.TargetDragWidthExpansion := 0.0;
     WorldWindow.ShadowIntensity := 0.0;
     WorldWindow.TargetShadowIntensity := 0.8;
     
-    // LocomotiveWindow
-    LocomotiveWindow.AnimStartX := CenterX - LocomotiveWindow.Width div 2;
-    LocomotiveWindow.AnimStartY := CenterY - LocomotiveWindow.Height div 2;
-    LocomotiveWindow.AnimEndX := LocomotiveWindow.OriginalX;
-    LocomotiveWindow.AnimEndY := LocomotiveWindow.OriginalY;
     LocomotiveWindow.Alpha := 0.0;
-    LocomotiveWindow.Scale := 0.3;
-    LocomotiveWindow.Rotation := 20.0 * PI / 180.0;
     LocomotiveWindow.TargetAlpha := 1.0;
+    LocomotiveWindow.Scale := 0.3;
     LocomotiveWindow.TargetScale := 1.0;
+    LocomotiveWindow.TransformProgress := 0.0;
+    LocomotiveWindow.TargetTransformProgress := 1.0;
+    LocomotiveWindow.Rotation := 20.0 * PI / 180.0;
     LocomotiveWindow.TargetRotation := 0.0;
+    LocomotiveWindow.TranslateY := -100.0;
+    LocomotiveWindow.TargetTranslateY := 0.0;
+    LocomotiveWindow.DragWidthExpansion := 0.0;
+    LocomotiveWindow.TargetDragWidthExpansion := 0.0;
     LocomotiveWindow.ShadowIntensity := 0.0;
     LocomotiveWindow.TargetShadowIntensity := 0.8;
     
-    // MenuWindow
-    MenuWindow.AnimStartX := CenterX - MenuWindow.Width div 2;
-    MenuWindow.AnimStartY := CenterY - MenuWindow.Height div 2;
-    MenuWindow.AnimEndX := MenuWindow.OriginalX;
-    MenuWindow.AnimEndY := MenuWindow.OriginalY;
     MenuWindow.Alpha := 0.0;
-    MenuWindow.Scale := 0.3;
-    MenuWindow.Rotation := -25.0 * PI / 180.0;
     MenuWindow.TargetAlpha := 1.0;
+    MenuWindow.Scale := 0.3;
     MenuWindow.TargetScale := 1.0;
+    MenuWindow.TransformProgress := 0.0;
+    MenuWindow.TargetTransformProgress := 1.0;
+    MenuWindow.Rotation := -25.0 * PI / 180.0;
     MenuWindow.TargetRotation := 0.0;
+    MenuWindow.TranslateY := -250.0;
+    MenuWindow.TargetTranslateY := 0.0;
+    MenuWindow.DragWidthExpansion := 0.0;
+    MenuWindow.TargetDragWidthExpansion := 0.0;
     MenuWindow.ShadowIntensity := 0.0;
     MenuWindow.TargetShadowIntensity := 0.8;
     
@@ -2714,41 +2711,33 @@ begin
   begin
     ShowCursor(False);
     
-    // === НАСТРОЙКА АНИМАЦИИ ЗАКРЫТИЯ - ОТ КРАЕВ К ЦЕНТРУ ===
+    // === ИНИЦИАЛИЗАЦИЯ TRANSFORM АНИМАЦИИ ЗАКРЫТИЯ ===
     MenuTargetProgress := 0.0;
     
-    // Устанавливаем координаты для анимации закрытия
-    RenderWindow.AnimStartX := RenderWindow.X;
-    RenderWindow.AnimStartY := RenderWindow.Y;
-    RenderWindow.AnimEndX := CenterX - RenderWindow.Width div 2;
-    RenderWindow.AnimEndY := CenterY - RenderWindow.Height div 2;
+    // Устанавливаем целевые параметры для transform анимации исчезновения
     RenderWindow.TargetAlpha := 0.0;
     RenderWindow.TargetScale := 0.3;
+    RenderWindow.TargetTransformProgress := 0.0;
     RenderWindow.TargetRotation := -15.0 * PI / 180.0;
+    RenderWindow.TargetTranslateY := -200.0;
     
-    WorldWindow.AnimStartX := WorldWindow.X;
-    WorldWindow.AnimStartY := WorldWindow.Y;
-    WorldWindow.AnimEndX := CenterX - WorldWindow.Width div 2;
-    WorldWindow.AnimEndY := CenterY - WorldWindow.Height div 2;
     WorldWindow.TargetAlpha := 0.0;
     WorldWindow.TargetScale := 0.3;
+    WorldWindow.TargetTransformProgress := 0.0;
     WorldWindow.TargetRotation := 10.0 * PI / 180.0;
+    WorldWindow.TargetTranslateY := -150.0;
     
-    LocomotiveWindow.AnimStartX := LocomotiveWindow.X;
-    LocomotiveWindow.AnimStartY := LocomotiveWindow.Y;
-    LocomotiveWindow.AnimEndX := CenterX - LocomotiveWindow.Width div 2;
-    LocomotiveWindow.AnimEndY := CenterY - LocomotiveWindow.Height div 2;
     LocomotiveWindow.TargetAlpha := 0.0;
     LocomotiveWindow.TargetScale := 0.3;
+    LocomotiveWindow.TargetTransformProgress := 0.0;
     LocomotiveWindow.TargetRotation := -20.0 * PI / 180.0;
+    LocomotiveWindow.TargetTranslateY := -100.0;
     
-    MenuWindow.AnimStartX := MenuWindow.X;
-    MenuWindow.AnimStartY := MenuWindow.Y;
-    MenuWindow.AnimEndX := CenterX - MenuWindow.Width div 2;
-    MenuWindow.AnimEndY := CenterY - MenuWindow.Height div 2;
     MenuWindow.TargetAlpha := 0.0;
     MenuWindow.TargetScale := 0.3;
+    MenuWindow.TargetTransformProgress := 0.0;
     MenuWindow.TargetRotation := 25.0 * PI / 180.0;
+    MenuWindow.TargetTranslateY := -250.0;
     
     RemoveMenuPatch;
   end;
