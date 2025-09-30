@@ -7974,6 +7974,7 @@ type
 var
   YellowZoneVerts: TVertexArray;
   LastTarget, LastLimit: Single;
+  LastTrackDirection: Integer = -1;
 
 procedure DrawSpeedometer3D;
 var
@@ -8569,7 +8570,7 @@ begin
   
   case ButtonPState of
     1: begin
-         if (Number >= 1) and (Number <= 127) then
+         if (Number >= 0) and (Number <= 127) then
          begin
            AddToLogFile(EngineLog, '[ВВОД] ✓ Первое число корректное: ' + IntToStr(Number));
            
@@ -10082,6 +10083,8 @@ var
   procedure DrawAllInfoFields;
   var
     inputText: string;
+    currentTrackNumber: Integer;
+    patchValue: Byte;
   begin
     // Основная информация
     DrawTextSimple(-0.11, 0, 0.247, 0.007, GetCoordinatesFormatted);
@@ -10091,15 +10094,39 @@ var
     if GetTrackNumberInt > 0 then
       DrawTextSimple(-0.11, 0, 0.233, 0.007, 'ЭК')
     else
-      DrawTextSimple(-0.11, 0, 0.233, 0.007, GetChannel + ' Гц');
-    DrawTextSimple(-0.095, 0, 0.233, 0.007, GetTrackWithDirection);
+      DrawTextSimple(-0.11, 0, 0.233, 0.007, GetChannel);
+    if GetTrackNumberInt > 0 then
+      DrawTextSimple(-0.095, 0, 0.233, 0.007, GetTrackWithDirection)
+    else
+      DrawTextSimple(-0.095, 0, 0.233, 0.007, '0');
     DrawTextSimple(-0.105, 0, 0.216, 0.007, GetAcceleration);
     DrawTextSimple(-0.105, 0, 0.199, 0.007, GetDistance);
     DrawTextSimple(-0.105, 0, 0.182, 0.007, '0.67');
     DrawTextSimple(-0.110, 0, 0.092, 0.0055, GetTargetType);
-    DrawTextSimple(0.035, 0, 0.092, 0.006, GetDistance + ' м');
-    DrawTextSimple(0.002, 0, 0.092, 0.006, GetSvetoforValue);
+    if GetTrackNumberInt > 0 then
+    begin
+      DrawTextSimple(0.035, 0, 0.092, 0.006, GetDistance + ' м');
+      DrawTextSimple(0.002, 0, 0.092, 0.006, GetSvetoforValue);
+    end;
 
+
+
+
+begin
+  currentTrackNumber := GetTrackNumberInt;
+  
+  // Статическая переменная для отслеживания последнего значения
+  if currentTrackNumber <> LastTrackDirection then
+  begin
+    if currentTrackNumber > 0 then
+      patchValue := 1
+    else
+      patchValue := 0;
+      
+    WriteByteToMemory(Pointer($400000 + $83F12), patchValue);
+    LastTrackDirection := currentTrackNumber;
+  end;
+end;
 
 try
   if PByte($0074AC58)^ = 0 then

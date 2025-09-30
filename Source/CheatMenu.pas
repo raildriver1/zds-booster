@@ -2630,24 +2630,31 @@ begin
 end;
 
 procedure ToggleMenu; stdcall;
+var
+  CenterX, CenterY: Integer;
 begin
   MenuVisible := not MenuVisible;
   
   if MenuVisible then
   begin
     ShowCursor(True);
-    
     LoadConfigForced;
     
-    // === ИНИЦИАЛИЗАЦИЯ TRANSFORM АНИМАЦИИ ОТКРЫТИЯ ===
+    LastFrameTime := GetTickCount;
+    
+    CenterX := InitResX div 2;
+    CenterY := InitResY div 2;
+    
     MenuAnimationProgress := 0.0;
     MenuTargetProgress := 1.0;
     
-    // Устанавливаем начальные параметры для transform анимации появления
-    RenderWindow.Alpha := RenderWindow.Alpha;           // или принудительно к 0
-    RenderWindow.Scale := RenderWindow.Scale;           // или принудительно к 0.3
-    RenderWindow.Rotation := RenderWindow.Rotation;     // или принудительно к 0
+    // === RENDER WINDOW ===
+    // НЕ ТРОГАЕМ OriginalX и OriginalY!
+    RenderWindow.X := CenterX;
+    RenderWindow.Y := CenterY;
+    RenderWindow.Alpha := 0.0;
     RenderWindow.TargetAlpha := 1.0;
+    RenderWindow.Scale := 0.3;
     RenderWindow.TargetScale := 1.0;
     RenderWindow.TransformProgress := 0.0;
     RenderWindow.TargetTransformProgress := 1.0;
@@ -2659,7 +2666,11 @@ begin
     RenderWindow.TargetDragWidthExpansion := 0.0;
     RenderWindow.ShadowIntensity := 0.0;
     RenderWindow.TargetShadowIntensity := 0.8;
+    RenderWindow.IsDragging := False;
     
+    // === WORLD WINDOW ===
+    WorldWindow.X := CenterX;
+    WorldWindow.Y := CenterY;
     WorldWindow.Alpha := 0.0;
     WorldWindow.TargetAlpha := 1.0;
     WorldWindow.Scale := 0.3;
@@ -2674,7 +2685,11 @@ begin
     WorldWindow.TargetDragWidthExpansion := 0.0;
     WorldWindow.ShadowIntensity := 0.0;
     WorldWindow.TargetShadowIntensity := 0.8;
+    WorldWindow.IsDragging := False;
     
+    // === LOCOMOTIVE WINDOW ===
+    LocomotiveWindow.X := CenterX;
+    LocomotiveWindow.Y := CenterY;
     LocomotiveWindow.Alpha := 0.0;
     LocomotiveWindow.TargetAlpha := 1.0;
     LocomotiveWindow.Scale := 0.3;
@@ -2689,7 +2704,11 @@ begin
     LocomotiveWindow.TargetDragWidthExpansion := 0.0;
     LocomotiveWindow.ShadowIntensity := 0.0;
     LocomotiveWindow.TargetShadowIntensity := 0.8;
+    LocomotiveWindow.IsDragging := False;
     
+    // === MENU WINDOW ===
+    MenuWindow.X := CenterX;
+    MenuWindow.Y := CenterY;
     MenuWindow.Alpha := 0.0;
     MenuWindow.TargetAlpha := 1.0;
     MenuWindow.Scale := 0.3;
@@ -2704,6 +2723,7 @@ begin
     MenuWindow.TargetDragWidthExpansion := 0.0;
     MenuWindow.ShadowIntensity := 0.0;
     MenuWindow.TargetShadowIntensity := 0.8;
+    MenuWindow.IsDragging := False;
     
     ApplyMenuPatch;
   end
@@ -2711,33 +2731,35 @@ begin
   begin
     ShowCursor(False);
     
-    // === ИНИЦИАЛИЗАЦИЯ TRANSFORM АНИМАЦИИ ЗАКРЫТИЯ ===
     MenuTargetProgress := 0.0;
     
-    // Устанавливаем целевые параметры для transform анимации исчезновения
     RenderWindow.TargetAlpha := 0.0;
     RenderWindow.TargetScale := 0.3;
     RenderWindow.TargetTransformProgress := 0.0;
     RenderWindow.TargetRotation := -15.0 * PI / 180.0;
     RenderWindow.TargetTranslateY := -200.0;
+    RenderWindow.TargetShadowIntensity := 0.0;
     
     WorldWindow.TargetAlpha := 0.0;
     WorldWindow.TargetScale := 0.3;
     WorldWindow.TargetTransformProgress := 0.0;
     WorldWindow.TargetRotation := 10.0 * PI / 180.0;
     WorldWindow.TargetTranslateY := -150.0;
+    WorldWindow.TargetShadowIntensity := 0.0;
     
     LocomotiveWindow.TargetAlpha := 0.0;
     LocomotiveWindow.TargetScale := 0.3;
     LocomotiveWindow.TargetTransformProgress := 0.0;
     LocomotiveWindow.TargetRotation := -20.0 * PI / 180.0;
     LocomotiveWindow.TargetTranslateY := -100.0;
+    LocomotiveWindow.TargetShadowIntensity := 0.0;
     
     MenuWindow.TargetAlpha := 0.0;
     MenuWindow.TargetScale := 0.3;
     MenuWindow.TargetTransformProgress := 0.0;
     MenuWindow.TargetRotation := 25.0 * PI / 180.0;
     MenuWindow.TargetTranslateY := -250.0;
+    MenuWindow.TargetShadowIntensity := 0.0;
     
     RemoveMenuPatch;
   end;
