@@ -3766,6 +3766,9 @@ begin
 end;
 
 
+
+
+
 {System------------------------------------------------------------------------}
 function vertex(x,y,z : single) : TVertex; inline;
 begin
@@ -11354,6 +11357,7 @@ begin
     RotateX(-90.0);
     RotateY(45.0);
     Scale3D(0.011);
+     Position3D(-0.045, 0.0400002, 0.1420001);
     Color3D(3407667, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, 'ТАБЛИЦА АЛС-ЕН');
@@ -11675,13 +11679,13 @@ begin
     strelka := LoadModel('data\' + GetLocomotiveFolder(GetLocomotiveTypeFromMemory) + '\' + LocNum + '\strelka-m.dmd', 0, False);
   end;
 
-  BeginObj3D;
-  glDisable(GL_LIGHTING);
-  Position3D(0,0,0);
-  SetTexture(UsavppDisplayTextureID);
-  DrawModel(UsavppDisplayModelID, 0, False); // Читаем из памяти
-  glEnable(GL_LIGHTING);
-  EndObj3D;
+//  BeginObj3D;
+//  glDisable(GL_LIGHTING);
+//  Position3D(0,0,0);
+//  SetTexture(UsavppDisplayTextureID);
+//  DrawModel(UsavppDisplayModelID, 0, False); // Читаем из памяти
+//  glEnable(GL_LIGHTING);
+//  EndObj3D;
 
   currentLocType := GetLocomotiveTypeFromMemory;
   locFolder := GetLocomotiveFolder(currentLocType);
