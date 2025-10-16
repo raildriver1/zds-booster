@@ -70,7 +70,7 @@ begin
   if MultyTexActive then DeactiveMultytexturing;
   glGetFloatv(GL_CURRENT_COLOR, @LColor);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  //glDisable(GL_DEPTH_TEST);
+  glDisable(GL_DEPTH_TEST);
   glDisable(GL_LIGHTING);
   glMatrixMode(GL_PROJECTION);
   glPushMatrix;
