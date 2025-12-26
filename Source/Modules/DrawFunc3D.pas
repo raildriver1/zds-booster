@@ -21,7 +21,7 @@
 unit DrawFunc3D;
 interface
 uses OpenGL, Variables, Windows, TFrustumClass, EngineUtils, SysUtils, DMD_MultyMesh,
-     Textures, DPC_Packages, Classes, KlubData, KlubProcessor, Math, TlHelp32, MMSystem, IniFiles, Sound;
+     Textures, DPC_Packages, Classes, KlubData, KlubProcessor, Math, TlHelp32, MMSystem, IniFiles;
 
 
 type TVertex3D = record X,Y,Z : single; Color, Alpha : integer; TexX, TexY : single; end;
@@ -133,10 +133,6 @@ procedure SceneSetObj( SceneIdent, ObjIdent : cardinal; SceneMesh : TSceneMesh )
 function  SceneGetObj( SceneIdent, ObjIdent : cardinal ) : TSceneMesh; stdcall;
 
 function ApplyKPD3Patch: Boolean;
-function ApplyBLOKPatch: Boolean;
-function HandleBlockKeyboardClick(mouseX, mouseY: Integer): Boolean;
-
-
 
 procedure WriteHookAddress; stdcall;
 procedure WriteHookAddressCHS8; stdcall;
@@ -440,8 +436,6 @@ var
   NewSkyInitialized: Boolean = False;
   OriginalMaxDistanceValue: Integer = 800; // Сохраняем оригинальное значение
 
-  blokhookklub: Boolean = False;
-
   // Флаги для обработки команд  
   statek137: Boolean = False;
   statek10: Boolean = False;  // <- ДОБАВИТЬ ЭТУ СТРОКУ
@@ -451,11 +445,9 @@ var
 
   // Переменные для моделей
   MyModelID: integer = 0;
-  UsavppDisplayModelID: integer = 0;
   KlubBilIndPModelID: Integer = 0;  // для klub-bil-ind_p.dmd (||)
   KlubBilIndBModelID: Integer = 0;  // для klub-bil-ind_b.dmd (|, l, -)
   MyTextureID: cardinal = 0;
-  UsavppDisplayTextureID: cardinal = 0;
   strelka: integer = 0;
   SevenSegmentFont: Integer = 0;
   KLUBUFont: Integer = 0;        // ← ДОБАВИТЬ ЭТУ ПЕРЕМЕННУЮ
@@ -569,6 +561,10 @@ begin
   Config_MainCamera := MainCamera;
   Config_MaxDistance := MaxDistance;
   Config_NewSky := NewSky;
+  
+  AddToLogFile(EngineLog, Format('Установлены глобальные переменные: F=%s M=%s D=%s S=%s',
+    [BoolToStr(Config_Freecam, True), BoolToStr(Config_MainCamera, True), 
+     BoolToStr(Config_MaxDistance, True), BoolToStr(Config_NewSky, True)]));
 end;
 
 function GetConfigFreecam: Boolean; stdcall;
@@ -1653,8 +1649,10 @@ begin
     AddToLogFile(EngineLog, 'Конфиг загружен при старте системы');
   end;
   
+  // Ограничиваем частоту обработки всех модулей
+  if (currentTime - LastProcessTime) < PROCESS_INTERVAL then Exit;
   LastProcessTime := currentTime;
-
+  
   // Обрабатываем модули по очереди (round-robin)
   case ModuleIndex of
     0: ProcessFreecam;
@@ -3764,9 +3762,6 @@ begin
     end;
   end;
 end;
-
-
-
 
 
 {System------------------------------------------------------------------------}
@@ -6333,6 +6328,7 @@ begin
       // Восстанавливаем защиту
       VirtualProtect(Pointer(TARGET_ADDRESS), 10, OldProtect, OldProtect);
       
+      AddToLogFile(EngineLog, Format('stepForward записан в память: %.6f', [value]));
     end
     else
     begin
@@ -7400,21 +7396,6 @@ begin
   end;
 end;
 
-// Функция получения адреса патча для BLOK по типу локомотива
-function GetBLOKPatchOffset(locType: Integer): Cardinal;
-begin
-  case locType of
-    621: Result := $5DD854;   // ЧС4Т
-//    822: Result := $27795A;   // ЧС7
-//    812: Result := $D5A85;    // ЧС8
-    880: Result := $58D217;   // ВЛ80Т
-    2070: Result := $681137;  // ТЭП70
-    885: Result := $6C2FBB;
-    else
-      Result := 0; // Неподдерживаемый тип
-  end;
-end;
-
 // Функция проверки наличия KPD-3 файлов
 function CheckKPD3FilesExist(locType: Integer; locNum: string): Boolean;
 var
@@ -7634,129 +7615,6 @@ begin
   end;
 end;
 
-
-// Функция проверки наличия KPD-3 файлов
-function CheckBLOKFilesExist(locType: Integer; locNum: string): Boolean;
-var
-  locFolder, kpdPath: string;
-  kpdModelPath, kpdTexturePath, arrowModelPath: string;
-begin
-  Result := False;
-  
-  try
-    locFolder := GetLocomotiveFolder(locType);
-    kpdPath := 'data\' + locFolder + '\' + GetLocNum + '\blok\';
-    
-    // Проверяем существование папки
-    if not DirectoryExists(kpdPath) then
-    begin
-      AddToLogFile(EngineLog, 'blok папка не найдена: ' + kpdPath);
-      Exit;
-    end;
-    
-    // Проверяем наличие необходимых файлов
-    kpdModelPath := kpdPath + 'BI-BLOK.dmd';
-    kpdTexturePath := kpdPath + 'blok.bmp';
-    arrowModelPath := kpdPath + 'BI-blok-displ.dmd';
-    
-    Result := FileExists(kpdModelPath) and 
-              FileExists(kpdTexturePath) and 
-              FileExists(arrowModelPath);
-              
-    if Result then
-      AddToLogFile(EngineLog, 'blok файлы найдены для ' + locFolder + ' ' + locNum)
-    else
-      AddToLogFile(EngineLog, 'blok файлы неполные для ' + locFolder + ' ' + locNum);
-
-  except
-    on E: Exception do
-    begin
-      AddToLogFile(EngineLog, 'Ошибка проверки blok файлов: ' + E.Message);
-      Result := False;
-    end;
-  end;
-end;
-
-
-// Функция применения патча KPD-3
-function ApplyBLOKPatch: Boolean;
-var
-  currentLocType: Integer;
-  patchOffset: Cardinal;
-  patchAddress: Cardinal;
-  drawBLOKAddress: Cardinal;
-  newOffset: Integer;
-  OldProtect: DWORD;
-begin
-  Result := False;
-  
-  try
-    currentLocType := GetLocomotiveTypeFromMemory;
-    
-    // Проверяем, поддерживается ли этот тип локомотива
-    patchAddress := GetBLOKPatchOffset(currentLocType);
-if (patchAddress = 0) and ((currentLocType = 822) or (currentLocType = 812) or (currentLocType = 3154)) then
-begin
-  Exit;
-end;
-
-
-    
-    // Проверяем наличие BLOK файлов
-    if not CheckBLOKFilesExist(currentLocType, LocNum) then
-    begin
-      AddToLogFile(EngineLog, 'BLOK файлы не найдены, патч не применяется');
-      Exit;
-    end;
-
-
-//    if not KPD3Initialized then
-//    begin
-//      AddToLogFile(EngineLog, 'Не удалось инициализировать BLOK, патч не применяется');
-//      Exit;
-//    end;
-    
-drawBLOKAddress := Cardinal(@DrawBLOCK);
-
-// Вычисляем relative offset для инструкции CALL
-newOffset := Integer(drawBLOKAddress) - Integer(patchAddress + 5);
-
-AddToLogFile(EngineLog, Format('Применяем BLOK патч для %s:', [GetLocomotiveFolder(currentLocType)]));
-AddToLogFile(EngineLog, Format('Адрес патча: $%X', [patchAddress]));
-AddToLogFile(EngineLog, Format('Адрес DrawBLOCK: $%X', [drawBLOKAddress]));
-
-if VirtualProtect(Pointer(patchAddress + 1), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
-begin
-  try
-    PInteger(patchAddress + 1)^ := newOffset;  // перезаписываем offset CALL
-    VirtualProtect(Pointer(patchAddress + 1), 4, OldProtect, OldProtect);
-    Result := True;
-    AddToLogFile(EngineLog, 'BLOK патч применен успешно');
-  except
-    on E: Exception do
-    begin
-      AddToLogFile(EngineLog, 'ОШИБКА записи BLOK патча: ' + E.Message);
-      Result := False;
-    end;
-  end;
-end
-else
-begin
-  AddToLogFile(EngineLog, 'ОШИБКА: Не удалось изменить защиту памяти для BLOK патча');
-  Result := False;
-end;
-
-    
-  except
-    on E: Exception do
-    begin
-      AddToLogFile(EngineLog, 'ИСКЛЮЧЕНИЕ при применении BLOK патча: ' + E.Message);
-      Result := False;
-    end;
-  end;
-end;
-
-
 // Функция для вызова из основного кода (например, в InitEng или другом месте)
 procedure InitializeKPD3System;
 begin
@@ -7971,26 +7829,17 @@ begin
   DrawKPD3(25.0, 25, 3.50, 10.346, 1.34);
 end;
 
-type
-  TVertexArray = array of array[0..2] of GLfloat;
-
-var
-  YellowZoneVerts: TVertexArray;
-  LastTarget, LastLimit: Single;
-  LastTrackDirection: Integer = -1;
-
 procedure DrawSpeedometer3D;
 var
   i: Integer;
   angle, needleAngle: Single;
-  speed, speedLimit, maxSpeed, speedTarget: Single;
+  speed, speedLimit, maxSpeed: Single;
   tc, tm, ur: Single;
   speedText: string;
   segments: Integer;
   x, y: Single;
   blinkState: Boolean;
   innerRadius, outerRadius: Single;
-
 const
   MIN_SPEED = 0;
   MAX_SPEED = 300;
@@ -7998,49 +7847,10 @@ const
   END_ANGLE = -45;
   SPEED_RANGE = 270;
   BASE_RADIUS = 60;
-
-procedure UpdateYellowZone(speedTarget, speedLimit, maxSpeed: Single);
-var
-  i, segments: Integer;
-  angle: Single;
-  x, y: Single;
-begin
-  if (Abs(LastTarget - speedTarget) < 0.1) and
-     (Abs(LastLimit - speedLimit) < 0.1) then Exit;
-
-  LastTarget := speedTarget;
-  LastLimit := speedLimit;
-
-  segments := Round(((speedLimit - speedTarget) / maxSpeed) * SPEED_RANGE * 0.5);
-  if segments > 20 then segments := 20;
-  if segments < 3 then segments := 3;
-
-  SetLength(YellowZoneVerts, (segments+1) * 2);
-
-  for i := 0 to segments do
-  begin
-    angle := (START_ANGLE - (speedTarget / maxSpeed) * SPEED_RANGE -
-              (i * (speedLimit - speedTarget) / maxSpeed * SPEED_RANGE / segments)) * (Pi / 180.0);
-
-    x := outerRadius * cos(angle);
-    y := outerRadius * sin(angle);
-    YellowZoneVerts[i*2][0] := x;
-    YellowZoneVerts[i*2][1] := y;
-    YellowZoneVerts[i*2][2] := 0.2;
-
-    x := innerRadius * cos(angle);
-    y := innerRadius * sin(angle);
-    YellowZoneVerts[i*2+1][0] := x;
-    YellowZoneVerts[i*2+1][1] := y;
-    YellowZoneVerts[i*2+1][2] := 0.2;
-  end;
-end;
-
 begin
   try
     speed := GetSpeedValue2;
     speedLimit := GetLimitSpeedValue;
-    speedTarget := GetTargetSpeedValue;
     maxSpeed := MAX_SPEED;
     tc := StrToFloatDef(GetPressureTC, 0);
     tm := StrToFloatDef(GetPressureTM, 0);
@@ -8064,7 +7874,7 @@ begin
     Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
 
-    if GetALS > 0 then
+    if speedLimit > 0 then
       segments := Round((speedLimit / maxSpeed) * SPEED_RANGE)
     else
       segments := SPEED_RANGE;
@@ -8072,7 +7882,7 @@ begin
     glBegin(GL_TRIANGLE_STRIP);
     for i := 0 to segments do
     begin
-      if GetALS > 0 then
+      if speedLimit > 0 then
         angle := (START_ANGLE - (i * (speedLimit / maxSpeed) * SPEED_RANGE / segments)) * (Pi / 180.0)
       else
         angle := (START_ANGLE - (i * SPEED_RANGE / segments)) * (Pi / 180.0);
@@ -8089,7 +7899,7 @@ begin
     EndObj3D;
 
     // === КРАСНАЯ ЗОНА ===
-    if GetALS > 0 then
+    if speedLimit > 0 then
     begin
       BeginObj3D;
       Position3D(-0.01, 0, 0.18);
@@ -8119,27 +7929,6 @@ begin
       end;
       EndObj3D;
     end;
-//
-// === ЖЕЛТАЯ ЗОНА ===
-if (GetALS > 0) and (speedTarget > 0) and (speedTarget < speedLimit) and
-   (speedLimit - speedTarget > 3) then
-begin
-  UpdateYellowZone(speedTarget, speedLimit, maxSpeed);
-
-  BeginObj3D;
-  Position3D(-0.01, 0, 0.18);
-  RotateX(-90);
-  Scale3D(0.0009);
-  Color3D($00FFFF, 255, False, 0.0);
-  SetTexture(0);
-
-  glBegin(GL_TRIANGLE_STRIP);
-    for i := 0 to High(YellowZoneVerts) do
-      glVertex3fv(@YellowZoneVerts[i]);
-  glEnd;
-
-  EndObj3D;
-end;
 
     // === ДЕЛЕНИЯ + ЦИФРЫ ===
     for i := 0 to 15 do
@@ -8180,13 +7969,15 @@ end;
     // === СТРЕЛКА (исправленная - всегда видимая) ===
     needleAngle := (START_ANGLE - (speed / maxSpeed) * SPEED_RANGE) * (Pi / 180.0);
 
-
+    // Отключаем depth test для стрелки чтобы она всегда была видна
+    glDisable(GL_DEPTH_TEST);
+    
     BeginObj3D;
     Position3D(-0.01, 0, 0.18);
     RotateX(-90);
     Scale3D(0.0009);
 
-    if (speed > speedLimit - 3) and (GetALS > 0) and (speed > 0) then
+    if (speed > speedLimit - 3) and (speedLimit > 0) and (speed > 0) then
     begin
       if blinkState then
         Color3D($FFFFFF, 255, False, 0.0)
@@ -8226,13 +8017,15 @@ end;
     // Включаем depth test обратно
     glEnable(GL_DEPTH_TEST);
 
+    // === ЦЕНТРАЛЬНЫЙ КРУГ (над стрелкой) ===
+    glDisable(GL_DEPTH_TEST); // Также отключаем для центрального круга
     
     BeginObj3D;
     Position3D(-0.01, 0, 0.18);
     RotateX(-90);
     Scale3D(0.0009);
 
-    if (speed > speedLimit - 3) and (GetALS > 0) and (speed > 0) then
+    if (speed > speedLimit - 3) and (speedLimit > 0) and (speed > 0) then
     begin
       if blinkState then
         Color3D($FFFFFF, 255, False, 0.0)
@@ -8257,7 +8050,9 @@ end;
 
     glEnable(GL_DEPTH_TEST); // Включаем обратно
 
-
+    // === ОБВОДКА ЦЕНТРА ===
+    glDisable(GL_DEPTH_TEST);
+    
     BeginObj3D;
     Position3D(-0.01, 0, 0.18);
     RotateX(-90);
@@ -8279,25 +8074,24 @@ end;
     
     glEnable(GL_DEPTH_TEST);
 
-// === ТЕКСТ СКОРОСТИ ===
-speedText := FormatFloat('000', Trunc(speed));
+    // === ТЕКСТ СКОРОСТИ ===
+    speedText := FormatFloat('000', Trunc(speed));
+    BeginObj3D;
+    Position3D(-0.019, 0, 0.177); // Выдвигаем вперед
+    RotateX(-90);
+    Scale3D(0.012); // Чуть увеличиваем размер текста
 
-BeginObj3D;
-Position3D(-0.019, -0.001, 0.177); // Увеличил Z с 0.177 до 0.178 - чуть вперед
-RotateX(-90);
-Scale3D(0.012);
+    if (speed > speedLimit - 3) and (speedLimit > 0) and (speed > 0) and blinkState then
+      Color3D($FF6600, 255, False, 0.0)
+    else
+      Color3D($FFFFFF, 255, False, 0.0);
 
-if (speed > speedLimit - 3) and (GetALS > 0) and (speed > 0) and blinkState then
-  Color3D($FF6600, 255, False, 0.0)
-else
-  Color3D($FFFFFF, 255, False, 0.0);
-
-SetTexture(0);
-DrawText3D(0, speedText);
-EndObj3D;
+    SetTexture(0);
+    DrawText3D(0, speedText);
+    EndObj3D;
 
     // === ТЕКСТ ОГРАНИЧЕНИЯ ===
-    if GetALS > 0 then
+    if speedLimit > 0 then
     begin
       BeginObj3D;
       Position3D(-0.019, 0, 0.157); // Выдвигаем вперед
@@ -8373,24 +8167,11 @@ EndObj3D;
   end;
 end;
 
-
-procedure NopMemory(Address: Pointer; Size: Cardinal);
-var
-  OldProtect: DWORD;
-  i: Integer;
-begin
-  VirtualProtect(Address, Size, PAGE_EXECUTE_READWRITE, @OldProtect);
-  for i := 0 to Size - 1 do
-    PByte(NativeUInt(Address) + i)^ := $90; // NOP = 0x90
-  VirtualProtect(Address, Size, OldProtect, @OldProtect);
-end;
-
 var
   // Глобальные переменные для BLOCK системы
   BLOCKModelID: Integer = 0;
-  BLOCKDisplayModelID: Integer = 0;
+  BLOCKDisplayModelID: Integer = 0;  // Добавлена переменная для модели дисплея
   BLOCKTextureID: Integer = 0;
-  BLOCKPSSModelID: Integer = 0;
   BLOCKInitialized: Boolean = False;
   BLOCKPatchApplied: Boolean = False;
 
@@ -8401,892 +8182,8 @@ var
   BlockKeyboardTargetOffset: Single = 210;
   BlockKeyboardInitialized: Boolean = False;
   BlockKeyboardFileExists: Boolean = False;
-  BlockKeyboardSoundID: Integer = -1;
   ScreenWidth: Integer = 1920;
   ScreenHeight: Integer = 1080;
-  
-  // Переменные для hover эффектов кнопок (24 кнопки)
-  ButtonHovered: array[0..23] of Boolean;
-  
-  // Позиции кнопок (относительно панели клавиатуры)
-  ButtonPositions: array[0..23] of record
-    X, Y: Integer;
-  end;
-  
-  // Переменные для логики кнопки "П"
-  ButtonPState: Integer = 0; // 0 - ожидание "П", 1 - ожидание первого числа, 2 - ожидание второго числа
-  InputBuffer: string = '';  // Буфер для ввода чисел
-  
-  // Переменные для команды К123
-  K123State: Integer = 0;    // 0 - неактивно, 1 - ожидание ввода после К
-  K123Timer: Cardinal = 0;   // Время начала отсчета 4 секунд
-  K123Active: Boolean = False; // Активен ли режим К123 (записано 77)
-
-function GetStateBLOCK: Byte;
-begin
-  Result := PByte($400000 + $34988C)^;
-end;
-
-// Функция записи байта в память
-procedure WriteByteToMemory(Address: Pointer; Value: Byte);
-begin
-  AddToLogFile(EngineLog, '[ПАМЯТЬ] Попытка записи байта ' + IntToStr(Value) + ' по адресу ' + IntToHex(Cardinal(Address), 8));
-  try
-    PByte(Address)^ := Value;
-    AddToLogFile(EngineLog, '[ПАМЯТЬ] ✓ УСПЕШНО записан байт ' + IntToStr(Value));
-  except
-    on E: Exception do
-      AddToLogFile(EngineLog, '[ПАМЯТЬ] ✗ ОШИБКА записи: ' + E.Message);
-  end;
-end;
-
-// Функция записи 4-байтового значения в память
-procedure WriteDWordToMemory(Address: Pointer; Value: LongWord);
-begin
-  AddToLogFile(EngineLog, '[ПАМЯТЬ] Попытка записи 4 байтов ' + IntToStr(Value) + ' по адресу ' + IntToHex(Cardinal(Address), 8));
-  try
-    PLongWord(Address)^ := Value;
-    AddToLogFile(EngineLog, '[ПАМЯТЬ] ✓ УСПЕШНО записано 4 байта ' + IntToStr(Value));
-  except
-    on E: Exception do
-      AddToLogFile(EngineLog, '[ПАМЯТЬ] ✗ ОШИБКА записи 4 байт: ' + E.Message);
-  end;
-end;
-
-// Функция проверки и обновления таймера К123
-procedure UpdateK123Timer;
-var
-  currentTime: Cardinal;
-begin
-  if not K123Active then Exit;
-  
-  currentTime := GetTickCount;
-  
-  // Проверяем прошло ли 4 секунды (4000 мс)
-  if (currentTime - K123Timer) >= 4000 then
-  begin
-    AddToLogFile(EngineLog, '[К123] Таймер истек, записываем 0');
-    WriteByteToMemory(Pointer($0074988C), 0);
-    K123Active := False;
-    K123Timer := 0;
-    K123State := 0;
-    InputBuffer := '';
-  end;
-end;
-
-// Обработка кнопки "СТР" - очистка буфера
-procedure ProcessButtonClear;
-begin
-  AddToLogFile(EngineLog, '[КНОПКА СТР] Очистка буфера, было: "' + InputBuffer + '"');
-
-  InputBuffer := '';
-  AddToLogFile(EngineLog, '[КНОПКА СТР] ✓ Буфер очищен');
-end;
-
-// Обработка нажатия кнопки "П"
-procedure ProcessButtonP;
-begin
-  AddToLogFile(EngineLog, '[КНОПКА П] Обработка нажатия, текущее состояние: ' + IntToStr(ButtonPState));
-  
-  if ButtonPState = 0 then
-  begin
-    // Записываем 20 и переходим к ожиданию первого числа
-    WriteByteToMemory(Pointer($0074988C), 20);
-    ButtonPState := 1;
-    InputBuffer := '';
-    AddToLogFile(EngineLog, '[КНОПКА П] ✓ Записали 20, ожидаем первое число');
-  end
-  else
-  begin
-    AddToLogFile(EngineLog, '[КНОПКА П] Кнопка нажата повторно, игнорируем (состояние: ' + IntToStr(ButtonPState) + ')');
-  end;
-end;
-
-// Обработка ввода числа для кнопки "П"
-procedure ProcessNumberInput(ButtonIndex: Integer);
-var
-  NumberStr: string;
-begin
-  AddToLogFile(EngineLog, '[ЧИСЛО] Обработка ввода числа, индекс кнопки: ' + IntToStr(ButtonIndex) + ', состояние П: ' + IntToStr(ButtonPState));
-  
-  // Если не ожидаем ввод числа, игнорируем
-  if ButtonPState = 0 then
-  begin
-    AddToLogFile(EngineLog, '[ЧИСЛО] Игнорируем - не ожидается ввод числа');
-    Exit;
-  end;
-  
-  // Определяем какая цифра нажата
-  case ButtonIndex of
-    1: NumberStr := '1';   // Кнопка 1
-    2: NumberStr := '2';   // Кнопка 2  
-    3: NumberStr := '3';   // Кнопка 3
-    7: NumberStr := '4';   // Кнопка 4
-    8: NumberStr := '5';   // Кнопка 5
-    9: NumberStr := '6';   // Кнопка 6
-    13: NumberStr := '7';  // Кнопка 7
-    14: NumberStr := '8';  // Кнопка 8
-    15: NumberStr := '9';  // Кнопка 9
-    20: NumberStr := '0';  // Кнопка 0
-    else
-    begin
-      AddToLogFile(EngineLog, '[ЧИСЛО] Неизвестная кнопка: ' + IntToStr(ButtonIndex));
-      Exit;
-    end;
-  end;
-  
-  // Ограничиваем длину буфера до 3 цифр
-  if Length(InputBuffer) >= 3 then
-  begin
-    AddToLogFile(EngineLog, '[ЧИСЛО] Буфер полный, игнорируем ввод');
-    Exit;
-  end;
-  
-  // Добавляем цифру к буферу
-  InputBuffer := InputBuffer + NumberStr;
-  AddToLogFile(EngineLog, '[ЧИСЛО] Введена цифра: ' + NumberStr + ', буфер: "' + InputBuffer + '"');
-end;
-
-// Обработка кнопки "ВВОД" для кнопки "П"
-procedure ProcessButtonEnter;
-var
-  Number: Integer;
-begin
-  AddToLogFile(EngineLog, '[ВВОД] Обработка кнопки ВВОД, состояние П: ' + IntToStr(ButtonPState) + ', буфер: "' + InputBuffer + '"');
-  
-  // Если не ожидаем ввод числа, игнорируем
-  if ButtonPState = 0 then
-  begin
-    AddToLogFile(EngineLog, '[ВВОД] Игнорируем - не ожидается ввод числа');
-    Exit;
-  end;
-  
-  // Проверяем что в буфере есть данные
-  if InputBuffer = '' then
-  begin
-    AddToLogFile(EngineLog, '[ВВОД] Буфер пустой, игнорируем');
-    Exit;
-  end;
-  
-  Number := StrToIntDef(InputBuffer, 0);
-  AddToLogFile(EngineLog, '[ВВОД] Анализируем число: ' + IntToStr(Number));
-  
-  case ButtonPState of
-    1: begin
-         if (Number >= 0) and (Number <= 127) then
-         begin
-           AddToLogFile(EngineLog, '[ВВОД] ✓ Первое число корректное: ' + IntToStr(Number));
-           
-           // Записываем введенное значение по адресу 0x400000 + 0x4F8D958
-           WriteByteToMemory(Pointer($400000 + $4F8D958), Byte(Number));
-           AddToLogFile(EngineLog, '[ВВОД] ✓ Записано значение ' + IntToStr(Number) + ' по адресу 0x' + IntToHex($400000 + $4F8D958, 8));
-           
-           // Записываем 21 и переходим к следующему состоянию
-           WriteByteToMemory(Pointer($400000 + $34988C), 21);
-           ButtonPState := 2;
-           InputBuffer := '';
-           AddToLogFile(EngineLog, '[ВВОД] ✓ Ожидаем второе число');
-         end
-         else
-         begin
-           AddToLogFile(EngineLog, '[ВВОД] ✗ Некорректное первое число: ' + IntToStr(Number) + ' (нужно 1-127)');
-           InputBuffer := '';
-         end;
-       end;
-    2: begin
-         if (Number = 0) or (Number = 1) then
-         begin
-           AddToLogFile(EngineLog, '[ВВОД] ✓ Второе число корректное: ' + IntToStr(Number));
-           
-           // Записываем 0 или 1 по адресу 0x400000 + 0x349890
-           WriteByteToMemory(Pointer($400000 + $349890), Byte(Number));
-           AddToLogFile(EngineLog, '[ВВОД] ✓ Записано значение ' + IntToStr(Number) + ' по адресу 0x' + IntToHex($400000 + $349890, 8));
-           
-           // Записываем 0 и завершаем процедуру
-           WriteByteToMemory(Pointer($400000 + $34988C), 0);
-           ButtonPState := 0;
-           InputBuffer := '';
-           AddToLogFile(EngineLog, '[ВВОД] ✓ Процедура завершена');
-         end
-         else
-         begin
-           AddToLogFile(EngineLog, '[ВВОД] ✗ Некорректное второе число: ' + IntToStr(Number) + ' (нужно 0 или 1)');
-           InputBuffer := '';
-         end;
-       end;
-  end;
-end;
-
-procedure ProcessButtonPCycle(ActionType: Integer; ButtonIndex: Integer = -1);
-var
-  NumberStr: string;
-  Number: Integer;
-  currentState: Byte;
-  NumberValue: LongWord;
-begin
-  // ActionType: 0 = нажатие кнопки К, 1 = ввод цифры, 2 = нажатие ВВОД
-  
-  // Читаем текущее состояние из памяти
-  currentState := PByte($0074988C)^;
-  
-  case ActionType of
-    0: begin // Нажатие кнопки "К"
-         AddToLogFile(EngineLog, '[КНОПКА К] Обработка нажатия кнопки К');
-         try
-           // Записываем специальное состояние 30 = ожидание кода
-           WriteByteToMemory(Pointer($0074988C), 30);
-           InputBuffer := '';
-           AddToLogFile(EngineLog, '[КНОПКА К] ✓ Установлено состояние 30 (ожидание кода), буфер сброшен');
-         except
-           on E: Exception do
-             AddToLogFile(EngineLog, '[КНОПКА К] ✗ ОШИБКА: ' + E.Message);
-         end;
-       end;
-       
-    1: begin // Ввод цифры
-         AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Обработка ввода числа, индекс кнопки: ' + IntToStr(ButtonIndex) + ', состояние памяти: ' + IntToStr(currentState));
-         
-         // Проверяем что находимся в подходящем состоянии
-         if not ((currentState = 30) or ((currentState >= 10) and (currentState <= 19)) or (currentState = 31) or (currentState = 52) or (currentState = 70) or (currentState = 71)) then
-         begin
-           AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
-           Exit;
-         end;
-         
-         // Определяем какая цифра нажата
-         case ButtonIndex of
-           1: NumberStr := '1';   // Кнопка 1
-           2: NumberStr := '2';   // Кнопка 2  
-           3: NumberStr := '3';   // Кнопка 3
-           7: NumberStr := '4';   // Кнопка 4
-           8: NumberStr := '5';   // Кнопка 5
-           9: NumberStr := '6';   // Кнопка 6
-           13: NumberStr := '7';  // Кнопка 7
-           14: NumberStr := '8';  // Кнопка 8
-           15: NumberStr := '9';  // Кнопка 9
-           20: NumberStr := '0';  // Кнопка 0
-           else
-           begin
-             AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Неизвестная кнопка: ' + IntToStr(ButtonIndex));
-             Exit;
-           end;
-         end;
-         
-         // Ограничиваем длину буфера до 6 цифр
-         if Length(InputBuffer) >= 6 then
-         begin
-           AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Буфер полный (6 символов), игнорируем ввод');
-           Exit;
-         end;
-         
-         // Добавляем цифру к буферу
-         InputBuffer := InputBuffer + NumberStr;
-         AddToLogFile(EngineLog, '[КНОПКА К - ЧИСЛО] Введена цифра: ' + NumberStr + ', буфер: "' + InputBuffer + '"');
-       end;
-       
-    2: begin // Нажатие ВВОД
-         AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Обработка кнопки ВВОД, состояние памяти: ' + IntToStr(currentState) + ', буфер: "' + InputBuffer + '"');
-         
-         // Обработка состояния 30 (ожидание кода)
-         if currentState = 30 then
-         begin
-           AddToLogFile(EngineLog, '[К-ВВОД] Обработка команды К, буфер: "' + InputBuffer + '"');
-           
-           if InputBuffer = '7' then
-           begin
-             // Команда К7 - переход в состояние 10 (НОМЕР МАШИНИСТА)
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К7 - НОМЕР МАШИНИСТА');
-             WriteByteToMemory(Pointer($0074988C), 10);
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 10');
-           end
-           else if InputBuffer = '70' then
-           begin
-             // Команда К70 - переход в состояние 70 + запись в память
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К70');
-             WriteByteToMemory(Pointer($0074988C), 70);
-             WriteByteToMemory(Pointer($0538D95A), 0);
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 70, записан 0 в 0x0538D95A');
-           end
-           else if InputBuffer = '71' then
-           begin
-             // КОМАНДА К71 - переход в состояние 71
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К71');
-             WriteByteToMemory(Pointer($0074988C), 71);
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 71');
-           end
-           else if InputBuffer = '122' then
-           begin
-             // КОМАНДА К122 - устанавливает 0538D95F в 1
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К122 - установка 0538D95F в 1');
-             WriteByteToMemory(Pointer($0538D95F), 1);   // записываем 1 байт со значением 1
-             WriteByteToMemory(Pointer($0074988C), 0);   // сразу возвращаемся в состояние 0
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ К122 выполнена: записана 1 в 0x0538D95F, возврат в состояние 0');
-           end
-           else if InputBuffer = '123' then
-           begin
-             // КОМАНДА К123 - сбрасывает 0538D95F в 0
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К123 - сброс 0538D95F в 0');
-             WriteByteToMemory(Pointer($0538D95F), 0);   // записываем 1 байт со значением 0
-             WriteByteToMemory(Pointer($0074988C), 0);   // сразу возвращаемся в состояние 0
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ К123 выполнена: записан 0 в 0x0538D95F, возврат в состояние 0');
-           end
-           else if InputBuffer = '137' then
-           begin
-             // НОВАЯ КОМАНДА К137 - переход в состояние 52
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К137 - управление АЛС');
-             WriteByteToMemory(Pointer($0074988C), 52);
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 52 (К137)');
-           end
-           else if InputBuffer = '799' then
-           begin
-             // КОМАНДА К799 - переход в состояние 31
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К799');
-             WriteByteToMemory(Pointer($0074988C), 31);
-             WriteDWordToMemory(Pointer($0538D960), 1);  // записываем 4 байта со значением 1
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 31, записана 1 в 0x0538D960');
-           end
-           else if InputBuffer = '800' then
-           begin
-             // КОМАНДА К800 - сброс 0538D960 в 0
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К800 - сброс 0538D960');
-             WriteDWordToMemory(Pointer($0538D960), 0);  // записываем 4 байта со значением 0
-             WriteByteToMemory(Pointer($0074988C), 0);   // сразу возвращаемся в состояние 0
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ К800 выполнена: записан 0 в 0x0538D960, возврат в состояние 0');
-           end
-           else
-           begin
-             // Неизвестная команда - сбрасываем в состояние 0
-             AddToLogFile(EngineLog, '[К-ВВОД] ✗ Неизвестная команда: "' + InputBuffer + '", сброс');
-             WriteByteToMemory(Pointer($0074988C), 0);
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Сброс в состояние 0');
-           end;
-           Exit;
-         end;
-         
-         // ОБРАБОТКА состояния 31 (ожидание числа для записи в 00749894) - К799
-         if currentState = 31 then
-         begin
-           AddToLogFile(EngineLog, '[К-ВВОД] Обработка состояния 31 (К799), буфер: "' + InputBuffer + '"');
-           
-           if InputBuffer <> '' then
-           begin
-             NumberValue := StrToIntDef(InputBuffer, 0);
-             AddToLogFile(EngineLog, '[К-ВВОД] Записываем число ' + IntToStr(NumberValue) + ' в 0x00749894');
-             
-             // Записываем введенное число как 4 байта в адрес 00749894
-             WriteDWordToMemory(Pointer($00749894), NumberValue);
-             
-             // Сбрасываем состояние и буфер
-             WriteByteToMemory(Pointer($0074988C), 0);
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Состояние 31 завершено, сброс в 0');
-           end
-           else
-           begin
-             AddToLogFile(EngineLog, '[К-ВВОД] ✗ Буфер пустой для состояния 31');
-             WriteByteToMemory(Pointer($0074988C), 0);
-             InputBuffer := '';
-           end;
-           Exit;
-         end;
-         
-         // НОВАЯ ОБРАБОТКА состояния 52 (К137 - управление АЛС)
-         if currentState = 52 then
-         begin
-           AddToLogFile(EngineLog, '[К-ВВОД] Обработка состояния 52 (К137), буфер: "' + InputBuffer + '"');
-           
-           if InputBuffer <> '' then
-           begin
-             NumberValue := StrToIntDef(InputBuffer, 0);
-             AddToLogFile(EngineLog, '[К-ВВОД] К137 - введенное число: ' + IntToStr(NumberValue));
-             
-             if NumberValue = 0 then
-             begin
-               // Ввели 0 - отключаем АЛС
-               statek137 := False;
-               als_en_state := False;
-               AddToLogFile(EngineLog, '[К-ВВОД] ✓ К137(0): statek137=False, als_en_state=False');
-             end
-             else if (NumberValue >= 1) and (NumberValue <= 3) then
-             begin
-               // Ввели 1, 2 или 3 - включаем АЛС
-               statek137 := True;
-               als_en_state := True;
-               AddToLogFile(EngineLog, '[К-ВВОД] ✓ К137(' + IntToStr(NumberValue) + '): statek137=True, als_en_state=True');
-             end
-             else
-             begin
-               AddToLogFile(EngineLog, '[К-ВВОД] ✗ К137: неверное число ' + IntToStr(NumberValue) + ', ожидается 0-3');
-             end;
-             
-             // Сбрасываем состояние и буфер в любом случае
-             WriteByteToMemory(Pointer($0074988C), 0);
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Состояние 52 завершено, сброс в 0');
-           end
-           else
-           begin
-             AddToLogFile(EngineLog, '[К-ВВОД] ✗ Буфер пустой для состояния 52');
-             WriteByteToMemory(Pointer($0074988C), 0);
-             InputBuffer := '';
-           end;
-           Exit;
-         end;
-         
-         // Обработка состояний 10-19 (продолжение цикла)
-         if (currentState >= 10) and (currentState <= 19) then
-         begin
-           AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Продолжение цикла, текущее состояние: ' + IntToStr(currentState));
-           
-           // СПЕЦИАЛЬНАЯ ОБРАБОТКА ДЛЯ СОСТОЯНИЯ 13 (ДЛИНА В ВАГОНАХ)
-           if currentState = 13 then
-           begin
-             if InputBuffer <> '' then
-             begin
-               NumberValue := StrToIntDef(InputBuffer, 0);
-               // Умножаем на 4 и записываем по адресу 0x538D95C
-               NumberValue := NumberValue * 4;
-               AddToLogFile(EngineLog, '[СОСТОЯНИЕ 13] Записываем (число * 4): ' + IntToStr(NumberValue) + ' в 0x538D95C');
-               WriteDWordToMemory(Pointer($538D95C), NumberValue);
-             end
-             else
-             begin
-               AddToLogFile(EngineLog, '[СОСТОЯНИЕ 13] Буфер пустой, записываем 0');
-               WriteDWordToMemory(Pointer($538D95C), 0);
-             end;
-           end;
-           
-           // Очищаем буфер и переходим к следующему состоянию
-           InputBuffer := '';
-           
-           if currentState = 19 then
-           begin
-             // После 19 переходим к 0
-             WriteByteToMemory(Pointer($0074988C), 0);
-             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Переход с 19 на 0');
-           end
-           else
-           begin
-             // Увеличиваем состояние на 1
-             WriteByteToMemory(Pointer($0074988C), currentState + 1);
-             AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] ✓ Переход с ' + IntToStr(currentState) + ' на ' + IntToStr(currentState + 1));
-           end;
-           Exit;
-         end;
-         
-         // Обработка состояния 70 - К70
-         if currentState = 70 then
-         begin
-           AddToLogFile(EngineLog, '[К-ВВОД] Обработка состояния 70 (К70), буфер: "' + InputBuffer + '"');
-           InputBuffer := '';
-           WriteByteToMemory(Pointer($0538D95A), 0);
-           AddToLogFile(EngineLog, '[К-ВВОД] ✓ Записан 0 в 0x0538D95A для состояния 70');
-           Exit;
-         end;
-         
-         // ОБРАБОТКА состояния 71 - К71
-         if currentState = 71 then
-         begin
-           AddToLogFile(EngineLog, '[К-ВВОД] Обработка состояния 71 (К71), буфер: "' + InputBuffer + '"');
-           
-           if InputBuffer <> '' then
-           begin
-             NumberValue := StrToIntDef(InputBuffer, 0);
-             AddToLogFile(EngineLog, '[К-ВВОД] К71 - введенное число: ' + IntToStr(NumberValue));
-             
-             // Здесь можно добавить специальную логику для К71 если нужно
-             // Например, записать число в определенный адрес памяти
-             // WriteDWordToMemory(Pointer($АДРЕС_ДЛЯ_К71), NumberValue);
-             
-             // Сбрасываем состояние и буфер
-             WriteByteToMemory(Pointer($0074988C), 0);
-             InputBuffer := '';
-             AddToLogFile(EngineLog, '[К-ВВОД] ✓ Состояние 71 завершено, сброс в 0');
-           end
-           else
-           begin
-             AddToLogFile(EngineLog, '[К-ВВОД] ✗ Буфер пустой для состояния 71');
-             WriteByteToMemory(Pointer($0074988C), 0);
-             InputBuffer := '';
-           end;
-           Exit;
-         end;
-         
-         AddToLogFile(EngineLog, '[КНОПКА К - ВВОД] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
-       end;
-       
-    else
-      AddToLogFile(EngineLog, '[КНОПКА К] Неизвестный тип действия: ' + IntToStr(ActionType));
-  end;
-end;
-
-// Обработка ввода цифр для команд К
-procedure ProcessKNumberInput(ButtonIndex: Integer);
-var
-  NumberStr: string;
-  currentState: Byte;
-begin
-  currentState := GetStateBLOCK;
-  AddToLogFile(EngineLog, '[К-ЧИСЛО] Обработка ввода числа, индекс кнопки: ' + IntToStr(ButtonIndex) + ', состояние: ' + IntToStr(currentState));
-
-  // Проверяем режим К123
-  if K123State = 1 then
-  begin
-    // Определяем какая цифра нажата
-    case ButtonIndex of
-      1: NumberStr := '1';   // Кнопка 1
-      2: NumberStr := '2';   // Кнопка 2  
-      3: NumberStr := '3';   // Кнопка 3
-      7: NumberStr := '4';   // Кнопка 4
-      8: NumberStr := '5';   // Кнопка 5
-      9: NumberStr := '6';   // Кнопка 6
-      13: NumberStr := '7';  // Кнопка 7
-      14: NumberStr := '8';  // Кнопка 8
-      15: NumberStr := '9';  // Кнопка 9
-      20: NumberStr := '0';  // Кнопка 0
-      else
-      begin
-        AddToLogFile(EngineLog, '[К-ЧИСЛО] Неизвестная кнопка: ' + IntToStr(ButtonIndex));
-        Exit;
-      end;
-    end;
-    
-    // Ограничиваем длину буфера до 3 цифр для К123
-    if Length(InputBuffer) >= 3 then
-    begin
-      AddToLogFile(EngineLog, '[К-ЧИСЛО] Буфер К123 полный, игнорируем ввод');
-      Exit;
-    end;
-    
-    // Добавляем цифру к буферу
-    InputBuffer := InputBuffer + NumberStr;
-    AddToLogFile(EngineLog, '[К-ЧИСЛО] К123 - введена цифра: ' + NumberStr + ', буфер: "' + InputBuffer + '"');
-    Exit;
-  end;
-  
-  // Принимаем ввод только в состояниях 30, 10-19 и 31
-  if not ((currentState = 30) or ((currentState >= 10) and (currentState <= 19)) or (currentState = 31)) then
-  begin
-    AddToLogFile(EngineLog, '[К-ЧИСЛО] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
-    Exit;
-  end;
-  
-  // Определяем какая цифра нажата
-  case ButtonIndex of
-    1: NumberStr := '1';   // Кнопка 1
-    2: NumberStr := '2';   // Кнопка 2  
-    3: NumberStr := '3';   // Кнопка 3
-    7: NumberStr := '4';   // Кнопка 4
-    8: NumberStr := '5';   // Кнопка 5
-    9: NumberStr := '6';   // Кнопка 6
-    13: NumberStr := '7';  // Кнопка 7
-    14: NumberStr := '8';  // Кнопка 8
-    15: NumberStr := '9';  // Кнопка 9
-    20: NumberStr := '0';  // Кнопка 0
-    else
-    begin
-      AddToLogFile(EngineLog, '[К-ЧИСЛО] Неизвестная кнопка: ' + IntToStr(ButtonIndex));
-      Exit;
-    end;
-  end;
-  
-  // Ограничиваем длину буфера до 6 цифр
-  if Length(InputBuffer) >= 6 then
-  begin
-    AddToLogFile(EngineLog, '[К-ЧИСЛО] Буфер полный (6 символов), игнорируем ввод');
-    Exit;
-  end;
-  
-  // Добавляем цифру к буферу
-  InputBuffer := InputBuffer + NumberStr;
-  AddToLogFile(EngineLog, '[К-ЧИСЛО] Введена цифра: ' + NumberStr + ', буфер: "' + InputBuffer + '"');
-end;
-
-// Обработка кнопки "ВВОД" для команд К
-procedure ProcessKEnter;
-var
-  currentState: Byte;
-  NumberValue: LongWord;
-begin
-  currentState := GetStateBLOCK;
-  
-  // Обработка состояния 30 (ожидание команды К)
-  if currentState = 30 then
-  begin
-    AddToLogFile(EngineLog, '[К-ВВОД] Обработка команды К, буфер: "' + InputBuffer + '"');
-    
-    if InputBuffer = '7' then
-    begin
-      // Команда К7 - переход в состояние 10 (НОМЕР МАШИНИСТА)
-      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К7 - НОМЕР МАШИНИСТА');
-      WriteByteToMemory(Pointer($400000 + $34988C), 10);
-      InputBuffer := '';
-      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 10');
-    end
-    else if InputBuffer = '70' then
-    begin
-      // Команда К70 - переход в состояние 70 + запись в память
-      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К70');
-      WriteByteToMemory(Pointer($400000 + $34988C), 70);
-      WriteByteToMemory(Pointer($0538D95A), 0);
-      InputBuffer := '';
-      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 70, записан 0 в 0x0538D95A');
-    end
-    else if InputBuffer = '799' then
-    begin
-      // НОВАЯ КОМАНДА К799 - переход в состояние 31
-      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К799');
-      WriteByteToMemory(Pointer($0074988C), 31);
-      WriteDWordToMemory(Pointer($0538D960), 1);  // записываем 4 байта со значением 1
-      InputBuffer := '';
-      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 31, записана 1 в 0x0538D960');
-    end
-    else
-    begin
-      // Неизвестная команда - сбрасываем в состояние 0
-      AddToLogFile(EngineLog, '[К-ВВОД] ✗ Неизвестная команда: "' + InputBuffer + '", сброс');
-      WriteByteToMemory(Pointer($400000 + $34988C), 0);
-      InputBuffer := '';
-      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Сброс в состояние 0');
-    end;
-    Exit;
-  end;
-  
-  // НОВАЯ ОБРАБОТКА состояния 31 (ожидание числа для записи в 00749894)
-  if currentState = 31 then
-  begin
-    AddToLogFile(EngineLog, '[К-ВВОД] Обработка состояния 31 (К799), буфер: "' + InputBuffer + '"');
-    
-    if InputBuffer <> '' then
-    begin
-      NumberValue := StrToIntDef(InputBuffer, 0);
-      AddToLogFile(EngineLog, '[К-ВВОД] Записываем число ' + IntToStr(NumberValue) + ' в 0x00749894');
-      
-      // Записываем введенное число как 4 байта в адрес 00749894
-      WriteDWordToMemory(Pointer($00749894), NumberValue);
-      
-      // Сбрасываем состояние и буфер
-      WriteByteToMemory(Pointer($0074988C), 0);
-      InputBuffer := '';
-      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Состояние 31 завершено, сброс в 0');
-    end
-    else
-    begin
-      AddToLogFile(EngineLog, '[К-ВВОД] ✗ Буфер пустой для состояния 31');
-      WriteByteToMemory(Pointer($0074988C), 0);
-      InputBuffer := '';
-    end;
-    Exit;
-  end;
-  
-  // Обработка состояний 10-19 (цикл с переключением)
-  if (currentState >= 10) and (currentState <= 19) then
-  begin
-    AddToLogFile(EngineLog, '[К-ВВОД] Цикл состояний, текущее: ' + IntToStr(currentState));
-    InputBuffer := '';
-    
-    if currentState = 19 then
-    begin
-      // После 19 переходим к 0
-      WriteByteToMemory(Pointer($400000 + $34988C), 0);
-      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход с 19 на 0');
-    end
-    else
-    begin
-      // Увеличиваем состояние на 1
-      WriteByteToMemory(Pointer($400000 + $34988C), currentState + 1);
-      AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход с ' + IntToStr(currentState) + ' на ' + IntToStr(currentState + 1));
-    end;
-    Exit;
-  end;
-  
-  // Обработка состояния 70
-  if currentState = 70 then
-  begin
-    AddToLogFile(EngineLog, '[К-ВВОД] Обработка состояния 70, буфер: "' + InputBuffer + '"');
-    InputBuffer := '';
-    WriteByteToMemory(Pointer($0538D95A), 0);
-    AddToLogFile(EngineLog, '[К-ВВОД] ✓ Записан 0 в 0x0538D95A для состояния 70');
-    Exit;
-  end;
-  
-  AddToLogFile(EngineLog, '[К-ВВОД] Игнорируем - неподходящее состояние: ' + IntToStr(currentState));
-end;
-
-// Обработка нажатия кнопки ВК
-procedure ProcessButtonVK;
-var
-  alsValue: Integer;
-  addr349914: Byte;
-  addr349910: Byte;
-begin
-  AddToLogFile(EngineLog, '[КНОПКА ВК] Обработка нажатия кнопки ВК');
-  
-  try
-    // Существующая логика - записываем 0 по адресу 0x400000 + 0x4F8D940
-    WriteByteToMemory(Pointer($400000 + $4F8D940), 0);
-    AddToLogFile(EngineLog, '[КНОПКА ВК] ✓ Записан 0 по адресу 0x' + IntToHex($400000 + $4F8D940, 8));
-    
-    // НОВАЯ ЛОГИКА: проверяем условия для записи в 0x538D940
-    alsValue := GetALS;
-    addr349914 := PByte($400000 + $349914)^;
-    addr349910 := PByte($400000 + $349910)^;
-    
-    AddToLogFile(EngineLog, '[КНОПКА ВК] Проверка условий: GetALS=' + IntToStr(alsValue) + 
-                           ', addr349914=' + IntToStr(addr349914) + 
-                           ', addr349910=' + IntToStr(addr349910));
-    
-    // Проверяем все условия
-    if (alsValue = 2) and (addr349914 = 1) and (addr349910 = 1) then
-    begin
-      // Все условия выполнены - записываем 1 по адресу 0x538D940
-      WriteByteToMemory(Pointer($538D940), 1);
-      AddToLogFile(EngineLog, '[КНОПКА ВК] ✓ Условия выполнены! Записана 1 по адресу 0x538D940');
-    end
-    else
-    begin
-      AddToLogFile(EngineLog, '[КНОПКА ВК] Условия не выполнены, пропускаем запись в 0x538D940');
-    end;
-    
-  except
-    on E: Exception do
-      AddToLogFile(EngineLog, '[КНОПКА ВК] ✗ ОШИБКА: ' + E.Message);
-  end;
-end;
-
-// Инициализация позиций кнопок
-procedure InitializeButtonPositions;
-begin
-  // Ряд 1: П 1 2 3 К К20 (Y = 9)
-  ButtonPositions[0].X := 29;   ButtonPositions[0].Y := 9;   // П
-  ButtonPositions[1].X := 62;   ButtonPositions[1].Y := 9;   // 1
-  ButtonPositions[2].X := 95;   ButtonPositions[2].Y := 9;   // 2
-  ButtonPositions[3].X := 128;  ButtonPositions[3].Y := 9;   // 3
-  ButtonPositions[4].X := 161;  ButtonPositions[4].Y := 9;   // К
-  ButtonPositions[5].X := 194;  ButtonPositions[5].Y := 9;   // К20
-  
-  // Ряд 2: ВК 4 5 6 P OC (Y = 44)
-  ButtonPositions[6].X := 29;   ButtonPositions[6].Y := 41;  // ВК
-  ButtonPositions[7].X := 62;   ButtonPositions[7].Y := 41;  // 4
-  ButtonPositions[8].X := 95;   ButtonPositions[8].Y := 41;  // 5
-  ButtonPositions[9].X := 128;  ButtonPositions[9].Y := 41;  // 6
-  ButtonPositions[10].X := 161; ButtonPositions[10].Y := 41; // P
-  ButtonPositions[11].X := 194; ButtonPositions[11].Y := 41; // OC
-  
-  // Ряд 3: РМП 7 8 9 ОТМ ОТПР (Y = 79)
-  ButtonPositions[12].X := 29;  ButtonPositions[12].Y := 75; // РМП
-  ButtonPositions[13].X := 62;  ButtonPositions[13].Y := 75; // 7
-  ButtonPositions[14].X := 95;  ButtonPositions[14].Y := 75; // 8
-  ButtonPositions[15].X := 128; ButtonPositions[15].Y := 75; // 9
-  ButtonPositions[16].X := 161; ButtonPositions[16].Y := 75; // ОТМ
-  ButtonPositions[17].X := 194; ButtonPositions[17].Y := 75; // ОТПР
-  
-  // Ряд 4: F СТР 0 ВВОД о подтяг (Y = 105)
-  ButtonPositions[18].X := 29;  ButtonPositions[18].Y := 105; // F
-  ButtonPositions[19].X := 62;  ButtonPositions[19].Y := 105; // СТР
-  ButtonPositions[20].X := 95;  ButtonPositions[20].Y := 105; // 0
-  ButtonPositions[21].X := 128; ButtonPositions[21].Y := 105; // ВВОД
-  ButtonPositions[22].X := 161; ButtonPositions[22].Y := 105; // о
-  ButtonPositions[23].X := 194; ButtonPositions[23].Y := 105; // подтяг
-end;
-
-// Обновление hover состояний кнопок
-procedure UpdateButtonHoverStates(mouseX, mouseY: Integer; keyboardX, keyboardY: Integer);
-var
-  i: Integer;
-  buttonX, buttonY: Integer;
-  relativeMouseX, relativeMouseY: Integer;
-begin
-  // Обновляем таймер К123
-  UpdateK123Timer;
-  
-  relativeMouseX := mouseX - keyboardX;
-  relativeMouseY := mouseY - keyboardY;
-  
-  for i := 0 to 23 do
-  begin
-    buttonX := ButtonPositions[i].X;
-    buttonY := ButtonPositions[i].Y;
-    
-    ButtonHovered[i] := (relativeMouseX >= buttonX) and 
-                        (relativeMouseX <= buttonX + 24) and
-                        (relativeMouseY >= buttonY) and 
-                        (relativeMouseY <= buttonY + 24);
-  end;
-end;
-
-// Отрисовка прозрачных кнопок с hover эффектом
-procedure DrawTransparentButtons(keyboardX, keyboardY: Integer);
-var
-  i: Integer;
-  buttonX, buttonY: Integer;
-  alpha: Byte;
-  color: Cardinal;
-begin
-  for i := 0 to 23 do
-  begin
-    if not ButtonHovered[i] then
-      Continue;
-    
-    buttonX := keyboardX + ButtonPositions[i].X;
-    buttonY := keyboardY + ButtonPositions[i].Y;
-    
-    alpha := 140;
-    color := $4080FF;
-    
-    Begin2D;
-    try
-      glDisable(GL_TEXTURE_2D);
-      glEnable(GL_BLEND);
-      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-      
-      glColor4f(
-        ((color shr 16) and $FF) / 255.0,
-        ((color shr 8) and $FF) / 255.0,
-        (color and $FF) / 255.0,
-        alpha / 255.0
-      );
-      
-      glBegin(GL_QUADS);
-        glVertex2f(buttonX, buttonY);
-        glVertex2f(buttonX + 24, buttonY);
-        glVertex2f(buttonX + 24, buttonY + 24);
-        glVertex2f(buttonX, buttonY + 24);
-      glEnd;
-      
-      glColor4f(
-        ((color shr 16) and $FF) / 255.0,
-        ((color shr 8) and $FF) / 255.0,
-        (color and $FF) / 255.0,
-        (alpha + 60) / 255.0
-      );
-      
-      glLineWidth(1.5);
-      glBegin(GL_LINE_LOOP);
-        glVertex2f(buttonX, buttonY);
-        glVertex2f(buttonX + 24, buttonY);
-        glVertex2f(buttonX + 24, buttonY + 24);
-        glVertex2f(buttonX, buttonY + 24);
-      glEnd;
-      
-      glDisable(GL_BLEND);
-      glEnable(GL_TEXTURE_2D);
-      glColor4f(1.0, 1.0, 1.0, 1.0);
-      
-    finally
-      End2D;
-    end;
-  end;
-end;
 
 // Основная функция отрисовки клавиатуры БЛОК
 procedure DrawBlockKeyboard;
@@ -9297,23 +8194,18 @@ var
   texturePath: string;
   settingsPath: string;
   difference: Single;
-  triggerX, triggerY: Integer;
+  triggerX, triggerY: Integer; // Статичная область триггера
+  // Переменные для парсинга settings.ini
   settingsFile: TextFile;
   line: string;
   equalPos: Integer;
   paramName, paramValue: string;
 begin
-  // Обновляем таймер К123 при каждой отрисовке
-  UpdateK123Timer;
-  
+  // Инициализация при первом вызове
   if not BlockKeyboardInitialized then
   begin
-    NopMemory(Pointer($00738844), 3);
-
     try
-      InitializeButtonPositions;
-      FillChar(ButtonHovered, SizeOf(ButtonHovered), 0);
-
+      // Читаем настройки экрана из settings.ini простым парсингом
       settingsPath := ExtractFilePath(ParamStr(0)) + 'settings.ini';
       if FileExists(settingsPath) then
       begin
@@ -9344,10 +8236,15 @@ begin
           CloseFile(settingsFile);
         end;
         
-        AddToLogFile(EngineLog, '[ИНИТ] Парсинг settings.ini: ScreenWidth=' + IntToStr(ScreenWidth) + ', ScreenHeight=' + IntToStr(ScreenHeight));
+        AddToLogFile(EngineLog, 'Парсинг settings.ini: ScreenWidth=' + IntToStr(ScreenWidth) + ', ScreenHeight=' + IntToStr(ScreenHeight));
+      end
+      else
+      begin
+        AddToLogFile(EngineLog, 'settings.ini не найден, используем разрешение по умолчанию');
       end;
       
-      texturePath := 'booster\blok_buttons.bmp';
+      // Путь к текстуре клавиатуры БЛОК
+      texturePath := 'booster\block_buttons.bmp';
       
       if FileExists(texturePath) then
       begin
@@ -9355,30 +8252,18 @@ begin
         if BlockKeyboardTexture > 0 then
         begin
           BlockKeyboardFileExists := True;
-          AddToLogFile(EngineLog, '[ИНИТ] ✓ Текстура клавиатуры БЛОК загружена');
+          AddToLogFile(EngineLog, 'Текстура клавиатуры БЛОК загружена: ' + texturePath);
         end
         else
         begin
           BlockKeyboardFileExists := False;
-          AddToLogFile(EngineLog, '[ИНИТ] ✗ Ошибка загрузки текстуры');
+          AddToLogFile(EngineLog, 'Ошибка загрузки текстуры клавиатуры БЛОК: ' + texturePath);
         end;
       end
       else
       begin
         BlockKeyboardFileExists := False;
-        AddToLogFile(EngineLog, '[ИНИТ] ✗ Файл текстуры не найден: ' + texturePath);
-      end;
-      
-      // Проверяем звуковой файл
-      if FileExists('booster\blok_pick.wav') then
-      begin
-        BlockKeyboardSoundID := 1;
-        AddToLogFile(EngineLog, '[ИНИТ] ✓ Звуковой файл найден: booster\blok_pick.wav');
-      end
-      else
-      begin
-        BlockKeyboardSoundID := -1;
-        AddToLogFile(EngineLog, '[ИНИТ] ✗ Файл звука клавиш не найден: booster\blok_pick.wav');
+        AddToLogFile(EngineLog, 'Файл клавиатуры БЛОК не найден: ' + texturePath);
       end;
       
       BlockKeyboardInitialized := True;
@@ -9386,29 +8271,35 @@ begin
     except
       on E: Exception do
       begin
-        AddToLogFile(EngineLog, '[ИНИТ] ✗ КРИТИЧЕСКАЯ ОШИБКА: ' + E.Message);
+        AddToLogFile(EngineLog, 'КРИТИЧЕСКАЯ ОШИБКА инициализации клавиатуры БЛОК: ' + E.Message);
         BlockKeyboardInitialized := True;
         BlockKeyboardFileExists := False;
       end;
     end;
   end;
   
+  // Если файл не существует, выходим без отрисовки
   if not BlockKeyboardFileExists then
     Exit;
     
   try
+    // ИСПРАВЛЕННОЕ получение позиции курсора - в клиентских координатах
     if GetCursorPos(mousePos) then
     begin
       if ScreenToClient(GetActiveWindow(), mousePos) then
       begin
+        // Вычисляем где сейчас находится видимая часть панели
         keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
-        triggerX := ScreenWidth - 233 + Round(BlockKeyboardCurrentOffset) - 5;
-        triggerY := ScreenHeight - 250;
         
+        // Область триггера = видимая часть панели + небольшой отступ влево
+        triggerX := keyboardX - 5; // Небольшой отступ влево от видимой части
+        triggerY := ScreenHeight - 140; // Область по высоте панели
+        
+        // Проверяем наведение курсора на видимую часть панели
         isMouseOver := (mousePos.X >= triggerX) and 
                        (mousePos.X <= ScreenWidth) and
                        (mousePos.Y >= triggerY) and 
-                       (mousePos.Y <= triggerY + 136);
+                       (mousePos.Y <= ScreenHeight);
       end
       else
         isMouseOver := False;
@@ -9416,168 +8307,47 @@ begin
     else
       isMouseOver := False;
     
+    // Устанавливаем целевое смещение
     if isMouseOver then
-      BlockKeyboardTargetOffset := 0
+      BlockKeyboardTargetOffset := 0        // Показать панель полностью
     else
-      BlockKeyboardTargetOffset := 210;
+      BlockKeyboardTargetOffset := 310;     // Скрыть панель (показать только край 30px)
     
+    // Плавная анимация
     difference := BlockKeyboardTargetOffset - BlockKeyboardCurrentOffset;
     if Abs(difference) > 1.0 then
       BlockKeyboardCurrentOffset := BlockKeyboardCurrentOffset + (difference * 0.12)
     else
       BlockKeyboardCurrentOffset := BlockKeyboardTargetOffset;
     
-    keyboardX := ScreenWidth - 230 + Round(BlockKeyboardCurrentOffset);
-    keyboardY := ScreenHeight - 250;
+    // Вычисляем позицию отрисовки панели
+    keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
+    keyboardY := ScreenHeight - 136;
     
-    if GetCursorPos(mousePos) and ScreenToClient(GetActiveWindow(), mousePos) then
-      UpdateButtonHoverStates(mousePos.X, mousePos.Y, keyboardX, keyboardY);
-    
+    // Отрисовка в 2D режиме
     Begin2D;
     try
+      // Устанавливаем полную непрозрачность
+      glColor4f(1.0, 1.0, 1.0, 1.0);
+      
       DrawTexture2D(
         BlockKeyboardTexture,
         keyboardX,
         keyboardY,
-        340, 136, 0, 255, $FFFFFF, False
+        340, // Ширина панели
+        136, // Высота панели
+        0,   // Угол поворота
+        255, // Альфа (полная непрозрачность)
+        $FFFFFF, // Цвет (белый)
+        False // Не использовать диффузное наложение
       );
     finally
       End2D;
     end;
     
-    DrawTransparentButtons(keyboardX, keyboardY);
-    
   except
     on E: Exception do
-      AddToLogFile(EngineLog, '[РИСОВАНИЕ] ✗ Ошибка: ' + E.Message);
-  end;
-end;
-
-var
-  RMPState: Byte = 0; // 0, 1, 2 - циклические значения (теперь читается из памяти)
-  BlinkTimer: Cardinal = 0; // Таймер для мигания
-  BlinkVisible: Boolean = True; // Флаг видимости мигающего текста
-
-// Обновление мигания для РМП
-procedure UpdateRMPBlink;
-var
-  currentTime: Cardinal;
-  currentRMPState: Byte;
-begin
-  try
-    // Читаем текущее состояние из памяти
-    currentRMPState := PByte($00400000 + $349888)^;
-    
-    if currentRMPState = 2 then
-    begin
-      currentTime := GetTickCount;
-      
-      // Инициализируем таймер при первом входе в режим 2
-      if BlinkTimer = 0 then
-      begin
-        BlinkTimer := currentTime;
-        BlinkVisible := True;
-      end;
-      
-      // Проверяем прошло ли 500 мс
-      if (currentTime - BlinkTimer) >= 500 then
-      begin
-        BlinkVisible := not BlinkVisible; // Переключаем видимость
-        BlinkTimer := currentTime; // Сбрасываем таймер
-        AddToLogFile(EngineLog, '[РМП МИГАНИЕ] Переключение видимости: ' + BoolToStr(BlinkVisible, True));
-      end;
-    end
-    else
-    begin
-      // Если не в режиме 2, сбрасываем таймер и делаем видимым
-      BlinkTimer := 0;
-      BlinkVisible := True;
-    end;
-  except
-    // В случае ошибки сбрасываем состояние
-    BlinkTimer := 0;
-    BlinkVisible := True;
-  end;
-end;
-
-// ОБНОВЛЕННАЯ функция GetRezim с поддержкой мигания
-function GetRezim: string;
-var
-  b: Byte;
-begin
-  try
-    // Обновляем состояние мигания
-    UpdateRMPBlink;
-    
-    // Читаем байт по адресу BaseAddress + $349888
-    b := PByte($00400000 + $349888)^;
-    case b of
-      0: Result := 'П';
-      1: Result := 'М';
-      2: begin
-           // При состоянии 2 мигаем
-           if BlinkVisible then
-             Result := 'П'
-           else
-             Result := '';  // Пустая строка когда не видим
-         end;
-    else
-      Result := 'П';
-    end;
-  except
-    // В случае ошибки возвращаем значение по умолчанию 'П'
-    Result := 'П';
-  end;
-end;
-
-function ShouldShowRMPText: Boolean;
-begin
-  UpdateRMPBlink; // Обновляем состояние мигания
-  
-  case RMPState of
-    0: Result := False;        // Не показываем при состоянии 0
-    1: Result := True;         // Всегда показываем при состоянии 1
-    2: Result := BlinkVisible; // Мигаем при состоянии 2
-    else Result := False;
-  end;
-end;
-
-// Обработка нажатия кнопки РМП
-procedure ProcessButtonRMP;
-var
-  currentSpeed: Single;
-begin
-  AddToLogFile(EngineLog, '[КНОПКА РМП] Обработка нажатия кнопки РМП');
-  
-  try
-    // Проверяем текущую скорость
-    currentSpeed := GetSpeedValue;
-    AddToLogFile(EngineLog, '[КНОПКА РМП] Текущая скорость: ' + FormatFloat('0.00', currentSpeed));
-    
-    // Проверяем условие: скорость должна быть равна 0
-    if currentSpeed <> 0.0 then
-    begin
-      AddToLogFile(EngineLog, '[КНОПКА РМП] ✗ РМП недоступна при движении (скорость: ' + FormatFloat('0.00', currentSpeed) + ')');
-      Exit;
-    end;
-    
-    // Циклическое переключение: 0 -> 1 -> 2 -> 0
-    case RMPState of
-      0: RMPState := 1;
-      1: RMPState := 2;
-      2: RMPState := 0;
-      else RMPState := 1; // На всякий случай сброс в 1
-    end;
-    
-    AddToLogFile(EngineLog, '[КНОПКА РМП] Переключение на состояние: ' + IntToStr(RMPState));
-    
-    // Записываем новое значение в память
-    WriteByteToMemory(Pointer($00749888), RMPState);
-    AddToLogFile(EngineLog, '[КНОПКА РМП] ✓ Записано значение ' + IntToStr(RMPState) + ' по адресу 0x00749888');
-    
-  except
-    on E: Exception do
-      AddToLogFile(EngineLog, '[КНОПКА РМП] ✗ ОШИБКА: ' + E.Message);
+      AddToLogFile(EngineLog, 'Ошибка отрисовки клавиатуры БЛОК: ' + E.Message);
   end;
 end;
 
@@ -9586,127 +8356,38 @@ function HandleBlockKeyboardClick(mouseX, mouseY: Integer): Boolean;
 var
   keyboardX, keyboardY: Integer;
   relativeX, relativeY: Integer;
-  i: Integer;
 begin
   Result := False;
   
-  AddToLogFile(EngineLog, '[КЛИК] Обработка клика: X=' + IntToStr(mouseX) + ', Y=' + IntToStr(mouseY));
-  
   if not BlockKeyboardFileExists then
-  begin
-    AddToLogFile(EngineLog, '[КЛИК] Файл клавиатуры отсутствует');
     Exit;
-  end;
     
-  if BlockKeyboardCurrentOffset > 155 then
-  begin
-    AddToLogFile(EngineLog, '[КЛИК] Панель скрыта (offset: ' + FloatToStr(BlockKeyboardCurrentOffset) + ')');
-    Exit;
-  end;
+  // Проверяем, что панель достаточно видна для кликов
+  if BlockKeyboardCurrentOffset > 155 then // Половина от 310 (скрытое состояние)
+    Exit; // Панель слишком скрыта
     
-  keyboardX := ScreenWidth - 230 + Round(BlockKeyboardCurrentOffset);
-  keyboardY := ScreenHeight - 250;
+  keyboardX := ScreenWidth - 340 + Round(BlockKeyboardCurrentOffset);
+  keyboardY := ScreenHeight - 136;
   
-  AddToLogFile(EngineLog, '[КЛИК] Позиция панели: X=' + IntToStr(keyboardX) + ', Y=' + IntToStr(keyboardY));
-  
+  // Проверяем попадание в область панели
   if (mouseX >= keyboardX) and (mouseX <= keyboardX + 340) and
      (mouseY >= keyboardY) and (mouseY <= keyboardY + 136) then
   begin
+    // Вычисляем относительные координаты внутри панели
     relativeX := mouseX - keyboardX;
     relativeY := mouseY - keyboardY;
     
-    AddToLogFile(EngineLog, '[КЛИК] ✓ Попадание в панель, относительные координаты: X=' + IntToStr(relativeX) + ', Y=' + IntToStr(relativeY));
-
-    // Проверяем кнопки
-    for i := 0 to 23 do
-    begin
-      if (relativeX >= ButtonPositions[i].X) and 
-         (relativeX <= ButtonPositions[i].X + 24) and
-         (relativeY >= ButtonPositions[i].Y) and 
-         (relativeY <= ButtonPositions[i].Y + 24) then
-      begin
-        AddToLogFile(EngineLog, '[КЛИК] ✓ Попадание в кнопку ' + IntToStr(i));
-        
-        // Проигрываем звук нажатия кнопки
-        if BlockKeyboardSoundID > 0 then
-        begin
-          try
-            AddToLogFile(EngineLog, '[ЗВУК] Проигрываем звук через PlaySound');
-            if PlaySound('booster\blok_pick.wav', 0, SND_FILENAME or SND_ASYNC) then
-              AddToLogFile(EngineLog, '[ЗВУК] ✓ Звук успешно проигран')
-            else
-              AddToLogFile(EngineLog, '[ЗВУК] ✗ Ошибка PlaySound');
-          except
-            on E: Exception do
-              AddToLogFile(EngineLog, '[ЗВУК] ✗ Исключение при воспроизведении: ' + E.Message);
-          end;
-        end;
-        
-case i of
-  0: ProcessButtonP;  // Кнопка П (старая логика)
-  1, 2, 3, 7, 8, 9, 13, 14, 15, 20: begin
-       // Сначала проверяем логику кнопки "П"
-       if ButtonPState > 0 then
-         ProcessNumberInput(i)  // Старая логика для кнопки "П"
-       else
-         ProcessButtonPCycle(1, i);  // Новая логика для кнопки "К"
-     end;
-  4: ProcessButtonPCycle(0);  // Кнопка К
-  6: ProcessButtonVK;  // НОВАЯ СТРОКА: Кнопка ВК
-  12: ProcessButtonRMP;  // Кнопка РМП
-  21: begin
-        // Сначала проверяем логику кнопки "П"  
-        if ButtonPState > 0 then
-          ProcessButtonEnter  // Старая логика для кнопки "П"
-        else
-          ProcessButtonPCycle(2);  // Новая логика для кнопки "К"
-      end;
-  else
-    AddToLogFile(EngineLog, '[КЛИК] Кнопка ' + IntToStr(i) + ' - функция не реализована');
-end;
-
-        Result := True;
-        Exit;
-      end;
-    end;
-    
-    AddToLogFile(EngineLog, '[КЛИК] Клик мимо всех кнопок');
+    AddToLogFile(EngineLog, 'Клик по клавиатуре БЛОК: ' + IntToStr(relativeX) + ',' + IntToStr(relativeY));
     Result := True;
-  end
-  else
-  begin
-    AddToLogFile(EngineLog, '[КЛИК] Клик мимо панели');
   end;
 end;
 
-var
-  i: Integer;
-  val: Double;
-  posZ_tc: Double;
-  posX_tc: Double;
-  posZ_tm: Double;
-  posX_tm: Double;
-  posZ_ur: Double;
-  posX_ur: Double;
-
-  // Переменные для полосок
-  barValue: Single;        // значение для полоски ТМ
-  barX: Single;           // X координата полоски ТМ
-  barWidth: Single;       // ширина полоски
-  barBottom: Single;      // нижняя граница (где 0.00)
-  barTop: Single;         // верхняя граница (где 10.00)
-  barCurrentHeight: Single; // текущая высота полоски ТМ
-  barZ: Single;           // Z координата для полоски
-  
-  // Переменные для ТЦ
-  barValue_tc: Single;        
-  barX_tc: Single;           
-  barCurrentHeight_tc: Single; 
-  
-  // Переменные для УР
-  barValue_ur: Single;        
-  barX_ur: Single;           
-  barCurrentHeight_ur: Single; 
+procedure DrawBLOCK(
+  x: Single;
+  y: Single;
+  z: Single;
+  AngZ: Single
+);
 
   // Внутренняя функция проверки файлов
   function CheckBLOCKFiles: Boolean;
@@ -9719,7 +8400,7 @@ var
     try
       currentLocType := GetLocomotiveTypeFromMemory;
       locFolder := GetLocomotiveFolder(currentLocType);
-      blockPath := 'data\' + locFolder + '\' + GetLocNum + '\blok\';
+      blockPath := 'data\' + locFolder + '\' + GetLocNum + '\block\';
       
       if not DirectoryExists(blockPath) then
       begin
@@ -9728,7 +8409,7 @@ var
       end;
       
       blockModelPath := blockPath + 'BI-BLOK.dmd';
-      blockDisplayModelPath := blockPath + 'BI-blok-displ.dmd';
+      blockDisplayModelPath := blockPath + 'BI-blok-displ.dmd';  // Добавлен путь к модели дисплея
       blockTexturePath := blockPath + 'blok.bmp';
       
       Result := FileExists(blockModelPath) and FileExists(blockDisplayModelPath) and FileExists(blockTexturePath);
@@ -9747,21 +8428,7 @@ var
     end;
   end;
 
-
-procedure DrawBLOCK(x: Single; y: Single; z: Single; AngZ: Single);
-var
-  pressureMode: Byte;
-  scaleFactor: Single;
-  maxScaleValue: Single;
-  scaleStep: Single;
-
-  // Переменные для барграфов
-  barWidth: Single;
-  barTop: Single;
-  barBottom: Single;
-  scaleStepZ: Single;
-  
-  // Внутренняя процедура инициализации моделей
+  // Внутренняя функция инициализации моделей
   procedure InitBLOCKModels;
   var
     currentLocType: Integer;
@@ -9773,7 +8440,7 @@ var
     try
       currentLocType := GetLocomotiveTypeFromMemory;
       locFolder := GetLocomotiveFolder(currentLocType);
-      blockPath := 'data\' + locFolder + '\' + GetLocNum + '\blok\';
+      blockPath := 'data\' + locFolder + '\' + GetLocNum + '\block\';
       
       AddToLogFile(EngineLog, '=== ИНИЦИАЛИЗАЦИЯ BLOCK ===');
       AddToLogFile(EngineLog, 'Тип локомотива: ' + IntToStr(currentLocType));
@@ -9782,7 +8449,7 @@ var
       AddToLogFile(EngineLog, 'Путь BLOCK: ' + blockPath);
       
       blockModelPath := blockPath + 'BI-BLOK.dmd';
-      blockDisplayModelPath := blockPath + 'BI-blok-displ.dmd';
+      blockDisplayModelPath := blockPath + 'BI-blok-displ.dmd';  // Добавлен путь к модели дисплея
       blockTexturePath := blockPath + 'blok.bmp';
       
       if not CheckBLOCKFiles then
@@ -9790,9 +8457,8 @@ var
         AddToLogFile(EngineLog, 'BLOCK файлы не найдены, инициализация отменена');
         Exit;
       end;
-
-      //NopMemory(Pointer($0073880D), 5);
-
+      
+      // Загружаем основную модель
       BLOCKModelID := LoadModel(blockModelPath, 0, False);
       if BLOCKModelID > 0 then
         AddToLogFile(EngineLog, 'BLOCK модель загружена, ID: ' + IntToStr(BLOCKModelID))
@@ -9801,18 +8467,8 @@ var
         AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить BLOCK модель: ' + blockModelPath);
         Exit;
       end;
-
-
-
-      BLOCKPSSModelID := LoadModel(blockPath + 'blok_displ_pss.dmd', 0, False);
-      if BLOCKModelID > 0 then
-        AddToLogFile(EngineLog, 'BLOCKPSSModelID модель загружена, ID: ' + IntToStr(BLOCKModelID))
-      else
-      begin
-        AddToLogFile(EngineLog, 'ОШИБКА: Не удалось загрузить BLOCKPSSModelID модель: ' + blockModelPath);
-        Exit;
-      end;
-
+      
+      // Загружаем модель дисплея
       BLOCKDisplayModelID := LoadModel(blockDisplayModelPath, 0, False);
       if BLOCKDisplayModelID > 0 then
         AddToLogFile(EngineLog, 'BLOCK модель дисплея загружена, ID: ' + IntToStr(BLOCKDisplayModelID))
@@ -9822,6 +8478,7 @@ var
         Exit;
       end;
       
+      // Загружаем текстуру
       BLOCKTextureID := LoadTextureFromFile(blockTexturePath, 0, -1);
       if BLOCKTextureID > 0 then
         AddToLogFile(EngineLog, 'BLOCK текстура загружена, ID: ' + IntToStr(BLOCKTextureID))
@@ -9843,7 +8500,7 @@ var
     end;
   end;
 
-  // Функция применения NOP патча
+  // Внутренняя функция применения NOP патча
   function ApplyNOPPatch(patchAddress: Cardinal; size: Integer): Boolean;
   var
     OldProtect: DWORD;
@@ -9869,95 +8526,51 @@ var
       end;
     end
     else
+    begin
       AddToLogFile(EngineLog, 'ОШИБКА: Не удалось изменить защиту памяти для NOP патча');
+      Result := False;
+    end;
   end;
 
-  // Процедура применения патча
+  // Внутренняя функция применения патча
   procedure ApplyBLOCKPatch;
   var
     currentLocType: Integer;
     patchAddress: Cardinal;
-    OldProtect: DWORD;
   begin
     if BLOCKPatchApplied then Exit;
     
     try
       currentLocType := GetLocomotiveTypeFromMemory;
-
-      ApplyNOPPatch($00738588, 3);
-
-  VirtualProtect(Pointer($00484AF5 + 2), 1, PAGE_EXECUTE_READWRITE, OldProtect);
-  PByte($00484AF5 + 2)^ := $02;
-  FlushInstructionCache(GetCurrentProcess, Pointer($00484AF5 + 2), 1);
-  VirtualProtect(Pointer($00484AF5 + 2), 1, OldProtect, OldProtect);
-
-//      case currentLocType of
-//        822: // ЧС7
-//        begin
-//          patchAddress := $00677AB3;
-//          AddToLogFile(EngineLog, '=== ПРИМЕНЕНИЕ BLOCK ПАТЧА ===');
-//          AddToLogFile(EngineLog, 'Тип локомотива: ЧС7 (822)');
-//          AddToLogFile(EngineLog, 'Адрес патча: $' + IntToHex(patchAddress, 8));
-//          
-//          if ApplyNOPPatch(patchAddress, 5) then
-//          begin
-//            BLOCKPatchApplied := True;
-//            AddToLogFile(EngineLog, 'BLOCK патч для ЧС7 применен успешно');
-//          end
-//          else
-//            AddToLogFile(EngineLog, 'ОШИБКА применения BLOCK патча для ЧС7');
-//        end;
-//        812: // ЧС8
-//        begin
-//          if ApplyNOPPatch($4D835F, 5) then
-//          begin
-//            BLOCKPatchApplied := True;
-//            AddToLogFile(EngineLog, 'BLOCK патч для ЧС8 применен успешно');
-//          end;
-//        end;
-//        3154: // ЭД4М
-//        begin
-//          if ApplyNOPPatch($6297EF, 5) then
-//          begin
-//            BLOCKPatchApplied := True;
-//            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
-//          end;
-//        end;
-//        621: // ЧС4Т
-//        begin
-//          if ApplyNOPPatch($5DF68A, 5) then
-//          begin
-//            BLOCKPatchApplied := True;
-//            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
-//          end;
-//        end;
-//        880:
-//        begin // ВЛ80Т
-//          if ApplyNOPPatch($58E8D2, 5) then
-//          begin
-//            BLOCKPatchApplied := True;
-//            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
-//          end;
-//        end;
-//        2070: // ТЭП70
-//        begin
-//          if ApplyNOPPatch($681B04, 5) then
-//          begin
-//            BLOCKPatchApplied := True;
-//            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
-//          end;
-//        end;
-//        885: // ВЛ85
-//        begin
-//          if ApplyNOPPatch($6C41FE, 5) then
-//          begin
-//            BLOCKPatchApplied := True;
-//            AddToLogFile(EngineLog, 'BLOCK патч для ЭД4М применен успешно');
-//          end;
-//        end;
-//        else
-//          AddToLogFile(EngineLog, 'BLOCK патч не поддерживается для типа локомотива: ' + IntToStr(currentLocType));
-//      end;
+      
+      // Проверяем поддерживаемые типы локомотивов
+      case currentLocType of
+        822: // ЧС7
+        begin
+          patchAddress := $00677AB3; // Прямой адрес
+          AddToLogFile(EngineLog, '=== ПРИМЕНЕНИЕ BLOCK ПАТЧА ===');
+          AddToLogFile(EngineLog, 'Тип локомотива: ЧС7 (822)');
+          AddToLogFile(EngineLog, 'Адрес патча: $' + IntToHex(patchAddress, 8));
+          AddToLogFile(EngineLog, 'Тип патча: NOP call sub_484AB4');
+          
+          if ApplyNOPPatch(patchAddress, 5) then
+          begin
+            BLOCKPatchApplied := True;
+            AddToLogFile(EngineLog, 'BLOCK патч для ЧС7 применен успешно');
+          end
+          else
+            AddToLogFile(EngineLog, 'ОШИБКА применения BLOCK патча для ЧС7');
+        end;
+        
+        // Здесь можно добавить другие локомотивы
+        // 811: // ВЛ11М
+        // begin
+        //   // Логика для ВЛ11М
+        // end;
+        
+        else
+          AddToLogFile(EngineLog, 'BLOCK патч не поддерживается для типа локомотива: ' + IntToStr(currentLocType));
+      end;
       
     except
       on E: Exception do
@@ -9965,281 +8578,146 @@ var
     end;
   end;
 
-  // Процедура отрисовки текста
-  procedure DrawTextSimple(posX, posY, posZ: Single; scale: Single; text: string);
-  begin
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(posX, posY, posZ);
-    RotateX(-90);
-    Scale3D(scale);
-    Color3D($FFFFFF, 255, False, 0.0);
-    SetTexture(0);
-    DrawText3D(0, text);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-  end;
-
-  // Процедура отрисовки шкалы давления с правильными координатами
-  procedure DrawPressureScale(barX: Single);
-  var
-    i: Integer;
-    val: Single;
-    posZ, posX: Single;
-  begin
-    val := maxScaleValue;
-    posZ := barTop;
-    
-    for i := 0 to 5 do
-    begin
-      // Используем точные координаты из оригинала для каждого барграфа
-      if barX = 0.0676 then // ТЦ
-      begin
-        if val = maxScaleValue then
-          posX := 0.055
-        else
-          posX := 0.057;
-      end
-      else if barX = 0.0896 then // ТМ
-      begin
-        if val = maxScaleValue then
-          posX := 0.077
-        else
-          posX := 0.079;
-      end
-      else if barX = 0.111 then // УР
-      begin
-        if val = maxScaleValue then
-          posX := 0.099
-        else
-          posX := 0.101;
-      end
-      else
-      begin
-        // Резервный вариант для других координат
-        if val = maxScaleValue then
-          posX := barX - 0.0126
-        else
-          posX := barX - 0.0106;
-      end;
-      
-      DrawTextSimple(posX, 0, posZ, 0.0044, FormatFloat('0.00', val));
-      
-      val := val - scaleStep;
-      posZ := posZ - scaleStepZ;
-    end;
-  end;
-
-  // Процедура отрисовки барграфа
-  procedure DrawPressureBarGraph(barX: Single; barValue: Single);
-  var
-    barCurrentHeight: Single;
-  begin
-    if barValue > maxScaleValue then 
-      barValue := maxScaleValue;
-
-    if barValue > 0 then
-    begin
-      barCurrentHeight := barBottom + ((barTop - barBottom) * (barValue / maxScaleValue));
-      
-      SetTexture(0);
-      glDisable(GL_LIGHTING);
-      glEnable(GL_BLEND);
-      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-      glColor4f(0.0, 0.0, 1.0, 0.9);
-
-      glBegin(GL_QUADS);
-        glVertex3f(barX - barWidth/2, 0, barBottom);
-        glVertex3f(barX + barWidth/2, 0, barBottom);
-        glVertex3f(barX + barWidth/2, 0, barCurrentHeight);
-        glVertex3f(barX - barWidth/2, 0, barCurrentHeight);
-      glEnd;
-
-      glDisable(GL_BLEND);
-      glEnable(GL_LIGHTING);
-      glColor4f(1.0, 1.0, 1.0, 1.0);
-    end;
-  end;
-
-  // Процедура отрисовки подписей барграфа
-  procedure DrawPressureLabels(barX: Single; barLabel: string; barValue: Single);
-  begin
-    DrawTextSimple(barX - 0.008, 0, barBottom - 0.007, 0.005, barLabel);
-
-    if pressureMode = 0 then
-      DrawTextSimple(barX - 0.008, 0, barBottom - 0.0135, 0.005, FormatFloat('0.0', barValue * scaleFactor))
-    else
-      DrawTextSimple(barX - 0.009, 0, barBottom - 0.0135, 0.005, FormatFloat('0.00', barValue));
-
-    DrawTextSimple(barX - 0.009, 0, barBottom - 0.02, 0.005, 'КГС');
-  end;
-
-  // Полная процедура для одного барграфа
-  procedure DrawCompletePressureBar(barX: Single; barLabel: string; barValue: Single);
-  begin
-    DrawPressureScale(barX);
-    DrawPressureBarGraph(barX, barValue);
-    DrawPressureLabels(barX, barLabel, barValue);
-  end;
-
-  // Процедура отрисовки всех информационных полей
-  procedure DrawAllInfoFields;
-  var
-    inputText: string;
-    currentTrackNumber: Integer;
-    patchValue: Byte;
-  begin
-    // Основная информация
-    DrawTextSimple(-0.11, 0, 0.247, 0.007, GetCoordinatesFormatted);
-    DrawTextSimple(-0.07, 0, 0.247, 0.007, Copy(GetCurrentStation, 1, 8));
-    DrawTextSimple(-0.022, 0, 0.247, 0.007, GetCurrentTime);
-    DrawTextSimple(0.01, 0, 0.247, 0.007, GetRezim);
-    if GetTrackNumberInt > 0 then
-      DrawTextSimple(-0.11, 0, 0.233, 0.007, 'ЭК')
-    else
-      DrawTextSimple(-0.11, 0, 0.233, 0.007, GetChannel);
-    if GetTrackNumberInt > 0 then
-      DrawTextSimple(-0.095, 0, 0.233, 0.007, GetTrackWithDirection)
-    else
-      DrawTextSimple(-0.095, 0, 0.233, 0.007, '0');
-    DrawTextSimple(-0.105, 0, 0.216, 0.007, GetAcceleration);
-    DrawTextSimple(-0.105, 0, 0.199, 0.007, GetDistance);
-    DrawTextSimple(-0.105, 0, 0.182, 0.007, '0.67');
-    DrawTextSimple(-0.110, 0, 0.092, 0.0055, GetTargetType);
-    if GetTrackNumberInt > 0 then
-    begin
-      DrawTextSimple(0.035, 0, 0.092, 0.006, GetDistance + ' м');
-      DrawTextSimple(0.002, 0, 0.092, 0.006, GetSvetoforValue);
-    end;
-
-
-
-
-begin
-  currentTrackNumber := GetTrackNumberInt;
-  
-  // Статическая переменная для отслеживания последнего значения
-  if currentTrackNumber <> LastTrackDirection then
-  begin
-    if currentTrackNumber > 0 then
-      patchValue := 1
-    else
-      patchValue := 0;
-      
-    WriteByteToMemory(Pointer($400000 + $83F12), patchValue);
-    LastTrackDirection := currentTrackNumber;
-  end;
-end;
-
-try
-  if PByte($0074AC58)^ = 0 then
-  begin
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(0.00, 0.00, 0.00);
-    SetTexture(0);
-    Color3D($0000FF, 255, False, 0);
-    DrawModel(BLOCKPSSModelID, 0, True);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-  end;
-except
-  // если будет ошибка доступа к памяти — игнорируем
-end;
-
-    // Поле ввода
-    case GetStateBLOCK of
-      10: inputText := 'НОМЕР МАШИНИСТА ' + InputBuffer + '_';
-      11: inputText := 'НОМЕР ПОЕЗДА ' + InputBuffer + '_';
-      12: inputText := 'ДЛИНА В ОСЯХ ' + InputBuffer + '_';
-      13: inputText := 'ДЛИНА В ВАГОНАХ ' + InputBuffer + '_';
-      14: inputText := 'МАССА ПОЕЗДА (Т) ' + InputBuffer + '_';
-      15: inputText := 'СМЕЩЕНИЕ ЧАСОВ ' + InputBuffer + '_';
-      16: inputText := 'ЗАМЕДЛЕНИЕ ПТ ' + InputBuffer + '_';
-      17: inputText := 'ЗАМЕДЛЕНИЕ ЭПТ ' + InputBuffer + '_';
-      18: inputText := 'НАЛИЧ.ПОМ.МАШ. ' + InputBuffer + '_';
-      20: inputText := 'НОМЕР ПУТИ ' + InputBuffer + '_';
-      21: inputText := 'ПРИЗНАК ПРАВ. ' + InputBuffer + '_';
-      30: inputText := 'ВВЕДИТЕ КОМАНДУ ' + InputBuffer + '_';
-      31: inputText := 'СКОРОСТЬ НА БЕЛЫЙ ' + InputBuffer + '_';
-      52: inputText := 'ТАБЛИЦА АЛС-ЕН  ' + InputBuffer + '_';
-      71: inputText := '123456789АВ';
-      else
-      begin
-        if GetTrackNumberInt = 0 then
-          inputText := 'РЕЖИМ БЕЗ ЭК'
-        else
-          inputText := '';
-      end;
-    end;
-    
-    if inputText <> '' then
-      DrawTextSimple(-0.11, 0, 0.081, 0.007, inputText);
-  end;
-
 begin
   // Применяем патч при первом вызове
+  ApplyBLOCKPatch;
+  
+  // Инициализируем модели если еще не инициализированы
   if not BLOCKInitialized then
-    ApplyBLOCKPatch;
-
-  // Инициализируем модели
-  if not BLOCKInitialized then
-  begin
     InitBLOCKModels;
-    if not BLOCKInitialized then
-    begin
-      AddToLogFile(EngineLog, 'BLOCK не инициализирован, отрисовка отменена');
-      Exit;
-    end;
-  end;
-
-  // Настройка параметров в зависимости от режима давления
-  pressureMode := PByte($0538D95F)^;
-  if pressureMode = 1 then
+    
+  // Если инициализация не удалась, выходим
+  if not BLOCKInitialized then
   begin
-    scaleFactor := 0.1;
-    maxScaleValue := 1.0;
-    scaleStep := 0.2;
-  end
-  else
-  begin
-    scaleFactor := 1.0;
-    maxScaleValue := 10.0;
-    scaleStep := 2.0;
+    AddToLogFile(EngineLog, 'BLOCK не инициализирован, отрисовка отменена');
+    Exit;
   end;
-
-  // Константы для барграфов
-  barWidth := 0.003;
-  barTop := 0.191;
-  barBottom := 0.101;
-  scaleStepZ := 0.018;
-
-  // Основная отрисовка
+  
+  // Отрисовываем BLOCK
   try
     BeginObj3D();
     Position3D(AngZ, z, y);
     RotateZ(x);
     SetTexture(BLOCKTextureID);
-
-
-
-    // Отрисовываем модели
-    DrawModel(BLOCKModelID, 0, True);
     
+    // Отрисовываем основную модель
+    DrawModel(BLOCKModelID, 0, True);
+
     glDisable(GL_LIGHTING);
+    // Отрисовываем модель дисплея с той же текстурой
     DrawModel(BLOCKDisplayModelID, 0, True);
     glEnable(GL_LIGHTING);
 
-    // Отрисовываем все информационные поля
-    DrawAllInfoFields;
-    
-    // Отрисовываем барграфы давления
-    DrawCompletePressureBar(0.0676, 'ТЦ', GetPressureTCf * scaleFactor);
-    DrawCompletePressureBar(0.0896, 'ТМ', GetPressureTMf * scaleFactor);
-    DrawCompletePressureBar(0.111, 'УР', GetPressureURf * scaleFactor);
-    
-    // Дополнительные элементы
+    // Координаты
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.11, 0, 0.247);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetCoordinatesFormatted);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Станция
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.07, 0, 0.247);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetCurrentStation);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Время
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.022, 0, 0.247);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetCurrentTime);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Канал
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.11, 0, 0.233);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetChannel);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Номер пути
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.095, 0, 0.233);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetTrackWithDirection);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Ускорение
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.105, 0, 0.216);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetAcceleration);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Расстояние до цели САУТ
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.105, 0, 0.199);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetDistance);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Расстояние до цели САУТ
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.105, 0, 0.182);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, '0.67');
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
+    // Тип цели
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(-0.105, 0, 0.182);
+    RotateX(-90);
+    Scale3D(0.007);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(0, GetTargetType);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+
     DrawSpeedometer3D;
+
     DrawBlockKeyboard;
 
     EndObj3D();
@@ -10412,25 +8890,23 @@ begin
   with StaticData[11] do begin X:=1.019; Y:=7.3585; Z:=3.665; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.008; Text:='Путь'; Color:=$FFFFFF; FuncType:=0; end;
   with StaticData[12] do begin X:=1.022; Y:=7.3584; Z:=3.656; RotX:=-105; RotY:=35; RotZ:=-8.0; Scale:=0.008; Text:='n'; Color:=$FFFFFF; FuncType:=10; end;
   with StaticData[13] do begin X:=1.01; Y:=7.3842; Z:=3.575; RotX:=-105; RotY:=34; RotZ:=-8.0; Scale:=0.008; Text:='222'; Color:=$FFFFFF; FuncType:=11; end;
-
+  
   // Элементы 14-16 - Скорость (желтый, 3 позиции)
-  with StaticData[14] do begin X:=0.9235; Y:=7.455; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$00FFFF; FuncType:=20; end;
-  with StaticData[15] do begin X:=0.935;  Y:=7.451; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$00FFFF; FuncType:=21; end;
-  with StaticData[16] do begin X:=0.9465; Y:=7.447; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$00FFFF; FuncType:=22; end;
-
+  with StaticData[14] do begin X:=0.9235; Y:=7.455; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$00FFFF; FuncType:=20; end; // 1-я позиция скорости
+  with StaticData[15] do begin X:=0.935; Y:=7.451; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$00FFFF; FuncType:=21; end; // 2-я позиция скорости
+  with StaticData[16] do begin X:=0.9465; Y:=7.447; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$00FFFF; FuncType:=22; end; // 3-я позиция скорости
+  
   // Элементы 17-19 - Допустимая скорость (красный, 3 позиции)
-  with StaticData[17] do begin X:=0.922;  Y:=7.450; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$0000FF; FuncType:=23; end;
-  with StaticData[18] do begin X:=0.9335; Y:=7.446; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='5'; Color:=$0000FF; FuncType:=24; end;
-  with StaticData[19] do begin X:=0.945;  Y:=7.442; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='6'; Color:=$0000FF; FuncType:=25; end;
-
+  with StaticData[17] do begin X:=0.922; Y:=7.450; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$0000FF; FuncType:=23; end; // 1-я позиция допустимой
+  with StaticData[18] do begin X:=0.9335; Y:=7.446; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='5'; Color:=$0000FF; FuncType:=24; end; // 2-я позиция допустимой
+  with StaticData[19] do begin X:=0.945; Y:=7.442; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='6'; Color:=$0000FF; FuncType:=25; end; // 3-я позиция допустимой
+  
   // Элементы 20-23 - Расстояние до цели (красный, 4 позиции)
-  with StaticData[20] do begin X:=0.852;  Y:=7.471;  Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$0000FF; FuncType:=26; end;
-  with StaticData[21] do begin X:=0.863;  Y:=7.4674; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$0000FF; FuncType:=27; end;
-  with StaticData[22] do begin X:=0.874;  Y:=7.4638; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$0000FF; FuncType:=28; end;
-  with StaticData[23] do begin X:=0.885;  Y:=7.4602; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$0000FF; FuncType:=29; end;
-
-
-
+  with StaticData[20] do begin X:=0.852; Y:=7.471; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$0000FF; FuncType:=26; end; // 1-я позиция расстояния
+  with StaticData[21] do begin X:=0.863; Y:=7.4674; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$0000FF; FuncType:=27; end; // 2-я позиция расстояния
+  with StaticData[22] do begin X:=0.874; Y:=7.4638; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$0000FF; FuncType:=28; end; // 3-я позиция расстояния
+  with StaticData[23] do begin X:=0.885; Y:=7.4602; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$0000FF; FuncType:=29; end; // 4-я позиция расстояния
+  
   // Элементы 24-27 - Светофорная система АЛС
   with StaticData[24] do begin X:=1.111; Y:=7.239; Z:=3.729; RotX:=-90; RotY:=40; RotZ:=-90; Scale:=0.015; Text:='|'; Color:=$00FF00; FuncType:=30; end;
   with StaticData[25] do begin X:=1.113; Y:=7.237; Z:=3.733; RotX:=-90; RotY:=40; RotZ:=-90; Scale:=0.015; Text:='l'; Color:=$00FF00; FuncType:=31; end;
@@ -10474,20 +8950,20 @@ begin
   with StaticData[13] do begin X:=1.01; Y:=7.28; Z:=3.575; RotX:=-105; RotY:=34; RotZ:=-8.0; Scale:=0.008; Text:='222'; Color:=$FFFFFF; FuncType:=11; end;
 
   // Элементы 14-16 - Скорость (желтый, 3 позиции)
-  with StaticData[14] do begin X:=0.204; Y:=7.529; Z:=3.353; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='1'; Color:=$00FFFF; FuncType:=20; end;
-  with StaticData[15] do begin X:=0.217; Y:=7.532; Z:=3.353; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='2'; Color:=$00FFFF; FuncType:=21; end;
-  with StaticData[16] do begin X:=0.23;  Y:=7.533; Z:=3.353; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='3'; Color:=$00FFFF; FuncType:=22; end;
+  with StaticData[14] do begin X:=0.9235; Y:=7.455; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$00FFFF; FuncType:=20; end;
+  with StaticData[15] do begin X:=0.935; Y:=7.451; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$00FFFF; FuncType:=21; end;
+  with StaticData[16] do begin X:=0.9465; Y:=7.447; Z:=3.386; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$00FFFF; FuncType:=22; end;
 
   // Элементы 17-19 - Допустимая скорость (красный, 3 позиции)
-  with StaticData[17] do begin X:=0.204; Y:=7.523; Z:=3.329; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='4'; Color:=$0000FF; FuncType:=23; end;
-  with StaticData[18] do begin X:=0.217; Y:=7.526; Z:=3.329; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='5'; Color:=$0000FF; FuncType:=24; end;
-  with StaticData[19] do begin X:=0.23;  Y:=7.529; Z:=3.329; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='6'; Color:=$0000FF; FuncType:=25; end;
+  with StaticData[17] do begin X:=0.922; Y:=7.450; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$FF0000; FuncType:=23; end;
+  with StaticData[18] do begin X:=0.9335; Y:=7.446; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='5'; Color:=$FF0000; FuncType:=24; end;
+  with StaticData[19] do begin X:=0.945; Y:=7.442; Z:=3.364; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='6'; Color:=$FF0000; FuncType:=25; end;
 
   // Элементы 20-23 - Расстояние до цели (красный, 4 позиции)
-  with StaticData[20] do begin X:=0.135;  Y:=7.506;  Z:=3.331; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='1'; Color:=$0000FF; FuncType:=26; end;
-  with StaticData[21] do begin X:=0.1455; Y:=7.508;  Z:=3.331; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='2'; Color:=$0000FF; FuncType:=27; end;
-  with StaticData[22] do begin X:=0.157;  Y:=7.511;  Z:=3.331; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='3'; Color:=$0000FF; FuncType:=28; end;
-  with StaticData[23] do begin X:=0.169;  Y:=7.514;  Z:=3.331; RotX:=-75.0; RotY:=-10.0; RotZ:=-3.0; Scale:=0.019; Text:='4'; Color:=$0000FF; FuncType:=29; end;
+  with StaticData[20] do begin X:=0.852; Y:=7.471; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='1'; Color:=$FF0000; FuncType:=26; end;
+  with StaticData[21] do begin X:=0.863; Y:=7.4674; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='2'; Color:=$FF0000; FuncType:=27; end;
+  with StaticData[22] do begin X:=0.874; Y:=7.4638; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='3'; Color:=$FF0000; FuncType:=28; end;
+  with StaticData[23] do begin X:=0.885; Y:=7.4602; Z:=3.366; RotX:=-70; RotY:=20; RotZ:=7.0; Scale:=0.019; Text:='4'; Color:=$FF0000; FuncType:=29; end;
 
 
   // Элементы 30-33 - Задание и расписание
@@ -11283,14 +9759,6 @@ begin
       LightBlockIDsCached := True;
     end;
 
-
-    if CheckBLOCKFiles then
-      begin
-        blokhookklub := True;
-        DrawBLOCK(x, y, z, AngZ);
-      end;
-
-
     //InitializeBoosterKeyboard;
     //SetBoosterKeyboardCallback(@MyKeyHandler);
 
@@ -11357,7 +9825,6 @@ begin
     RotateX(-90.0);
     RotateY(45.0);
     Scale3D(0.011);
-     Position3D(-0.045, 0.0400002, 0.1420001);
     Color3D(3407667, 255, False, 0.0);
     SetTexture(0);
     DrawText3D(0, 'ТАБЛИЦА АЛС-ЕН');
@@ -11418,40 +9885,6 @@ begin
   end;
 
 
-
-
-  try
-    textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + $34);
-    textureID := PWord(textureAddr)^;
-  except
-    textureID := MyTextureID; // fallback
-  end;
-
-  try
-    modelAddr := Pointer(PCardinal(Pointer($00400000 + $8D10D70))^ + $04);
-    modelID := PWord(modelAddr)^;
-  except
-    modelID := MyModelID; // fallback
-  end;
-
-  if not blokhookklub then
-     begin
-  BeginObj3D;
-  //Position3D(1.17, 7.1799998, 3.4319999);
-  Position3D(angZ, z, y);
-  RotateZ(x);
-  SetTexture(textureID);
-  DrawModel(modelID, 0, False);
-  EndObj3D;
-     end
-  else
-    DrawBLOCK(x,y,z,angZ);
-
-
-//
-
-
-
   // ======== АНАЛИЗ СВЕТОФОРОВ ========
   if (timeGetTime - LastSignalUpdate) > SignalUpdateInterval then
   begin
@@ -11462,7 +9895,7 @@ begin
 
 
   // Частота ЕН
-  if (not BLOCKInitialized) and (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
+  if PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0 then
   begin
     glDisable(GL_LIGHTING); // ← ДОБАВИТЬ
     BeginObj3D;
@@ -11480,7 +9913,7 @@ begin
 
 
   // ======== ЛОГИКА ОТОБРАЖЕНИЯ МОДЕЛЕЙ ОТКЛОНЕНИЯ ========
-  if (not BLOCKInitialized) and (als_en_state) and (PByte($905B754)^ <> 0) and (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
+  if (als_en_state) and (PByte($905B754)^ <> 0) and (PByte(Pointer(PCardinal(Pointer($00400000 + $348638))^ + $2D0))^ > 0) then
   begin
     if KlubBilIndPModelID > 0 then
     begin
@@ -11513,6 +9946,29 @@ begin
 
 
 
+
+  try
+    textureAddr := Pointer(PCardinal(Pointer($9110D60))^ + $34);
+    textureID := PWord(textureAddr)^;
+  except
+    textureID := MyTextureID; // fallback
+  end;
+
+  try
+    modelAddr := Pointer(PCardinal(Pointer($00400000 + $8D10D70))^ + $04);
+    modelID := PWord(modelAddr)^;
+  except
+    modelID := MyModelID; // fallback
+  end;
+
+
+  BeginObj3D;
+  //Position3D(1.17, 7.1799998, 3.4319999);
+  Position3D(angZ, z, y);
+  RotateZ(x);
+  SetTexture(textureID);
+  DrawModel(modelID, 0, False);
+  EndObj3D;
 
   // Получаем состояние основного светофора
   mainTrafficLight := PByte(Pointer($400000 + $8C07ECC))^;
@@ -11563,8 +10019,7 @@ begin
 
     SetTexture(textureID);
     // ======== СИСТЕМА КЛУБ ========
-    if (visibleSignalCount > 0) and (not BLOCKInitialized) then
-
+    if visibleSignalCount > 0 then
     begin
       // Нижний блок - желтый
       BeginObj3D;
@@ -11638,7 +10093,10 @@ begin
       RotateZ(bilpom_y);
       RotateX(-bilpom_x);
       Position3D(0.0, 0.0, 0.07);
+<<<<<<< HEAD
       SetTexture(textureID);
+=======
+>>>>>>> 0cf94f613f89abae2a71f4cc2083c740979c7e44
       DrawModel(yellowBlockModelID, 0, False); // Читаем из памяти
       glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
       EndObj3D;
@@ -11654,9 +10112,7 @@ begin
         RotateZ(bilpom_y);
         RotateX(-bilpom_x);
         Position3D(0.0, 0.0, 0.07 + i * 0.014);
-        SetTexture(textureID);
         DrawModel(greenBlockModelID, 0, False); // Читаем из памяти
-
         glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
         EndObj3D;
 
@@ -11675,18 +10131,9 @@ begin
   begin
     MyModelID := LoadModel('data\loc\klub_bil_v.dmd', 0, False);
     MyTextureID := LoadTextureFromFile('data\loc\klub_bil.bmp', 0, -1);
-    UsavppDisplayModelID := LoadModel('data\' + GetLocomotiveFolder(GetLocomotiveTypeFromMemory) + '\' + LocNum + '\loc\usavpp-display.dmd', 0, False);
-    UsavppDisplayTextureID := LoadTextureFromFile('data\' + GetLocomotiveFolder(GetLocomotiveTypeFromMemory) + '\' + LocNum + '\loc\usavpp-display.bmp', 0, -1);
     strelka := LoadModel('data\' + GetLocomotiveFolder(GetLocomotiveTypeFromMemory) + '\' + LocNum + '\strelka-m.dmd', 0, False);
   end;
 
-//  BeginObj3D;
-//  glDisable(GL_LIGHTING);
-//  Position3D(0,0,0);
-//  SetTexture(UsavppDisplayTextureID);
-//  DrawModel(UsavppDisplayModelID, 0, False); // Читаем из памяти
-//  glEnable(GL_LIGHTING);
-//  EndObj3D;
 
   currentLocType := GetLocomotiveTypeFromMemory;
   locFolder := GetLocomotiveFolder(currentLocType);
@@ -11777,10 +10224,7 @@ begin
     RotateX(-103.0);
     RotateY(34.2);
     RotateZ(-7.0); // Поворот против часовой на 15 градусов
-    if GetLocomotiveTypeFromMemory = 812 then
-      Scale3D(0.0017)
-    else
-      Scale3D(0.002);
+    Scale3D(0.002);
     Color3D($00FFFF, 255, False, 0.0); // Желтый
     SetTexture(0);
     Draw3DSemiCircle(5.2, 0, 180);
@@ -11798,9 +10242,9 @@ begin
     RotateY(34.2);
     RotateZ(-7.0); // Тот же поворот для совпадения
     if GetLocomotiveTypeFromMemory = 812 then
-      Scale3D(0.0017)
+      Scale3D(0.00017)
     else
-      Scale3D(0.002);
+      Scale3D(0.0002);
     Color3D($0000FF, 255, False, 0.0); // Красный
     SetTexture(0);
     Draw3DSemiCircle(5.2, 180, 360);
