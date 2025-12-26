@@ -22,48 +22,16 @@ function GetChannel: string;
 function GetTrackWithDirection: string;
 function GetTargetType: string;
 
-// Новые функции интегрированные из Python кода
-function GetSvetoforValue: string;  // Получение значения светофора
-function GetDirection: Boolean;     // Определение направления (аналог tuda)
-function GetSvetoforFileName: string; // Получение имени файла светофора
-function GetRoutePathFromMemory: string; // Получение пути маршрута из памяти
-
 function GetSpeedValue: Integer;     // Скорость как число
-function GetTargetSpeedValue: Integer;     // Целевая Скорость как число
-
 function GetDistanceValue: Integer; // Расстояние как число
-function GetTrackNumberInt: Byte;   // Номер пути в байте
 
 function GetALS: Byte;
-function GetPressureTMf: Single;    // Давление ТМ
-function GetPressureURf: Single;    // Давление УР
-function GetPressureTCf: Single;    // Давление ТЦ 
 
-function ReadSettingsValue(const ParamName: string): string;  // Универсальная функция чтения параметров из settings.ini
-function GetRoutePathFromSettings: string;   // Чтение RoutePath из settings.ini
-function GetSpeedLimitByTRACK: Integer;      // Получение ограничения скорости по треку
-function GetSpeedTargetByTRACK_NextRange: Integer;
 
 implementation
 
 const
   BaseAddress: Cardinal = $00400000;
-
-// Глобальные переменные для кеширования
-var
-  CachedSpeedData: TStringList = nil;
-  CachedRoutePath: string = '';
-  CachedRouteValue: string = '';
-  CachedFileName: string = '';
-  LastSettingsCheck: Cardinal = 0;
-
-// Структура для хранения диапазона скоростей
-type
-  TSpeedRange = record
-    MinRange: Integer;
-    MaxRange: Integer;
-    SpeedLimit: Integer;
-  end;
 
 procedure WriteToLog(const Message: string);
 var
@@ -119,565 +87,6 @@ begin
   if A < B then Result := A else Result := B;
 end;
 
-// Функция для чтения параметров из settings.ini
-function ReadSettingsValue(const ParamName: string): string;
-var
-  IniFile: TextFile;
-  Line: string;
-  SettingsPath: string;
-  EqualPos: Integer;
-  Key, Value: string;
-begin
-  Result := '';
-  
-  try
-    // Формируем путь к файлу settings.ini
-    SettingsPath := ExtractFilePath(ParamStr(0)) + 'settings.ini';
-    
-    if not FileExists(SettingsPath) then
-    begin
-      WriteToLog('Файл settings.ini не найден: ' + SettingsPath);
-      Exit;
-    end;
-    
-    AssignFile(IniFile, SettingsPath);
-    Reset(IniFile);
-    try
-      while not Eof(IniFile) do
-      begin
-        ReadLn(IniFile, Line);
-        Line := Trim(Line);
-        
-        // Пропускаем пустые строки и комментарии
-        if (Line = '') or (Line[1] = ';') or (Line[1] = '#') then
-          Continue;
-        
-        // Ищем знак равенства
-        EqualPos := Pos('=', Line);
-        if EqualPos > 0 then
-        begin
-          Key := Trim(Copy(Line, 1, EqualPos - 1));
-          Value := Trim(Copy(Line, EqualPos + 1, Length(Line)));
-          
-          // Ищем нужный параметр
-          if UpperCase(Key) = UpperCase(ParamName) then
-          begin
-            Result := Value;
-            WriteToLog(Format('%s найден в settings.ini: %s', [ParamName, Result]));
-            Break;
-          end;
-        end;
-      end;
-    finally
-      CloseFile(IniFile);
-    end;
-    
-  except
-    on E: Exception do
-    begin
-      WriteToLog('Ошибка при чтении settings.ini: ' + E.Message);
-      Result := '';
-    end;
-  end;
-end;
-
-// Функция для чтения RoutePath из settings.ini (обертка для совместимости)
-function GetRoutePathFromSettings: string;
-begin
-  Result := ReadSettingsValue('RoutePath');
-end;
-
-var
-  SpeedRanges: array of TSpeedRange;
-  RangesCount: Integer = 0;
-
-// Быстрая загрузка настроек (с кешированием)
-function GetCachedSettings: Boolean;
-var
-  CurrentTick: Cardinal;
-  RoutePath, RouteValue: string;
-begin
-  Result := False;
-  CurrentTick := GetTickCount;
-  
-  // Проверяем настройки только раз в секунду
-  if (CurrentTick - LastSettingsCheck) < 1000 then
-  begin
-    Result := (CachedRoutePath <> '') and (CachedRouteValue <> '');
-    Exit;
-  end;
-  
-  LastSettingsCheck := CurrentTick;
-  
-  try
-    RoutePath := ReadSettingsValue('RoutePath');
-    RouteValue := ReadSettingsValue('Route');
-    if RouteValue = '' then RouteValue := '1';
-    
-    // Проверяем, изменились ли настройки
-    if (RoutePath = CachedRoutePath) and (RouteValue = CachedRouteValue) then
-    begin
-      Result := True;
-      Exit;
-    end;
-    
-    // Настройки изменились - сбрасываем кеш
-    CachedRoutePath := RoutePath;
-    CachedRouteValue := RouteValue;
-    RangesCount := 0;
-    
-    Result := (CachedRoutePath <> '');
-  except
-    Result := False;
-  end;
-end;
-
-// Загрузка и парсинг файла скоростей в массив
-procedure LoadSpeedRanges;
-var
-  SpeedFileName: string;
-  SpeedFilePath: string;
-  SpeedFile: TextFile;
-  Line: string;
-  Parts: TStringList;
-  StartRange, EndRange, SpeedLimit: Integer;
-  i, j: Integer;
-  TempRange: TSpeedRange;
-begin
-  if not GetCachedSettings then Exit;
-  
-  // Определяем имя файла
-  if CachedRouteValue = '2' then
-    SpeedFileName := 'speeds2.dat'
-  else
-    SpeedFileName := 'speeds1.dat';
-  
-  // Если файл тот же - не перезагружаем
-  if SpeedFileName = CachedFileName then Exit;
-  
-  CachedFileName := SpeedFileName;
-  RangesCount := 0;
-  
-  SpeedFilePath := ExtractFilePath(ParamStr(0)) + 'routes\' + CachedRoutePath + '\' + SpeedFileName;
-  
-  if not FileExists(SpeedFilePath) then Exit;
-  
-  Parts := TStringList.Create;
-  try
-    AssignFile(SpeedFile, SpeedFilePath);
-    Reset(SpeedFile);
-    try
-      // Предварительно выделяем память
-      SetLength(SpeedRanges, 200);
-      
-      while not Eof(SpeedFile) do
-      begin
-        ReadLn(SpeedFile, Line);
-        Line := Trim(Line);
-        if Line = '' then Continue;
-        
-        Parts.Clear;
-        Parts.Delimiter := #9;
-        Parts.DelimitedText := Line;
-        
-        if Parts.Count < 3 then
-        begin
-          Parts.Clear;
-          Parts.Delimiter := ' ';
-          Parts.DelimitedText := Line;
-        end;
-        
-        if Parts.Count >= 3 then
-        begin
-          try
-            StartRange := StrToInt(Trim(Parts[0]));
-            EndRange := StrToInt(Trim(Parts[1]));
-            SpeedLimit := StrToInt(Trim(Parts[2]));
-            
-            // Увеличиваем массив при необходимости
-            if RangesCount >= Length(SpeedRanges) then
-              SetLength(SpeedRanges, Length(SpeedRanges) * 2);
-            
-            // Сохраняем отсортированный диапазон
-            if StartRange <= EndRange then
-            begin
-              SpeedRanges[RangesCount].MinRange := StartRange;
-              SpeedRanges[RangesCount].MaxRange := EndRange;
-            end
-            else
-            begin
-              SpeedRanges[RangesCount].MinRange := EndRange;
-              SpeedRanges[RangesCount].MaxRange := StartRange;
-            end;
-            SpeedRanges[RangesCount].SpeedLimit := SpeedLimit;
-            
-            Inc(RangesCount);
-          except
-            Continue;
-          end;
-        end;
-      end;
-    finally
-      CloseFile(SpeedFile);
-    end;
-    
-    // Сортируем диапазоны по MinRange для быстрого поиска
-    for i := 0 to RangesCount - 2 do
-      for j := i + 1 to RangesCount - 1 do
-        if SpeedRanges[i].MinRange > SpeedRanges[j].MinRange then
-        begin
-          TempRange := SpeedRanges[i];
-          SpeedRanges[i] := SpeedRanges[j];
-          SpeedRanges[j] := TempRange;
-        end;
-        
-  finally
-    Parts.Free;
-  end;
-end;
-
-// Модифицированная функция GetSpeedLimitByTRACK с патчингом
-function GetSpeedLimitByTRACK: Integer;
-const
-  PATCH_ADDRESS = $004970BE + 3; // Адрес где находятся байты A0 00
-var
-  CurrentTrackValue: Integer;
-  i: Integer;
-  SpeedLimit: Word;
-  OldProtect: DWORD;
-  BytesWritten: DWORD;
-begin
-  Result := 0;
-
-  // Сначала получаем обычный результат
-  Result := PWord(BaseAddress + $34987C)^;
-  if GetALS <= 4 then
-    Exit;
-
-  try
-    // Быстрое чтение из памяти
-    CurrentTrackValue := PInteger(BaseAddress + $349A0C)^;
-    
-    // Загружаем данные только при необходимости
-    if RangesCount = 0 then
-      LoadSpeedRanges;
-    
-    // Быстрый поиск в отсортированном массиве
-    for i := 0 to RangesCount - 1 do
-    begin
-      // Если текущее значение меньше начала диапазона - дальше искать бесполезно
-      if CurrentTrackValue < SpeedRanges[i].MinRange then
-        Break;
-        
-      // Проверяем попадание в диапазон
-      if (CurrentTrackValue >= SpeedRanges[i].MinRange) and 
-         (CurrentTrackValue <= SpeedRanges[i].MaxRange) then
-      begin
-        Result := SpeedRanges[i].SpeedLimit + 3;
-        
-        // ПАТЧИМ БАЙТЫ В ЛАУНЧЕРЕ
-        SpeedLimit := Word(Result);
-        
-        // Изменяем защиту памяти для записи
-        if VirtualProtect(Pointer(PATCH_ADDRESS), 2, PAGE_EXECUTE_READWRITE, OldProtect) then
-        begin
-          try
-            // Прямая запись в память
-            PWord(PATCH_ADDRESS)^ := SpeedLimit;
-            WriteToLog(Format('Патч применен: адрес %s, новое значение %.4X', 
-              [IntToHex(PATCH_ADDRESS, 8), SpeedLimit]));
-          finally
-            // Восстанавливаем защиту памяти
-            VirtualProtect(Pointer(PATCH_ADDRESS), 2, OldProtect, OldProtect);
-          end;
-        end
-        else
-        begin
-          WriteToLog('Ошибка: не удалось изменить защиту памяти для патча');
-        end;
-        
-        Exit;
-      end;
-    end;
-    
-  except
-    on E: Exception do
-    begin
-      WriteToLog('Ошибка в GetSpeedLimitByTRACK: ' + E.Message);
-      Result := 0;
-    end;
-  end;
-end;
-
-var
-  LastTrackValue: Integer = -1;
-  LastResult: Integer = 0;
-
-function GetSpeedTargetByTRACK_NextRange: Integer;
-var
-  CurrentTrackValue: Integer;
-  i, FoundIndex: Integer;
-begin
-  Result := 0;
-
-  if GetALS <= 4 then
-    Exit;
-
-  CurrentTrackValue := PInteger(BaseAddress + $349A0C)^;
-
-if CurrentTrackValue = LastTrackValue then
-begin
-  Result := LastResult;
-  Exit;
-end;
-
-
-  LastTrackValue := CurrentTrackValue;
-
-  if RangesCount = 0 then
-    LoadSpeedRanges;
-
-  FoundIndex := -1;
-
-  for i := 0 to RangesCount - 1 do
-  begin
-    if CurrentTrackValue < SpeedRanges[i].MinRange then
-      Break;
-
-    if (CurrentTrackValue >= SpeedRanges[i].MinRange) and
-       (CurrentTrackValue <= SpeedRanges[i].MaxRange) then
-    begin
-      FoundIndex := i;
-      Break;
-    end;
-  end;
-
-  if (FoundIndex >= 0) and (FoundIndex + 1 < RangesCount) then
-    Result := SpeedRanges[FoundIndex + 1].SpeedLimit + 3
-  else
-    Result := 0;
-
-  LastResult := Result;
-end;
-
-// Новая функция: получение пути маршрута из памяти (аналог Python self.map_)
-function GetRoutePathFromMemory: string;
-var
-  MapAddr: Cardinal;
-  PathStr: string;
-  Buffer: array[0..255] of AnsiChar;
-  i: Integer;
-begin
-  Result := '';
-  try
-    // Адрес карты для версии 55
-    MapAddr := BaseAddress + $8DD46D7;
-    
-    // Читаем строку из памяти
-    FillChar(Buffer, SizeOf(Buffer), 0);
-    for i := 0 to 254 do
-    begin
-      try
-        Buffer[i] := PAnsiChar(MapAddr + i)^;
-        if Buffer[i] = #0 then Break;
-      except
-        Break;
-      end;
-    end;
-    
-    PathStr := string(Buffer);
-    if Pos('\', PathStr) > 0 then
-    begin
-      // Извлекаем первую часть пути до первого обратного слэша
-      Result := Copy(PathStr, 1, Pos('\', PathStr) - 1);
-    end;
-  except
-    Result := '';
-  end;
-end;
-
-// Новая функция: определение направления (аналог Python tuda)
-function GetDirection: Boolean;
-var
-  MapAddr: Cardinal;
-  PathStr: string;
-  Buffer: array[0..255] of AnsiChar;
-  i: Integer;
-begin
-  Result := True; // По умолчанию
-  try
-    // Адрес карты для версии 55
-    MapAddr := BaseAddress + $8DD46D7;
-    
-    // Читаем строку из памяти
-    FillChar(Buffer, SizeOf(Buffer), 0);
-    for i := 0 to 254 do
-    begin
-      try
-        Buffer[i] := PAnsiChar(MapAddr + i)^;
-        if Buffer[i] = #0 then Break;
-      except
-        Break;
-      end;
-    end;
-    
-    PathStr := string(Buffer);
-    // Ищем 'speeds1' во второй части пути
-    if Pos('\speeds1', PathStr) > 0 then
-      Result := True
-    else
-      Result := False;
-  except
-    Result := True;
-  end;
-end;
-
-// Новая функция: получение имени файла светофора
-function GetSvetoforFileName: string;
-begin
-  if GetDirection then
-    Result := 'svetofor1.dat'
-  else
-    Result := 'svetofor2.dat';
-end;
-
-// Новая функция: поиск значения светофора по пикету (аналог find_value_by_picket)
-function FindValueByPicket(const FilePath: string; Picket: Integer): string;
-var
-  F: TextFile;
-  Line: string;
-  Parts: TStringList;
-  Intervals: array of record
-    StartValue: Integer;
-    Value: string;
-  end;
-  i, j: Integer;
-  StartValue: Integer;
-  Value: string;
-  Direction: Boolean;
-begin
-  Result := '';
-  
-  if not FileExists(FilePath) then
-    Exit;
-    
-  SetLength(Intervals, 0);
-  Parts := TStringList.Create;
-  try
-    AssignFile(F, FilePath);
-    Reset(F);
-    try
-      while not Eof(F) do
-      begin
-        ReadLn(F, Line);
-        Line := Trim(Line);
-        if Line = '' then Continue;
-        
-        Parts.Clear;
-        Parts.Delimiter := ' ';
-        Parts.DelimitedText := Line;
-        
-        if Parts.Count >= 3 then
-        begin
-          try
-            StartValue := StrToInt(Parts[0]);
-            Value := Parts[2];
-            
-            SetLength(Intervals, Length(Intervals) + 1);
-            Intervals[High(Intervals)].StartValue := StartValue;
-            Intervals[High(Intervals)].Value := Value;
-          except
-            // Пропускаем строки с ошибками
-          end;
-        end;
-      end;
-    finally
-      CloseFile(F);
-    end;
-    
-    // Сортировка интервалов по возрастанию значений пикетов
-    for i := 0 to High(Intervals) - 1 do
-      for j := i + 1 to High(Intervals) do
-        if Intervals[i].StartValue > Intervals[j].StartValue then
-        begin
-          StartValue := Intervals[i].StartValue;
-          Value := Intervals[i].Value;
-          Intervals[i].StartValue := Intervals[j].StartValue;
-          Intervals[i].Value := Intervals[j].Value;
-          Intervals[j].StartValue := StartValue;
-          Intervals[j].Value := Value;
-        end;
-    
-    // Ищем значение для данного пикета
-    Direction := GetDirection;
-    for i := 0 to High(Intervals) do
-    begin
-      if Picket <= Intervals[i].StartValue then
-      begin
-        if i > 0 then
-        begin
-          if Direction then
-            Result := Intervals[i].Value
-          else
-            Result := Intervals[i-1].Value;
-        end
-        else
-          Result := Intervals[0].Value;
-        Break;
-      end;
-    end;
-    
-    // Если пикет больше всех имеющихся, берем последний интервал
-    if (Result = '') and (Length(Intervals) > 0) then
-      Result := Intervals[High(Intervals)].Value;
-      
-  finally
-    Parts.Free;
-  end;
-end;
-
-// Новая функция: получение значения светофора
-function GetSvetoforValue: string;
-var
-  CurrentPiket: Integer;
-  RoutePath: string;
-  SvetoforFile: string;
-  FilePath: string;
-begin
-  Result := '';
-  try
-    // Получаем текущий пикет
-    CurrentPiket := PWord(BaseAddress + $8C08054)^;
-    
-    // Получаем путь маршрута из памяти
-    RoutePath := GetRoutePathFromMemory;
-    if RoutePath = '' then Exit;
-    
-    // Формируем путь к файлу светофора
-    SvetoforFile := GetSvetoforFileName;
-    FilePath := ExtractFilePath(ParamStr(0)) + 'routes\' + RoutePath + '\' + SvetoforFile;
-    
-    // Корректировка пикета в зависимости от направления
-    if not GetDirection then
-      CurrentPiket := CurrentPiket + 4;
-    
-    // Ищем значение по пикету
-    Result := FindValueByPicket(FilePath, CurrentPiket);
-    
-    // Форматируем результат (выравнивание по правому краю на 8 символов)
-    if Result <> '' then
-    begin
-      while Length(Result) < 8 do
-        Result := ' ' + Result;
-    end
-    else
-      Result := '        '; // 8 пробелов если не найдено
-      
-  except
-    Result := '        ';
-  end;
-end;
-
 function GetChannel: string;
 begin
   try
@@ -687,7 +96,6 @@ begin
   end;
 end;
 
-// Обновленная функция GetTargetType с интегрированной логикой из Python
 function GetTargetType: string;
 var
   CurrentPiket: Integer;
@@ -696,33 +104,69 @@ var
   FileName: string;
   FilePath: string;
   ObjFile: TextFile;
+  SettingsFile: TextFile;
   Line: string;
-  Parts: TStringList;
+  Parts: array[0..10] of string;
+  PartCount: Integer;
+  i, SpacePos: Integer;
   PicketStr: string;
   PicketNum: Integer;
   ObjectFile: string;
-  Direction: Boolean;
-  i: Integer;
+  Direction: Byte;
 begin
   Result := '';
   
   try
-    // Получаем текущий пикет
-    CurrentPiket := PWord(BaseAddress + $8C08054)^;
+    // Получаем текущий пикет (для версии 55)
+    try
+      CurrentPiket := PWord(BaseAddress + $8C08054)^;
+    except
+      Exit;
+    end;
     
-    // Получаем путь маршрута из памяти
-    RoutePath := GetRoutePathFromMemory;
-    if RoutePath = '' then Exit;
+    // Читаем RoutePath из settings.ini
+    RoutePath := '';
+    try
+      AssignFile(SettingsFile, ExtractFilePath(ParamStr(0)) + 'settings.ini');
+      
+      if not FileExists(ExtractFilePath(ParamStr(0)) + 'settings.ini') then
+        Exit;
+        
+      Reset(SettingsFile);
+      try
+        while not Eof(SettingsFile) do
+        begin
+          ReadLn(SettingsFile, Line);
+          Line := Trim(Line);
+          if Pos('RoutePath=', Line) = 1 then
+          begin
+            RoutePath := Copy(Line, 11, Length(Line) - 10);
+            Break;
+          end;
+        end;
+      finally
+        CloseFile(SettingsFile);
+      end;
+    except
+      Exit;
+    end;
+    
+    if RoutePath = '' then
+      Exit;
     
     // Формируем базовый путь
     BasePath := ExtractFilePath(ParamStr(0)) + 'routes\' + RoutePath;
     
     // Определяем направление и файл
-    Direction := GetDirection;
-    if Direction then
-      FileName := 'Info_Obj_Tuda.txt'
-    else
-      FileName := 'Info_Obj_Obratno.txt';
+    try
+      Direction := PByte(BaseAddress + $749818)^;
+      if Direction = 1 then
+        FileName := 'Info_Obj_Tuda.txt'
+      else
+        FileName := 'Info_Obj_Obratno.txt';
+    except
+      FileName := 'Info_Obj_Tuda.txt'; // По умолчанию
+    end;
     
     FilePath := BasePath + '\' + FileName;
     
@@ -730,7 +174,7 @@ begin
     if not FileExists(FilePath) then
     begin
       // Пробуем альтернативный файл
-      if Direction then
+      if FileName = 'Info_Obj_Tuda.txt' then
         FileName := 'Info_Obj_Obratno.txt'
       else
         FileName := 'Info_Obj_Tuda.txt';
@@ -740,7 +184,6 @@ begin
         Exit;
     end;
     
-    Parts := TStringList.Create;
     try
       AssignFile(ObjFile, FilePath);
       Reset(ObjFile);
@@ -754,11 +197,28 @@ begin
             Continue;
           
           // Парсим строку по пробелам
-          Parts.Clear;
-          Parts.Delimiter := ' ';
-          Parts.DelimitedText := Line;
+          PartCount := 0;
+          i := 1;
+          while (i <= Length(Line)) and (PartCount < 10) do
+          begin
+            // Пропускаем пробелы
+            while (i <= Length(Line)) and (Line[i] = ' ') do
+              Inc(i);
+            
+            if i > Length(Line) then
+              Break;
+            
+            // Читаем слово
+            SpacePos := i;
+            while (SpacePos <= Length(Line)) and (Line[SpacePos] <> ' ') do
+              Inc(SpacePos);
+            
+            Parts[PartCount] := Copy(Line, i, SpacePos - i);
+            Inc(PartCount);
+            i := SpacePos;
+          end;
           
-          if Parts.Count >= 2 then
+          if PartCount >= 2 then
           begin
             PicketStr := Parts[0];
             ObjectFile := LowerCase(Parts[1]);
@@ -767,7 +227,7 @@ begin
             PicketNum := 0;
             for i := 1 to Length(PicketStr) do
             begin
-              if (PicketStr[i] >= '0') and (PicketStr[i] <= '9') then
+              if PicketStr[i] in ['0'..'9'] then
               begin
                 PicketNum := PicketNum * 10 + (Ord(PicketStr[i]) - Ord('0'));
               end;
@@ -807,8 +267,8 @@ begin
       finally
         CloseFile(ObjFile);
       end;
-    finally
-      Parts.Free;
+    except
+      Result := '';
     end;
     
   except
@@ -931,7 +391,7 @@ var
 begin
   try
     val := PSingle(BaseAddress + $04F8C28C)^;
-    roundedSpeed := Round(Abs(val));  // Добавлена функция Abs()
+    roundedSpeed := Round(val);
     Result := IntToStr(roundedSpeed);
   except
     Result := 'Err';
@@ -962,7 +422,7 @@ end;
 function GetSpeedValue2: Single;
 begin
   try
-    Result := Round(Abs(PSingle(BaseAddress + $04F8C28C)^));
+    Result := PSingle(BaseAddress + $04F8C28C)^;
   except
     Result := 0;
   end;
@@ -982,16 +442,6 @@ begin
   try
     // Используй тот же адрес, что и в GetLimitSpeed, но возвращай число
     Result := PWord(BaseAddress + $34987C)^;
-    Result := Abs(Result);
-  except
-    Result := 0;
-  end;
-end;
-
-function GetTargetSpeedValue: Integer;
-begin
-  try
-    Result := PWord(BaseAddress + $349880)^;
     Result := Abs(Result);
   except
     Result := 0;
@@ -1026,31 +476,6 @@ begin
     Result := Format('%.2d:%.2d:%.2d', [hour, minute, second]);
   except
     Result := 'Err';
-  end;
-end;
-
-function GetPressureTMf: Single;
-begin
-  try
-    Result := PSingle(BaseAddress + $8D10738)^;
-  except
-    Result := 0.0;
-  end;
-end;
-
-function GetPressureURf: Single;
-var
-  addr: Cardinal;
-begin
-  try
-    // Базовый адрес для большинства локомотивов
-    addr := PCardinal(BaseAddress + $8D10D78)^;
-    if addr <> 0 then
-      Result := PSingle(addr + $20)^
-    else
-      Result := 0.0;
-  except
-    Result := 0.0;
   end;
 end;
 
@@ -1101,198 +526,13 @@ begin
   end;
 end;
 
-function GetPressureTCf: Single;
-var
-  locType: Integer;
-  baseAddr: Cardinal;
-  addr, tempAddr: Cardinal;
-
-  // Вспомогательная функция для получения адреса через указатели (аналог GetPtrAddr из Python)
-function GetPtrAddr(baseOffset: Cardinal; offsets: array of Cardinal): Cardinal;
-var
-  i: Integer;
-  currentAddr: Cardinal;
-begin
-  Result := 0;
-  try
-    currentAddr := PCardinal(baseAddr + baseOffset)^;
-    if currentAddr = 0 then Exit;
-    
-    // Просто прибавляем смещения, НЕ читаем по ним указатели
-    for i := 0 to High(offsets) do
-    begin
-      currentAddr := currentAddr + offsets[i];  // УБРАТЬ PCardinal()^
-    end;
-    
-    Result := currentAddr;
-  except
-    Result := 0;
-  end;
-end;
-
-begin
-  Result := 0.0;
-  baseAddr := $00400000;
-  
-  try
-    // Определяем тип локомотива
-    locType := PInteger(Pointer(baseAddr + $4F8D93C))^;
-    
-    case locType of
-      // Группа 1: ED9M, ED4M, 2M62 - используем float
-      3159, // ЭД9М (ED9M)
-      3154, // ЭД4М (ED4M)  
-      1462: // М62 (2M62)
-      begin
-        try
-          Result := PSingle(baseAddr + $8D107B0)^;
-        except
-          Result := 0.0;
-        end;
-      end;
-      
-      // Группа 2: 2TE10U, TEP70BS, TEP70, TEM18DM, VL85, VL80T, VL82M - используем double
-      21014, // 2ТЭ10У (2TE10U)
-      2071,  // ТЭП70БС (TEP70BS)
-      2070,  // ТЭП70 (TEP70)
-      201318,// ТЭМ18ДМ (TEM18DM)
-      885,   // ВЛ85 (VL85)
-      880,   // ВЛ80Т (VL80T)
-      882:   // ВЛ82М (VL82M)
-      begin
-        try
-          addr := GetPtrAddr($4F8D8D4, [$A8]);
-          if addr <> 0 then
-            Result := PDouble(addr)^
-          else
-            Result := 0.0;
-        except
-          Result := 0.0;
-        end;
-      end;
-      
-      // Группа 3: VL11M, CHS2K, EP1M, 2ES5K - используем float
-      811,   // ВЛ11М (VL11M)
-      343,   // ЧС2К (CHS2K)  
-      31714, // ЭП1М (EP1M)
-      23152: // 2ЭС5К (2ES5K)
-      begin
-        try
-          addr := GetPtrAddr($8D10D78, [$68]);
-          if addr <> 0 then
-            Result := PSingle(addr)^
-          else
-            Result := 0.0;
-        except
-          Result := 0.0;
-        end;
-      end;
-      
-      // Группа 4: CHS7, CHS4T, CHS4 с правильными адресами памяти
-      822: // ЧС7 (CHS7)
-begin
-  try
-    tempAddr := PCardinal(baseAddr + $4F8D8D4)^;
-    if tempAddr <> 0 then
-    begin
-      addr := tempAddr + $80;  // Просто прибавляем смещение
-      Result := PDouble(addr)^;
-    end;
-  except
-    Result := 0.0;
-  end;
-end;
-      
-      621: // ЧС4Т (CHS4T)
-      begin
-        try
-          addr := GetPtrAddr($4F8D8D4, [$58]);
-          if addr <> 0 then
-            Result := PDouble(addr)^
-          else
-            Result := 0.0;
-        except
-          Result := 0.0;
-        end;
-      end;
-      
-      523: // ЧС4 (CHS4)
-      begin
-        // Для версии 55, CHS4 имеет значение 0.0
-        Result := 0.0;
-      end;
-      
-      // Группа 5: CHS4KVR - используем double
-      524: // ЧС4КВР (CHS4KVR)
-      begin
-        try
-          addr := GetPtrAddr($34846C, [$1C, $80]);
-          if addr <> 0 then
-            Result := PDouble(addr)^
-          else
-            Result := 0.0;
-        except
-          Result := 0.0;
-        end;
-      end;
-      
-      // Остальные случаи (ЧС8, 2ЭС4К и др.)
-      812,   // ЧС8 (CHS8)
-      23142: // 2ЭС4К (2ES4K)
-      begin
-        try
-          addr := GetPtrAddr($04F8D8D4, [$28, $48]);
-          if addr <> 0 then
-            Result := PSingle(addr)^
-          else
-            Result := 0.0;
-        except
-          Result := 0.0;
-        end;
-      end;
-      
-      else
-      begin
-        // Случай по умолчанию - используем подход из default case
-        try
-          addr := GetPtrAddr($04F8D8D4, [$28, $48]);
-          if addr <> 0 then
-            Result := PSingle(addr)^
-          else
-            Result := 0.0;
-        except
-          Result := 0.0;
-        end;
-      end;
-    end;
-    
-    // Проверяем разумность значения (давление ТЦ обычно 0-10 кгс/см²)
-    if (Result < 0) or (Result > 15) then
-      Result := 0.0;
-      
-  except
-    Result := 0.0;
-  end;
-end;
-
-// Строковая версия для совместимости
 function GetPressureTC: string;
 var
   val: Single;
+  addr: Cardinal;
   OldDecimalSeparator: Char;
 begin
-  try
-    OldDecimalSeparator := DecimalSeparator;
-    DecimalSeparator := '.';
-    try
-      val := GetPressureTCf;
-      Result := FormatFloat('0.00', val);
-    finally
-      DecimalSeparator := OldDecimalSeparator;
-    end;
-  except
-    Result := 'Err';
-  end;
+  Result := '0.00';
 end;
 
 function GetTrackNumber: string;
@@ -1306,17 +546,6 @@ begin
     Result := 'Err';
   end;
 end;
-
-function GetTrackNumberInt: Byte;
-begin
-  try
-    // Читаем байт по адресу BaseAddress + $4F8D958
-    Result := PByte(BaseAddress + $4F8D958)^;
-  except
-    Result := 0; // или можно вернуть $FF, если нужно обозначить ошибку
-  end;
-end;
-
 
 function ConvertToDistance(Value: Integer; AddMeters: Integer = 1101): string;
 var
