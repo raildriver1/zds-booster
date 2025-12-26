@@ -11574,6 +11574,7 @@ begin
       RotateZ(x);
       Position3D(-0.086499996, 0.0, 0.223);
       Scale3D(0.88999999);
+      SetTexture(textureID);
       DrawModel(yellowBlockModelID, 0, False); // Читаем из памяти
       glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
       EndObj3D;
@@ -11588,6 +11589,7 @@ begin
         RotateZ(x);
         Position3D(-0.086499996, 0.0, 0.223 + i * 0.013);
         Scale3D(0.88999999);
+        SetTexture(textureID);
         DrawModel(greenBlockModelID, 0, False); // Читаем из памяти
         glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
         EndObj3D;
@@ -11636,9 +11638,8 @@ begin
       RotateZ(bilpom_y);
       RotateX(-bilpom_x);
       Position3D(0.0, 0.0, 0.07);
-
-      DrawModel(yellowBlockModelID, 0, False); // Читаем из памяти
       SetTexture(textureID);
+      DrawModel(yellowBlockModelID, 0, False); // Читаем из памяти
       glEnable(GL_LIGHTING); // ← ДОБАВИТЬ
       EndObj3D;
 
