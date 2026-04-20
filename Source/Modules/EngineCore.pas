@@ -177,7 +177,9 @@ var
   
 begin
   if ZDSimPatched then Exit;
-  
+
+
+
   try
     AddToLogFile(EngineLog, 'Starting ZDSim patches - checking settings and file...');
     
@@ -702,13 +704,13 @@ begin
 CurrentTime := GetTimer;
   
   // Чтение конфига раз в 2 секунды (2000 мс)
-  if (CurrentTime - LastConfigReadTime) >= 1000 then
+  if (CurrentTime - LastConfigReadTime) >= 100 then
   begin
     ProcessAllModules;
     LastConfigReadTime := CurrentTime;
   end;
 
-  UpdateDiscordRPC; // Обновляем Discord Rich Presence
+  //UpdateDiscordRPC; // Обновляем Discord Rich Presence
 
      if ShowLogo and (LogoA<>0) then LogoA:=LogoA-1;
      if @ProcessGame<>nil then ProcessGame;
@@ -1280,23 +1282,33 @@ begin
         Result := 0;
       end;
       
-    WM_LBUTTONDOWN:
+WM_LBUTTONDOWN:
+  begin
+    try
+      ReleaseCapture();
+      SetCapture(h_Wnd);
+      MouseButton := 1;
+      MBLeft := true;
+      Xcoord := LOWORD(lParam);
+      Ycoord := HIWORD(lParam);
+
+      // Сначала проверяем клик по клавиатуре БЛОК
+      if HandleBlockKeyboardClick(Xcoord, Ycoord) then
       begin
-        try
-          ReleaseCapture();
-          SetCapture(h_Wnd);
-          MouseButton := 1;
-          MBLeft := true;
-          Xcoord := LOWORD(lParam);
-          Ycoord := HIWORD(lParam);
-
-          HandleMenuClick(Xcoord, Ycoord);
-
-        except
-          // Игнорируем ошибки мыши
-        end;
-        Result := 0;
+        // Клик обработан клавиатурой БЛОК, не передаем дальше
+        AddToLogFile(EngineLog, 'Клик обработан клавиатурой БЛОК');
+      end
+      else
+      begin
+        // Клик не попал в клавиатуру, обрабатываем как обычно
+        HandleMenuClick(Xcoord, Ycoord);
       end;
+
+    except
+      // Игнорируем ошибки мыши
+    end;
+    Result := 0;
+  end;
       
     WM_RBUTTONDOWN:
       begin
@@ -1916,6 +1928,8 @@ end;
 
   InitEng;
 
+  InitCheatMenu;
+
 if IsTargetProcess then
 begin
   // БЕЗОПАСНАЯ ПРОВЕРКА ТИПА ЛОКОМОТИВА
@@ -1926,7 +1940,7 @@ begin
       AddToLogFile(EngineLog, 'Locomotive type address not readable yet, hook skipped');
       Exit;
     end;
-    
+
     // Читаем тип локомотива
     LocType := PInteger(Pointer($00400000 + $4F8D93C))^;
     
@@ -1938,7 +1952,9 @@ begin
     
         case LocType of
           524, 880, 2070, 21014, 1462, 811, 882: begin
+
             ApplyKPD3Patch();
+            ApplyBLOKPatch;
             AddToLogFile(EngineLog, 'KPD-3 patch applied for locomotive type: ' + IntToStr(LocType));
           end;
           822: begin
@@ -1953,16 +1969,19 @@ begin
           end;
           3154: begin
             WriteHookAddressED4M;
+            ApplyBLOKPatch;
             AddToLogFile(EngineLog, 'Hook activated for locomotive type 3154 (ED4M)');
           end;
           885: begin
             AddToLogFile(EngineLog, 'VL85 detected, applying ZDSim patches immediately...');
             ApplyZDSimPatches;  // Вызываем сразу при обнаружении
             ApplyKPD3Patch();
+            ApplyBLOKPatch;
             AddToLogFile(EngineLog, 'ZDSim patches activation completed for locomotive type 885 (VL85)');
           end;
 
           else
+            ApplyBLOKPatch;
             AddToLogFile(EngineLog, 'Hook not supported for locomotive type: ' + IntToStr(LocType));
         end;
 
@@ -1985,10 +2004,9 @@ end;
 
   if @LoadTextures<>nil then LoadTextures;
 
-  InitCheatMenu;
 
  try
-    InitDiscordRPC;
+    //InitDiscordRPC;
     AddToLogFile(EngineLog, 'Discord RPC initialized successfully');
   except
     on E: Exception do
@@ -2007,7 +2025,7 @@ var
 begin
   StartQuitingEngine := False;
 
-  ShutdownDiscordRPC; // Завершаем Discord RPC
+  //ShutdownDiscordRPC; // Завершаем Discord RPC
 
   if not glCreateWnd(InitResX, InitResY, InitFullscreen, InitPDepth, InitFrequency ,InitVsync) then
   begin

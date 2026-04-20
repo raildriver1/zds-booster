@@ -2,7 +2,7 @@
 
 interface
 uses 
-  Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils, WinInet, ShellAPI;
+  Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils, ShellAPI, Math;
 
 type
   TSlider = record
@@ -10,6 +10,7 @@ type
     MinValue: Single;
     MaxValue: Single;
     IsDragging: Boolean;
+    HoverProgress: Single;
   end;
   
   TExpandableSection = record
@@ -25,14 +26,28 @@ type
     Title: string;
     Alpha: Single;
     TargetAlpha: Single;
+    OriginalX, OriginalY: Integer;
+    Scale: Single;
+    TargetScale: Single;
+    // Transform анимация
+    TransformProgress: Single;
+    TargetTransformProgress: Single;
+    Rotation: Single;
+    TargetRotation: Single;
+    TranslateY: Single;
+    TargetTranslateY: Single;
+    // Drag анимация
+    DragWidthExpansion: Single;
+    TargetDragWidthExpansion: Single;
+    ShadowIntensity: Single;
+    TargetShadowIntensity: Single;
+    OriginalWidth: Integer;
+    // Анимация появления
+    SpawnDelay: Single;
   end;
 
-  // НОВАЯ СТРУКТУРА ДЛЯ ДОНАТОВ
-  TDonation = record
-    Name: string;
-    Amount: string;
-    Message: string;
-  end;
+  // ЯЗЫКИ
+  TLanguage = (langRussian, langUkrainian, langEnglish);
 
   TCheatSettings = record
     // Общая яркость (глобальная)
@@ -48,32 +63,32 @@ type
     MainCamera: Boolean;
     MainCameraSection: TExpandableSection;
     StepForwardSlider: TSlider;
-    NewViewAngle: Boolean;              // НОВАЯ ГАЛОЧКА
-    ViewAngleSlider: TSlider;           // НОВЫЙ СЛАЙДЕР
-    CameraSensitivity: Boolean;         // ГАЛОЧКА ЧУВСТВИТЕЛЬНОСТИ
-    CameraSensitivitySlider: TSlider;   // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ
+    NewViewAngle: Boolean;              
+    ViewAngleSlider: TSlider;           
+    CameraSensitivity: Boolean;         
+    CameraSensitivitySlider: TSlider;   
 
     // Освещение
     Lighting: Boolean;
     LightingSection: TExpandableSection;
-    MainLightIntensitySlider: TSlider;      // 4942AC - Яркость рельс
-    AdditionalLightIntensitySlider: TSlider; // 4942B4 - Контрастность рельс
-    CabinBrightnessSlider: TSlider;         // 482824 - Яркость кабины
-    CabinContrastSlider: TSlider;           // 48282C - Контрастность кабины
-    SunOrbitRadiusSlider: TSlider;          // 4942CC
-    SunHeightSlider: TSlider;               // 4942B8
+    MainLightIntensitySlider: TSlider;      
+    AdditionalLightIntensitySlider: TSlider; 
+    CabinBrightnessSlider: TSlider;         
+    CabinContrastSlider: TSlider;           
+    SunOrbitRadiusSlider: TSlider;          
+    SunHeightSlider: TSlider;               
     
     // World
     MaxVisibleDistance: Boolean;
     MaxVisibleDistanceSection: TExpandableSection;
     MaxVisibleDistanceSlider: TSlider;
-    ShowWires: Boolean;        // Провода (494408 + 494414)
-    ShowDistantModels: Boolean; // Дальние модели (494358)  
-    ShowTrafficLights: Boolean; // Светофоры (48DB9C + 48DC1C + 48DBA0)
+    ShowWires: Boolean;        
+    ShowDistantModels: Boolean;  
+    ShowTrafficLights: Boolean; 
     
     NewSky: Boolean;
     
-    // Locomotive - ПРЯМО исправления КЛУБ без секции
+    // Locomotive
     NewClubPositions: Boolean;
   end;
 
@@ -95,25 +110,27 @@ implementation
 var
   MenuVisible: Boolean = False;
   Settings: TCheatSettings;
-  RenderWindow, WorldWindow, LocomotiveWindow, DonateWindow: TWindow;  // ДОБАВИЛИ DonateWindow
+  RenderWindow, WorldWindow, LocomotiveWindow, MenuWindow: TWindow;
   LastFrameTime: Cardinal = 0;
   
-  // === НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ДОНАТОВ ===
-  Donations: array[0..9] of TDonation;  // Максимум 10 донатов
-  DonationCount: Integer = 0;
-  DonationScrollOffset: Integer = 0;
-  LastDonationUpdate: Cardinal = 0;
-  DonationUpdateInterval: Cardinal = 300000; // Обновлять каждые 5 минут
-  DonationsLoaded: Boolean = False;
+  // === ПЕРЕМЕННЫЕ ДЛЯ ЯЗЫКА ===
+  CurrentLanguage: TLanguage = langRussian;
   
+  // === ПЕРЕМЕННЫЕ ДЛЯ АНИМАЦИИ МЕНЮ ===
+  MenuAnimationProgress: Single = 0.0;
+  MenuTargetProgress: Single = 0.0;
+  MenuAnimationSpeed: Single = 12.0;
+  // Таймер от момента открытия — используется для каскадного появления окон (SpawnDelay)
+  MenuOpenTimer: Single = 0.0;
+
   // === ОПТИМИЗАЦИЯ: Ограничение частоты применения настроек ===
   LastApplyTime: Cardinal = 0;
-  ApplyInterval: Cardinal = 100; // Применять настройки не чаще чем раз в 20ms (было 50ms)
+  ApplyInterval: Cardinal = 100;
   PendingApply: Boolean = False;
   
   // === ОПТИМИЗАЦИЯ: Ограничение частоты чтения конфига ===
   LastConfigReadTime: Cardinal = 0;
-  ConfigReadInterval: Cardinal = 200; // Читать конфиг не чаще чем раз в 50ms
+  ConfigReadInterval: Cardinal = 200;
   
   // Переменные для патча "Новые позиции КЛУБ"
   ClubPositionsPatched: Boolean = False;
@@ -128,10 +145,10 @@ var
   RadiusAddr: Cardinal;
   
   // Адреса для освещения
-  MainLightAddr: Cardinal;        // 4942AC
-  AdditionalLightAddr: Cardinal;  // 4942B4
-  SunOrbitAddr: Cardinal;         // 4942CC
-  SunHeightAddr: Cardinal;        // 4942B8
+  MainLightAddr: Cardinal;        
+  AdditionalLightAddr: Cardinal;  
+  SunOrbitAddr: Cardinal;         
+  SunHeightAddr: Cardinal;        
   
   // Оригинальные значения освещения
   OrigMainLightValue: Single;
@@ -141,11 +158,11 @@ var
   LightingValuesRead: Boolean = False;
   
   // Адреса для дальности (3 группы)
-  WireAddrs: array[0..1] of Cardinal;        // 494408, 494414
-  DistantModelAddr: Cardinal;                // 494358
-  TrafficLightAddrs: array[0..2] of Cardinal; // 48DB9C, 48DC1C, 48DBA0
+  WireAddrs: array[0..1] of Cardinal;        
+  DistantModelAddr: Cardinal;                
+  TrafficLightAddrs: array[0..2] of Cardinal; 
   
-  // Оригинальные значения дальности (ТЕПЕРЬ ВОССТАНАВЛИВАЮТСЯ!)
+  // Оригинальные значения дальности
   OrigWireValues: array[0..1] of Single;
   OrigDistantModelValue: Single;
   OrigTrafficLightValues: array[0..2] of Single;
@@ -153,20 +170,20 @@ var
 
   // Переменные для патча "Новый угол обзора"
   ViewAnglePatched: Boolean = False;
-  ViewAngleNopAddr1: Cardinal;        // 723909
-  ViewAngleNopAddr2: Cardinal;        // 72384C  
-  ViewAngleSliderAddr: Cardinal;      // 725C1C
-  OrigViewAngleBytes1: array[0..5] of Byte; // для 6 байт инструкции mov dword ptr [eax], 0Ah
-  OrigViewAngleBytes2: array[0..6] of Byte; // для 7 байт инструкции mov [eax],0000000A
+  ViewAngleNopAddr1: Cardinal;        
+  ViewAngleNopAddr2: Cardinal;        
+  ViewAngleSliderAddr: Cardinal;      
+  OrigViewAngleBytes1: array[0..5] of Byte; 
+  OrigViewAngleBytes2: array[0..6] of Byte; 
   OrigViewAngleValue: Single;
   ViewAngleValuesRead: Boolean = False;
 
   // Переменные для чувствительности камеры
-  CameraSensitivityAddr: Cardinal;    // 7229F8
+  CameraSensitivityAddr: Cardinal;    
   OrigCameraSensitivityValue: Single;
   CameraSensitivityValuesRead: Boolean = False;
 
- // ОРИГИНАЛЬНЫЕ ЗНАЧЕНИЯ (ИЗ ВАШЕГО ДАМПА)
+  // ОРИГИНАЛЬНЫЕ ЗНАЧЕНИЯ
   OrigSpeedXValue: array[0..3] of Byte = ($58, $39, $34, $BC);
   OrigAllowedSpeedValue: array[0..3] of Byte = ($58, $39, $34, $BC);
   OrigShuntingSpeedValue: array[0..3] of Byte = ($96, $43, $8B, $3D);
@@ -177,7 +194,7 @@ var
   OrigAdditionalValue: array[0..3] of Byte = ($7F, $6A, $3C, $3D);
   OrigRadiusValue: array[0..9] of Byte = ($0A, $D7, $A3, $70, $3D, $0A, $D7, $A3, $F7, $BF);
   
-  // НОВЫЕ ЗНАЧЕНИЯ ДЛЯ ЗАМЕНЫ (ВАШИ ТЕКУЩИЕ)
+  // НОВЫЕ ЗНАЧЕНИЯ
   NewSpeedXValue: array[0..3] of Byte = ($7B, $12, $83, $BB);
   NewAllowedSpeedValue: array[0..3] of Byte = ($7B, $12, $83, $BB);
   NewShuntingSpeedValue: array[0..3] of Byte = ($BD, $CA, $A1, $3D);
@@ -186,208 +203,277 @@ var
   NewNumberAccelValue: array[0..3] of Byte = ($91, $C2, $F5, $3C);
   NewReverseValue: array[0..3] of Byte = ($74, $12, $03, $3B);
   NewAdditionalValue: array[0..3] of Byte = ($E9, $FD, $54, $3D);
-  NewRadiusValue: array[0..9] of Byte = ($00, $00, $00, $00, $00, $00, $00, $00, $00, $00); // Обнуляем радиус
+  NewRadiusValue: array[0..9] of Byte = ($00, $00, $00, $00, $00, $00, $00, $00, $00, $00);
 
-  
   // Переменные для патча меню
   MenuCallAddr: Cardinal;
   OrigMenuCallBytes: array[0..4] of Byte;
   MenuCallPatched: Boolean = False;
 
+const
+  ITEM_HEIGHT = 32;
+  MARGIN = 16;
+  HEADER_HEIGHT = 42;
+  SLIDER_WIDTH = 180;
+  BUTTON_SIZE = 24;
+  CHECKBOX_SIZE = 18;
+  CORNER_RADIUS = 12.0;
+  DRAG_EXPANSION = 25.0; // Расширение окна при перетаскивании
+
+  // Современные цвета
+  COLOR_BACKGROUND = $1A1A1A;
+  COLOR_SURFACE = $2A2A2A;
+  COLOR_SURFACE_VARIANT = $343434;
+  COLOR_PRIMARY = $0078D4;
+  COLOR_PRIMARY_VARIANT = $005A9E;
+  COLOR_ACCENT = $00BCF2;
+  COLOR_ON_SURFACE = $E1E1E1;
+  COLOR_ON_PRIMARY = $FFFFFF;
+  COLOR_BORDER = $404040;
+  COLOR_BORDER_LIGHT = $505050;
+  COLOR_SUCCESS = $16C60C;
+  COLOR_WARNING = $FF8C00;
+  COLOR_SHADOW = $000000;
+
+// === МАССИВЫ ТЕКСТОВ ДЛЯ РАЗНЫХ ЯЗЫКОВ ===
+type
+  TLanguageTexts = record
+    // Заголовки окон
+    RenderTitle: string;
+    WorldTitle: string;
+    LocomotiveTitle: string;
+    MenuTitle: string;
+    
+    // Основные элементы
+    FreeCameraText: string;
+    MainCameraText: string;
+    MaxDistanceText: string;
+    NewSkyText: string;
+    ClubFixesText: string;
+    
+    // Подэлементы
+    BaseSpeedText: string;
+    FastSpeedText: string;
+    StepForwardText: string;
+    NewZoomText: string;
+    SensitivityText: string;
+    ValueText: string;
+    DistanceText: string;
+    WiresText: string;
+    DistantModelsText: string;
+    TrafficLightsText: string;
+    
+    // Языки
+    LanguageText: string;
+    RussianText: string;
+    UkrainianText: string;
+    EnglishText: string;
+    
+    // Информация
+    InfoText: string;
+  end;
 
 const
-  ITEM_HEIGHT = 28;
-  MARGIN = 12;
-  HEADER_HEIGHT = 35;
-  SLIDER_WIDTH = 190;
-  BUTTON_SIZE = 20;
-  CHECKBOX_SIZE = 16;
-  DONATION_ITEM_HEIGHT = 45;  // Высота элемента доната
+  LanguageTexts: array[TLanguage] of TLanguageTexts = (
+    // Русский
+    (
+      RenderTitle: 'RENDER';
+      WorldTitle: 'WORLD';
+      LocomotiveTitle: 'LOCOMOTIVE';
+      MenuTitle: 'MENU';
+      FreeCameraText: 'Свободная Камера';
+      MainCameraText: 'Основная Камера';
+      MaxDistanceText: 'Макс. дальность';
+      NewSkyText: 'Новая логика неба';
+      ClubFixesText: 'Исправления БИЛ-В';
+      BaseSpeedText: 'Базовая скорость';
+      FastSpeedText: 'Скорость с Shift';
+      StepForwardText: 'Шаг вперёд';
+      NewZoomText: 'Новый Zoom';
+      SensitivityText: 'Чувствительность';
+      ValueText: 'Значение';
+      DistanceText: 'Дальность (м.)';
+      WiresText: 'Провода';
+      DistantModelsText: 'Дальние модели';
+      TrafficLightsText: 'Светофоры';
+      LanguageText: 'Язык интерфейса';
+      RussianText: 'Русский';
+      UkrainianText: 'Українська';
+      EnglishText: 'English';
+      InfoText: 'ZDS-Booster v1.1 | vk.com/raildriver';
+    ),
+    // Украинский
+    (
+      RenderTitle: 'RENDER';
+      WorldTitle: 'WORLD';
+      LocomotiveTitle: 'LOCOMOTIVE';
+      MenuTitle: 'MENU';
+      FreeCameraText: 'Вільна Камера';
+      MainCameraText: 'Основна Камера';
+      MaxDistanceText: 'Макс. відстань';
+      NewSkyText: 'Нова логіка неба';
+      ClubFixesText: 'Виправлення БІЛ-В';
+      BaseSpeedText: 'Базова швидкість';
+      FastSpeedText: 'Швидкість з Shift';
+      StepForwardText: 'Крок вперед';
+      NewZoomText: 'Новий Zoom';
+      SensitivityText: 'Чутливість';
+      ValueText: 'Значення';
+      DistanceText: 'Відстань (м.)';
+      WiresText: 'Проводи';
+      DistantModelsText: 'Далекі моделі';
+      TrafficLightsText: 'Світлофори';
+      LanguageText: 'Мова інтерфейсу';
+      RussianText: 'Русский';
+      UkrainianText: 'Українська';
+      EnglishText: 'English';
+      InfoText: 'ZDS-Booster v1.1 | t.me/raildrive';
+    ),
+    // Английский
+    (
+      RenderTitle: 'RENDER';
+      WorldTitle: 'WORLD';
+      LocomotiveTitle: 'LOCOMOTIVE';
+      MenuTitle: 'MENU';
+      FreeCameraText: 'Free Camera';
+      MainCameraText: 'Main Camera';
+      MaxDistanceText: 'Max Distance';
+      NewSkyText: 'New Sky Logic';
+      ClubFixesText: 'BIL-V Fixes';
+      BaseSpeedText: 'Base Speed';
+      FastSpeedText: 'Shift Speed';
+      StepForwardText: 'Step Forward';
+      NewZoomText: 'New Zoom';
+      SensitivityText: 'Sensitivity';
+      ValueText: 'Value';
+      DistanceText: 'Distance (m.)';
+      WiresText: 'Wires';
+      DistantModelsText: 'Distant Models';
+      TrafficLightsText: 'Traffic Lights';
+      LanguageText: 'Interface Language';
+      RussianText: 'Русский';
+      UkrainianText: 'Українська';
+      EnglishText: 'English';
+      InfoText: 'ZDS-Booster v1.1 | t.me/raildrive';
+    )
+  );
+
+// === ФУНКЦИЯ ПОЛУЧЕНИЯ ТЕКСТА ===
+function GetText(TextType: string): string;
+begin
+  if TextType = 'RenderTitle' then Result := LanguageTexts[CurrentLanguage].RenderTitle
+  else if TextType = 'WorldTitle' then Result := LanguageTexts[CurrentLanguage].WorldTitle
+  else if TextType = 'LocomotiveTitle' then Result := LanguageTexts[CurrentLanguage].LocomotiveTitle
+  else if TextType = 'MenuTitle' then Result := LanguageTexts[CurrentLanguage].MenuTitle
+  else if TextType = 'FreeCameraText' then Result := LanguageTexts[CurrentLanguage].FreeCameraText
+  else if TextType = 'MainCameraText' then Result := LanguageTexts[CurrentLanguage].MainCameraText
+  else if TextType = 'MaxDistanceText' then Result := LanguageTexts[CurrentLanguage].MaxDistanceText
+  else if TextType = 'NewSkyText' then Result := LanguageTexts[CurrentLanguage].NewSkyText
+  else if TextType = 'ClubFixesText' then Result := LanguageTexts[CurrentLanguage].ClubFixesText
+  else if TextType = 'BaseSpeedText' then Result := LanguageTexts[CurrentLanguage].BaseSpeedText
+  else if TextType = 'FastSpeedText' then Result := LanguageTexts[CurrentLanguage].FastSpeedText
+  else if TextType = 'StepForwardText' then Result := LanguageTexts[CurrentLanguage].StepForwardText
+  else if TextType = 'NewZoomText' then Result := LanguageTexts[CurrentLanguage].NewZoomText
+  else if TextType = 'SensitivityText' then Result := LanguageTexts[CurrentLanguage].SensitivityText
+  else if TextType = 'ValueText' then Result := LanguageTexts[CurrentLanguage].ValueText
+  else if TextType = 'DistanceText' then Result := LanguageTexts[CurrentLanguage].DistanceText
+  else if TextType = 'WiresText' then Result := LanguageTexts[CurrentLanguage].WiresText
+  else if TextType = 'DistantModelsText' then Result := LanguageTexts[CurrentLanguage].DistantModelsText
+  else if TextType = 'TrafficLightsText' then Result := LanguageTexts[CurrentLanguage].TrafficLightsText
+  else if TextType = 'LanguageText' then Result := LanguageTexts[CurrentLanguage].LanguageText
+  else if TextType = 'RussianText' then Result := LanguageTexts[CurrentLanguage].RussianText
+  else if TextType = 'UkrainianText' then Result := LanguageTexts[CurrentLanguage].UkrainianText
+  else if TextType = 'EnglishText' then Result := LanguageTexts[CurrentLanguage].EnglishText
+  else if TextType = 'InfoText' then Result := LanguageTexts[CurrentLanguage].InfoText
+  else Result := TextType;
+end;
 
 // === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 function Min(A, B: Integer): Integer;
 begin
-  if A < B then
-    Result := A
-  else
-    Result := B;
+  if A < B then Result := A else Result := B;
 end;
 
 function Max(A, B: Integer): Integer;
 begin
-  if A > B then
-    Result := A
+  if A > B then Result := A else Result := B;
+end;
+
+function MinF(A, B: Single): Single;
+begin
+  if A < B then Result := A else Result := B;
+end;
+
+function MaxF(A, B: Single): Single;
+begin
+  if A > B then Result := A else Result := B;
+end;
+
+function LerpF(A, B, T: Single): Single;
+begin
+  Result := A + (B - A) * T;
+end;
+
+function LerpColor(ColorA, ColorB: Integer; T: Single): Integer;
+var
+  RA, GA, BA: Byte;
+  RB, GB, BB: Byte;
+  RT, GT, BT: Byte;
+begin
+  // Извлекаем компоненты цвета A
+  RA := ColorA and $FF;
+  GA := (ColorA shr 8) and $FF;
+  BA := (ColorA shr 16) and $FF;
+  
+  // Извлекаем компоненты цвета B
+  RB := ColorB and $FF;
+  GB := (ColorB shr 8) and $FF;
+  BB := (ColorB shr 16) and $FF;
+  
+  // Интерполируем каждый компонент
+  RT := Round(RA + (RB - RA) * T);
+  GT := Round(GA + (GB - GA) * T);
+  BT := Round(BA + (BB - BA) * T);
+  
+  // Собираем результирующий цвет
+  Result := RT or (GT shl 8) or (BT shl 16);
+end;
+
+function EaseOutBack(T: Single): Single;
+var
+  c1, c3: Single;
+begin
+  c1 := 1.70158;
+  c3 := c1 + 1;
+  Result := 1 + c3 * Power(T - 1, 3) + c1 * Power(T - 1, 2);
+end;
+
+function EaseOutCubic(T: Single): Single;
+begin
+  T := T - 1;
+  Result := 1 + T * T * T;
+end;
+
+function EaseInOutQuart(T: Single): Single;
+begin
+  if T < 0.5 then
+    Result := 8 * T * T * T * T
   else
-    Result := B;
+    Result := 1 - Power(-2 * T + 2, 4) / 2;
 end;
 
-// === НОВЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С ДОНАТАМИ ===
-
-function UTF8ToAnsi(const UTF8Str: string): string;
+function EaseOutElastic(T: Single): Single;
 var
-  WStr: WideString;
-  Len: Integer;
+  c4: Single;
 begin
-  Result := UTF8Str; // Fallback
-  if UTF8Str = '' then Exit;
+  c4 := (2 * PI) / 3;
   
-  try
-    Len := MultiByteToWideChar(CP_UTF8, 0, PAnsiChar(UTF8Str), -1, nil, 0);
-    if Len > 0 then
-    begin
-      SetLength(WStr, Len - 1);
-      MultiByteToWideChar(CP_UTF8, 0, PAnsiChar(UTF8Str), -1, PWideChar(WStr), Len);
-      Result := WStr;
-    end;
-  except
-    Result := UTF8Str; // В случае ошибки возвращаем как есть
-  end;
-end;
-
-function DownloadDonations: string;
-var
-  hSession, hConnect, hRequest: HINTERNET;
-  Buffer: array[0..1023] of AnsiChar;
-  BytesRead: DWORD;
-  RawData: AnsiString;
-  TempStr: AnsiString;
-begin
-  Result := '';
-  RawData := '';
-  
-  hSession := InternetOpen(PChar('ZDS-Booster'), INTERNET_OPEN_TYPE_PRECONFIG, nil, nil, 0);
-  if hSession = nil then Exit;
-  
-  try
-    hConnect := InternetConnect(hSession, PChar('raw.githubusercontent.com'), INTERNET_DEFAULT_HTTPS_PORT, nil, nil, INTERNET_SERVICE_HTTP, 0, 0);
-    if hConnect = nil then Exit;
-    
-    try
-      hRequest := HttpOpenRequest(hConnect, PChar('GET'), PChar('/raildriver1/zds-booster/refs/heads/main/donate.txt'), nil, nil, nil, INTERNET_FLAG_SECURE, 0);
-      if hRequest = nil then Exit;
-      
-      try
-        if HttpSendRequest(hRequest, nil, 0, nil, 0) then
-        begin
-          while InternetReadFile(hRequest, @Buffer, SizeOf(Buffer), BytesRead) and (BytesRead > 0) do
-          begin
-            SetString(TempStr, Buffer, BytesRead);
-            RawData := RawData + TempStr;
-          end;
-          // Конвертируем UTF-8 в нормальную кодировку
-          Result := UTF8ToAnsi(string(RawData));
-        end;
-      finally
-        InternetCloseHandle(hRequest);
-      end;
-    finally
-      InternetCloseHandle(hConnect);
-    end;
-  finally
-    InternetCloseHandle(hSession);
-  end;
-end;
-
-procedure ParseDonations(const Data: string);
-var
-  Lines: TStringList;
-  i, ColonCount: Integer;
-  Line, Name, Amount, Message: string;
-  ColonPos1, ColonPos2: Integer;
-begin
-  DonationCount := 0;
-  
-  if Data = '' then Exit;
-  
-  Lines := TStringList.Create;
-  try
-    Lines.Text := Data;
-    
-    for i := 0 to Lines.Count - 1 do
-    begin
-      if DonationCount >= 10 then Break; // Максимум 10 донатов
-      
-      Line := SysUtils.Trim(Lines[i]);
-      if Line = '' then Continue;
-      
-      // Подсчитываем количество двоеточий
-      ColonCount := 0;
-      ColonPos1 := 0;
-      ColonPos2 := 0;
-      
-      ColonPos1 := Pos(':', Line);
-      if ColonPos1 > 0 then
-      begin
-        Inc(ColonCount);
-        ColonPos2 := Pos(':', Copy(Line, ColonPos1 + 1, Length(Line)));
-        if ColonPos2 > 0 then
-        begin
-          Inc(ColonCount);
-          ColonPos2 := ColonPos1 + ColonPos2;
-        end;
-      end;
-      
-      // Парсим в зависимости от количества двоеточий
-      if ColonCount = 2 then
-      begin
-        // Формат: Имя:Сумма:Сообщение
-        Name := SysUtils.Trim(Copy(Line, 1, ColonPos1 - 1));
-        Amount := SysUtils.Trim(Copy(Line, ColonPos1 + 1, ColonPos2 - ColonPos1 - 1));
-        Message := SysUtils.Trim(Copy(Line, ColonPos2 + 1, Length(Line)));
-      end
-      else if ColonCount = 1 then
-      begin
-        // Формат: Имя:Сумма (без сообщения)
-        Name := SysUtils.Trim(Copy(Line, 1, ColonPos1 - 1));
-        Amount := SysUtils.Trim(Copy(Line, ColonPos1 + 1, Length(Line)));
-        Message := '';
-      end
-      else
-        Continue; // Неправильный формат
-      
-      // Добавляем донат
-      Donations[DonationCount].Name := Name;
-      Donations[DonationCount].Amount := Amount;
-      Donations[DonationCount].Message := Message;
-      Inc(DonationCount);
-    end;
-  finally
-    Lines.Free;
-  end;
-end;
-
-procedure LoadDonations;
-var
-  Data: string;
-begin
-  try
-    AddToLogFile(EngineLog, 'Загружаем список донатов...');
-    Data := DownloadDonations;
-    if Data <> '' then
-    begin
-      ParseDonations(Data);
-      DonationsLoaded := True;
-      AddToLogFile(EngineLog, 'Загружено донатов: ' + IntToStr(DonationCount));
-    end
-    else
-    begin
-      AddToLogFile(EngineLog, 'Не удалось загрузить список донатов');
-    end;
-  except
-    on E: Exception do
-    begin
-      AddToLogFile(EngineLog, 'Ошибка при загрузке донатов: ' + E.Message);
-    end;
-  end;
-end;
-
-procedure OpenDonationURL;
-begin
-  try
-    ShellExecute(0, 'open', PChar('https://pay.cloudtips.ru/p/82408b20'), nil, nil, SW_SHOWNORMAL);
-  except
-    // Игнорируем ошибки
-  end;
+  if T = 0 then
+    Result := 0
+  else if T = 1 then
+    Result := 1
+  else
+    Result := Power(2, -10 * T) * Sin((T * 10 - 0.75) * c4) + 1;
 end;
 
 function GetFreecamBasespeed: Single; stdcall;
@@ -405,11 +491,39 @@ begin
   Result := Settings.TurnspeedSlider.Value;
 end;
 
-// Простая отрисовка текста
-procedure DrawText(X, Y: Integer; Text: string; Color: Integer; Alpha: Integer = 255);
+// Современная отрисовка текста с тенью
+procedure DrawModernText(X, Y: Integer; Text: string; Color: Integer; Alpha: Integer = 255; Size: Single = 0.8);
 begin
-  DrawText2D(0, X + 1, Y + 1, Text, $000000, Alpha div 3, 0.8);
-  DrawText2D(0, X, Y, Text, Color, Alpha, 0.8);
+  // Тень
+  DrawText2D(0, X + 1, Y + 1, Text, COLOR_SHADOW, Alpha div 4, Size);
+  // Основной текст
+  DrawText2D(0, X, Y, Text, Color, Alpha, Size);
+end;
+
+// Простая но эффективная отрисовка прямоугольника с границами
+procedure DrawStyledRect(X, Y, Width, Height: Integer; Color: Integer; Alpha: Integer; Filled: Boolean; BorderColor: Integer = 0);
+begin
+  if Filled then
+    DrawRectangle2D(X, Y, Width, Height, Color, Alpha, True);
+  
+  // Рамка
+  DrawRectangle2D(X, Y, Width, Height, BorderColor, Alpha div 2, False);
+end;
+
+// Отрисовка тени
+procedure DrawShadow(X, Y, Width, Height: Integer; Alpha: Integer; Intensity: Single = 1.0);
+var
+  ShadowOffset: Integer;
+  ShadowAlpha: Integer;
+  i: Integer;
+begin
+  ShadowOffset := Round(6 * Intensity);
+  
+  for i := 0 to Round(4 * Intensity) do
+  begin
+    ShadowAlpha := Round(Alpha * Intensity / (8 + i * 2));
+    DrawRectangle2D(X + ShadowOffset + i, Y + ShadowOffset + i, Width, Height, COLOR_SHADOW, ShadowAlpha, True);
+  end;
 end;
 
 function InRect(X, Y, RX, RY, RW, RH: Integer): Boolean;
@@ -418,13 +532,39 @@ begin
 end;
 
 function FormatValue(Value: Single): string;
+var
+  OldSep: Char;
 begin
-  if Value >= 1000 then
-    Result := IntToStr(Round(Value))
-  else if Value = Round(Value) then
-    Result := IntToStr(Round(Value))
-  else
-    Result := Format('%.2f', [Value]);
+  // Принудительно пишем точку как разделитель — иначе на русской локали
+  // получим "0,5" и при следующей загрузке поплывёт парсинг.
+  OldSep := DecimalSeparator;
+  try
+    DecimalSeparator := '.';
+    if Value >= 1000 then
+      Result := IntToStr(Round(Value))
+    else if Value = Round(Value) then
+      Result := IntToStr(Round(Value))
+    else
+      Result := Format('%.2f', [Value]);
+  finally
+    DecimalSeparator := OldSep;
+  end;
+end;
+
+// Парсинг дробного значения из конфига — принимаем и точку, и запятую.
+function ParseFloat(const S: string; DefaultValue: Single): Single;
+var
+  OldSep: Char;
+  Normalized: string;
+begin
+  Normalized := StringReplace(S, ',', '.', [rfReplaceAll]);
+  OldSep := DecimalSeparator;
+  try
+    DecimalSeparator := '.';
+    Result := StrToFloatDef(Normalized, DefaultValue);
+  finally
+    DecimalSeparator := OldSep;
+  end;
 end;
 
 // Функция записи float значения в память
@@ -534,35 +674,29 @@ var
 begin
   if ViewAnglePatched then Exit;
   
-  // ПРОВЕРЯЕМ ЧТО MainCamera И NewViewAngle ВКЛЮЧЕНЫ
   if not Settings.MainCamera or not Settings.NewViewAngle then Exit;
   
   try
     AddToLogFile(EngineLog, 'Применяем патч угла обзора...');
     
-    // Сохраняем оригинальные байты первого адреса (6 байт)
     if not ReadProcessMemory(GetCurrentProcess, Pointer(ViewAngleNopAddr1), @OrigViewAngleBytes1[0], 6, BytesWritten) then
     begin
       AddToLogFile(EngineLog, 'Ошибка чтения оригинальных байтов угла обзора (адрес 1)');
       Exit;
     end;
     
-    // Сохраняем оригинальные байты второго адреса (7 байт)
     if not ReadProcessMemory(GetCurrentProcess, Pointer(ViewAngleNopAddr2), @OrigViewAngleBytes2[0], 6, BytesWritten) then
     begin
       AddToLogFile(EngineLog, 'Ошибка чтения оригинальных байтов угла обзора (адрес 2)');
       Exit;
     end;
     
-    // Заполняем NOP'ами для первого адреса (6 байт)
     for i := 0 to 5 do
       NopBytes1[i] := $90;
     
-    // Заполняем NOP'ами для второго адреса (7 байт)
     for i := 0 to 6 do
       NopBytes2[i] := $90;
     
-    // Применяем патч для первого адреса
     if VirtualProtect(Pointer(ViewAngleNopAddr1), 6, PAGE_EXECUTE_READWRITE, OldProtect) then
     begin
       if WriteProcessMemory(GetCurrentProcess, Pointer(ViewAngleNopAddr1), @NopBytes1[0], 6, BytesWritten) then
@@ -580,13 +714,11 @@ begin
       Exit;
     end;
     
-    // Применяем патч для второго адреса
     if VirtualProtect(Pointer(ViewAngleNopAddr2), 6, PAGE_EXECUTE_READWRITE, OldProtect) then
     begin
       if WriteProcessMemory(GetCurrentProcess, Pointer(ViewAngleNopAddr2), @NopBytes2[0], 6, BytesWritten) then
       begin
         ViewAnglePatched := True;
-        // Применяем значение из слайдера
         WriteFloatToMemory(ViewAngleSliderAddr, Settings.ViewAngleSlider.Value);
         AddToLogFile(EngineLog, 'Патч угла обзора (адрес 2) успешно применен');
       end
@@ -617,7 +749,6 @@ begin
   try
     AddToLogFile(EngineLog, 'Восстанавливаем патч угла обзора...');
     
-    // Восстанавливаем оригинальные байты первого адреса
     if VirtualProtect(Pointer(ViewAngleNopAddr1), 6, PAGE_EXECUTE_READWRITE, OldProtect) then
     begin
       if WriteProcessMemory(GetCurrentProcess, Pointer(ViewAngleNopAddr1), @OrigViewAngleBytes1[0], 6, BytesWritten) then
@@ -629,13 +760,11 @@ begin
     else
       AddToLogFile(EngineLog, 'Ошибка получения прав на запись при восстановлении патча угла обзора (адрес 1)');
     
-    // Восстанавливаем оригинальные байты второго адреса
     if VirtualProtect(Pointer(ViewAngleNopAddr2), 7, PAGE_EXECUTE_READWRITE, OldProtect) then
     begin
       if WriteProcessMemory(GetCurrentProcess, Pointer(ViewAngleNopAddr2), @OrigViewAngleBytes2[0], 7, BytesWritten) then
       begin
         ViewAnglePatched := False;
-        // Восстанавливаем оригинальное значение
         WriteFloatToMemory(ViewAngleSliderAddr, OrigViewAngleValue);
         AddToLogFile(EngineLog, 'Патч угла обзора (адрес 2) успешно восстановлен');
       end
@@ -654,7 +783,7 @@ begin
   end;
 end;
 
-// Чтение оригинальных значений дальности (ТЕПЕРЬ ВОССТАНАВЛИВАЮТСЯ!)
+// Чтение оригинальных значений дальности
 procedure ReadOriginalDistanceValues;
 var
   i: Integer;
@@ -663,14 +792,11 @@ begin
   
   AddToLogFile(EngineLog, 'Читаем оригинальные значения дальности...');
   
-  // Читаем провода
   for i := 0 to 1 do
     OrigWireValues[i] := ReadFloatFromMemory(WireAddrs[i]);
   
-  // Читаем дальние модели
   OrigDistantModelValue := ReadFloatFromMemory(DistantModelAddr);
   
-  // Читаем светофоры
   for i := 0 to 2 do
     OrigTrafficLightValues[i] := ReadFloatFromMemory(TrafficLightAddrs[i]);
   
@@ -685,28 +811,23 @@ begin
   
   AddToLogFile(EngineLog, 'Восстанавливаем дефолтные значения освещения...');
   
-  // Восстанавливаем оригинальные значения рельс
   WriteFloatToMemory(MainLightAddr, OrigMainLightValue);
   WriteFloatToMemory(AdditionalLightAddr, OrigAdditionalLightValue);
   
-  // Устанавливаем дефолтные значения кабины
-  // Яркость кабины = 9000
   WriteFloatToMemory($482824, 9000.0);
   WriteFloatToMemory($48A7A8, 9000.0);
   
-  // Контрастность кабины = 8000
   WriteFloatToMemory($48282C, 8000.0);
   WriteFloatToMemory($48A7B0, 8000.0);
   WriteFloatToMemory($48DBC4, 8000.0);
   
-  // Восстанавливаем оригинальные значения солнца
   WriteFloatToMemory(SunOrbitAddr, OrigSunOrbitValue);
   WriteFloatToMemory(SunHeightAddr, OrigSunHeightValue);
   
   AddToLogFile(EngineLog, 'Дефолтные значения освещения восстановлены');
 end;
 
-// НОВАЯ ФУНКЦИЯ: Восстановление оригинальных значений дальности
+// Восстановление оригинальных значений дальности
 procedure RestoreOriginalDistanceValues;
 var
   i: Integer;
@@ -715,38 +836,30 @@ begin
   
   AddToLogFile(EngineLog, 'Восстанавливаем оригинальные значения дальности...');
   
-  // Восстанавливаем провода
   for i := 0 to 1 do
     WriteFloatToMemory(WireAddrs[i], OrigWireValues[i]);
   
-  // Восстанавливаем дальние модели
   WriteFloatToMemory(DistantModelAddr, OrigDistantModelValue);
   
-  // Восстанавливаем светофоры
   for i := 0 to 2 do
     WriteFloatToMemory(TrafficLightAddrs[i], OrigTrafficLightValues[i]);
   
   AddToLogFile(EngineLog, 'Оригинальные значения дальности восстановлены');
 end;
 
-// === ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ПРИМЕНЕНИЯ НАСТРОЕК ===
+// Применение настроек освещения
 procedure ApplyLightingSettings;
 begin
   if not Settings.Lighting then Exit;
   
   AddToLogFile(EngineLog, 'Применяем настройки освещения...');
   
-  // Яркость рельс
   WriteFloatToMemory(MainLightAddr, Settings.MainLightIntensitySlider.Value);
-  
-  // Контрастность рельс
   WriteFloatToMemory(AdditionalLightAddr, Settings.AdditionalLightIntensitySlider.Value);
   
-  // Яркость кабины
   WriteFloatToMemory($482824, Settings.CabinBrightnessSlider.Value);
   WriteFloatToMemory($48A7A8, Settings.CabinBrightnessSlider.Value);
   
-  // Контрастность кабины
   WriteFloatToMemory($48282C, Settings.CabinContrastSlider.Value);
   WriteFloatToMemory($48A7B0, Settings.CabinContrastSlider.Value);
   WriteFloatToMemory($48DBC4, Settings.CabinContrastSlider.Value);
@@ -757,7 +870,7 @@ begin
   AddToLogFile(EngineLog, 'Настройки освещения применены');
 end;
 
-// ИСПРАВЛЕННАЯ ФУНКЦИЯ: Применение настроек дальности с использованием слайдера
+// Применение настроек дальности с использованием слайдера
 procedure ApplyDistanceSettings;
 var
   SliderDistance: Single;
@@ -765,17 +878,14 @@ var
 begin
   if not Settings.MaxVisibleDistance then 
   begin
-    // Если MaxVisibleDistance выключен, восстанавливаем все оригинальные значения
     RestoreOriginalDistanceValues;
     Exit;
   end;
   
-  // Берем значение из слайдера для всех групп
   SliderDistance := Settings.MaxVisibleDistanceSlider.Value;
   
   AddToLogFile(EngineLog, 'Применяем настройки дальности...');
   
-  // Провода - применяем или восстанавливаем
   if Settings.ShowWires then
   begin
     for i := 0 to 1 do
@@ -787,13 +897,11 @@ begin
       WriteFloatToMemory(WireAddrs[i], OrigWireValues[i]);
   end;
   
-  // Дальние модели - применяем или восстанавливаем
   if Settings.ShowDistantModels then
     WriteFloatToMemory(DistantModelAddr, SliderDistance)
   else
     WriteFloatToMemory(DistantModelAddr, OrigDistantModelValue);
   
-  // Светофоры - применяем или восстанавливаем
   if Settings.ShowTrafficLights then
   begin
     for i := 0 to 2 do
@@ -808,17 +916,15 @@ begin
   AddToLogFile(EngineLog, 'Настройки дальности применены');
 end;
 
-// === НОВАЯ ФУНКЦИЯ: Отложенное применение настроек ===
+// Отложенное применение настроек
 procedure ApplySettingsThrottled;
 var
   CurrentTime: Cardinal;
 begin
   CurrentTime := GetTickCount;
   
-  // Применяем настройки только если прошло достаточно времени
   if (CurrentTime - LastApplyTime) >= ApplyInterval then
   begin
-    // Применяем только включенные настройки
     if Settings.MaxVisibleDistance then
       ApplyDistanceSettings;
     if Settings.MainCamera and Settings.CameraSensitivity then
@@ -829,7 +935,7 @@ begin
   end
   else
   begin
-    PendingApply := True; // Запомнить, что нужно применить позже
+    PendingApply := True;
   end;
 end;
 
@@ -839,10 +945,10 @@ var
   Line, Key, Value: string;
   ColonPos: Integer;
   OldFreecamState: Boolean;
+  LangValue: Integer;
 begin
   if not FileExists('zdbooster.cfg') then Exit;
   
-  // Сохраняем старое состояние для отладки
   OldFreecamState := Settings.Freecam;
   
   try
@@ -859,61 +965,68 @@ begin
         Key := SysUtils.Trim(Copy(Line, 1, ColonPos - 1));
         Value := SysUtils.Trim(Copy(Line, ColonPos + 1, Length(Line)));
         
+        // ДОБАВЛЯЕМ ЗАГРУЗКУ ЯЗЫКА
+        if Key = 'language' then 
+        begin
+          LangValue := StrToIntDef(Value, 0);
+          if (LangValue >= 0) and (LangValue <= 2) then
+            CurrentLanguage := TLanguage(LangValue);
+        end;
+        
         // Состояния модулей (0/1)
         if Key = 'freecam' then 
         begin
           Settings.Freecam := (Value = '1');
-          Config_Freecam := Settings.Freecam; // ИСПРАВЛЯЕМ: синхронизируем глобальную переменную
+          Config_Freecam := Settings.Freecam;
         end;
         if Key = 'main_camera' then Settings.MainCamera := (Value = '1');
         if Key = 'max_distance' then Settings.MaxVisibleDistance := (Value = '1');
         if Key = 'newsky' then Settings.NewSky := (Value = '1');
         if Key = 'new_club_positions' then Settings.NewClubPositions := (Value = '1');
-        if Key = 'new_view_angle' then Settings.NewViewAngle := (Value = '1');        // НОВАЯ ГАЛОЧКА
-        if Key = 'camera_sensitivity' then Settings.CameraSensitivity := (Value = '1'); // ГАЛОЧКА ЧУВСТВИТЕЛЬНОСТИ
+        if Key = 'new_view_angle' then Settings.NewViewAngle := (Value = '1');
+        if Key = 'camera_sensitivity' then Settings.CameraSensitivity := (Value = '1');
 
         // Чекбоксы дальности
         if Key = 'show_wires' then Settings.ShowWires := (Value = '1');
         if Key = 'show_distant_models' then Settings.ShowDistantModels := (Value = '1');
         if Key = 'show_traffic_lights' then Settings.ShowTrafficLights := (Value = '1');
         
-        // Значения слайдеров
-        if Key = 'basespeed' then Settings.BasespeedSlider.Value := StrToFloatDef(Value, 1.0);
-        if Key = 'fastspeed' then Settings.FastspeedSlider.Value := StrToFloatDef(Value, 2.0);
-        if Key = 'turnspeed' then Settings.TurnspeedSlider.Value := StrToFloatDef(Value, 1.5);
-        if Key = 'stepforward' then Settings.StepForwardSlider.Value := StrToFloatDef(Value, 0.5);
-        if Key = 'maxvisibledistance' then Settings.MaxVisibleDistanceSlider.Value := StrToFloatDef(Value, 1200);
-        if Key = 'view_angle' then Settings.ViewAngleSlider.Value := StrToFloatDef(Value, 3.0); // НОВЫЙ СЛАЙДЕР (ЦЕЛОЧИСЛЕННЫЙ)
-        if Key = 'camera_sensitivity_value' then Settings.CameraSensitivitySlider.Value := StrToFloatDef(Value, 5.0); // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ
-        
+        // Значения слайдеров (ParseFloat нормализует запятую/точку)
+        if Key = 'basespeed' then Settings.BasespeedSlider.Value := ParseFloat(Value, 1.0);
+        if Key = 'fastspeed' then Settings.FastspeedSlider.Value := ParseFloat(Value, 2.0);
+        if Key = 'turnspeed' then Settings.TurnspeedSlider.Value := ParseFloat(Value, 1.5);
+        if Key = 'stepforward' then Settings.StepForwardSlider.Value := ParseFloat(Value, 0.5);
+        if Key = 'maxvisibledistance' then Settings.MaxVisibleDistanceSlider.Value := ParseFloat(Value, 1200);
+        if Key = 'view_angle' then Settings.ViewAngleSlider.Value := ParseFloat(Value, 3.0);
+        if Key = 'camera_sensitivity_value' then Settings.CameraSensitivitySlider.Value := ParseFloat(Value, 5.0);
+
         // Глобальный слайдер яркости
-        if Key = 'brightness' then Settings.BrightnessSlider.Value := StrToFloatDef(Value, 0.0);
+        if Key = 'brightness' then Settings.BrightnessSlider.Value := ParseFloat(Value, 0.0);
       end;
     end;
     CloseFile(F);
 
-    // ИСПРАВЛЯЕМ: синхронизируем глобальные переменные
     MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
     MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
     MenuFreecamTurnSpeed := Settings.TurnspeedSlider.Value;
     stepforward := Settings.StepForwardSlider.Value;
     maxvisibledistance := Settings.MaxVisibleDistanceSlider.Value;
     newsky := Settings.NewSky;
+
+    SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
     
   except on E: Exception do
     AddToLogFile(EngineLog, 'Ошибка чтения конфига: ' + E.Message);
   end;
 end;
 
-
-// === ОПТИМИЗИРОВАННОЕ ЧТЕНИЕ КОНФИГА ===
+// Оптимизированное чтение конфига
 procedure LoadConfigThrottled;
 var
   CurrentTime: Cardinal;
 begin
   CurrentTime := GetTickCount;
   
-  // Читаем конфиг только если прошло достаточно времени
   if (CurrentTime - LastConfigReadTime) >= ConfigReadInterval then
   begin
     LoadConfig;
@@ -921,13 +1034,12 @@ begin
   end;
 end;
 
-// === ПРИНУДИТЕЛЬНОЕ ЧТЕНИЕ КОНФИГА ===
+// Принудительное чтение конфига
 procedure LoadConfigForced;
 begin
   LoadConfig;
   LastConfigReadTime := GetTickCount;
 end;
-
 
 procedure SaveConfig;
 var
@@ -937,14 +1049,17 @@ begin
     AssignFile(F, 'zdbooster.cfg');
     Rewrite(F);
     
+    // ДОБАВЛЯЕМ СОХРАНЕНИЕ ЯЗЫКА
+    WriteLn(F, 'language: ' + IntToStr(Integer(CurrentLanguage)));
+    
     // Состояния модулей (0/1)
     if Settings.Freecam then WriteLn(F, 'freecam: 1') else WriteLn(F, 'freecam: 0');
     if Settings.MainCamera then WriteLn(F, 'main_camera: 1') else WriteLn(F, 'main_camera: 0');
     if Settings.MaxVisibleDistance then WriteLn(F, 'max_distance: 1') else WriteLn(F, 'max_distance: 0');
     if Settings.NewSky then WriteLn(F, 'newsky: 1') else WriteLn(F, 'newsky: 0');
     if Settings.NewClubPositions then WriteLn(F, 'new_club_positions: 1') else WriteLn(F, 'new_club_positions: 0');
-    if Settings.NewViewAngle then WriteLn(F, 'new_view_angle: 1') else WriteLn(F, 'new_view_angle: 0'); // НОВАЯ ГАЛОЧКА
-    if Settings.CameraSensitivity then WriteLn(F, 'camera_sensitivity: 1') else WriteLn(F, 'camera_sensitivity: 0'); // ГАЛОЧКА ЧУВСТВИТЕЛЬНОСТИ
+    if Settings.NewViewAngle then WriteLn(F, 'new_view_angle: 1') else WriteLn(F, 'new_view_angle: 0');
+    if Settings.CameraSensitivity then WriteLn(F, 'camera_sensitivity: 1') else WriteLn(F, 'camera_sensitivity: 0');
     
     // Чекбоксы дальности
     if Settings.ShowWires then WriteLn(F, 'show_wires: 1') else WriteLn(F, 'show_wires: 0');
@@ -957,19 +1072,23 @@ begin
     WriteLn(F, 'turnspeed: ' + FormatValue(Settings.TurnspeedSlider.Value));
     WriteLn(F, 'stepforward: ' + FormatValue(Settings.StepForwardSlider.Value));
     WriteLn(F, 'maxvisibledistance: ' + IntToStr(Round(Settings.MaxVisibleDistanceSlider.Value)));
-    WriteLn(F, 'view_angle: ' + FormatValue(Settings.ViewAngleSlider.Value)); // ИЗМЕНЕНО: теперь дробное
-    WriteLn(F, 'camera_sensitivity_value: ' + FormatValue(Settings.CameraSensitivitySlider.Value)); // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ
+    WriteLn(F, 'view_angle: ' + FormatValue(Settings.ViewAngleSlider.Value));
+    WriteLn(F, 'camera_sensitivity_value: ' + FormatValue(Settings.CameraSensitivitySlider.Value));
     
     // Глобальный слайдер яркости
     WriteLn(F, 'brightness: ' + FormatValue(Settings.BrightnessSlider.Value));
 
     CloseFile(F);
   except
-    // Игнорируем ошибки записи конфига
+    on E: Exception do
+    begin
+      try CloseFile(F); except end;
+      AddToLogFile(EngineLog, 'Ошибка сохранения конфига (CheatMenu): ' + E.Message);
+    end;
   end;
 end;
 
-// ===== ФУНКЦИЯ ПРИМЕНЕНИЯ ПАТЧА =====
+// Применение патча КЛУБ
 procedure ApplyClubPositionsPatch;
 var
   OldProtect: Cardinal;
@@ -1064,7 +1183,7 @@ begin
   end;
 end;
 
-// ===== ФУНКЦИЯ ВОССТАНОВЛЕНИЯ =====
+// Восстановление КЛУБ патча
 procedure RemoveClubPositionsPatch;
 var
   OldProtect: Cardinal;
@@ -1158,7 +1277,7 @@ begin
   end;
 end;
 
-// ИСПРАВЛЕННАЯ ФУНКЦИЯ МЕНЮ ПАТЧА
+// Применение меню патча
 procedure ApplyMenuPatch;
 var
   OldProtect: Cardinal;
@@ -1170,21 +1289,18 @@ begin
   try
     AddToLogFile(EngineLog, 'Применяем меню патч...');
     
-    // Сохраняем оригинальные байты
     if not ReadProcessMemory(GetCurrentProcess, Pointer(MenuCallAddr), @OrigMenuCallBytes[0], 5, BytesWritten) then
     begin
       AddToLogFile(EngineLog, 'Ошибка чтения оригинальных байтов меню патча');
       Exit;
     end;
     
-    // Подготавливаем NOP инструкции (90 90 90 90 90)
     NopBytes[0] := $90;
     NopBytes[1] := $90;
     NopBytes[2] := $90;
     NopBytes[3] := $90;
     NopBytes[4] := $90;
     
-    // Применяем патч
     if VirtualProtect(Pointer(MenuCallAddr), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
     begin
       if WriteProcessMemory(GetCurrentProcess, Pointer(MenuCallAddr), @NopBytes[0], 5, BytesWritten) then
@@ -1218,7 +1334,6 @@ begin
   try
     AddToLogFile(EngineLog, 'Восстанавливаем меню патч...');
     
-    // Восстанавливаем оригинальные байты
     if VirtualProtect(Pointer(MenuCallAddr), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
     begin
       if WriteProcessMemory(GetCurrentProcess, Pointer(MenuCallAddr), @OrigMenuCallBytes[0], 5, BytesWritten) then
@@ -1241,38 +1356,98 @@ begin
   end;
 end;
 
+// Функция трансформации координат с поворотом
+procedure TransformCoords(var X, Y: Integer; CenterX, CenterY: Integer; Scale, Rotation: Single);
+var
+  DX, DY: Single;
+  NewX, NewY: Single;
+begin
+  // Смещаем в начало координат
+  DX := (X - CenterX) * Scale;
+  DY := (Y - CenterY) * Scale;
+  
+  // Поворачиваем
+  NewX := DX * Cos(Rotation) - DY * Sin(Rotation);
+  NewY := DX * Sin(Rotation) + DY * Cos(Rotation);
+  
+  // Возвращаем обратно
+  X := Round(CenterX + NewX);
+  Y := Round(CenterY + NewY);
+end;
+
+
+procedure AnimateWindow(var Win: TWindow; DeltaTime: Single; CanAnimate: Boolean; Progress: Single; CenterX, CenterY: Integer);
+const
+  POS_SPEED  = 10.0;
+  FADE_SPEED = 7.0;
+  SCALE_SPEED = 11.0;
+  ROT_SPEED  = 9.0;
+  TY_SPEED   = 9.0;
+  DRAG_SPEED = 14.0;
+begin
+  if CanAnimate then
+  begin
+    if Abs(Win.Alpha - Win.TargetAlpha) > 0.005 then
+      Win.Alpha := Win.Alpha + (Win.TargetAlpha - Win.Alpha) * FADE_SPEED * DeltaTime;
+    if Abs(Win.Scale - Win.TargetScale) > 0.005 then
+      Win.Scale := Win.Scale + (Win.TargetScale - Win.Scale) * SCALE_SPEED * DeltaTime;
+    if Abs(Win.Rotation - Win.TargetRotation) > 0.001 then
+      Win.Rotation := Win.Rotation + (Win.TargetRotation - Win.Rotation) * ROT_SPEED * DeltaTime;
+    if Abs(Win.TranslateY - Win.TargetTranslateY) > 0.5 then
+      Win.TranslateY := Win.TranslateY + (Win.TargetTranslateY - Win.TranslateY) * TY_SPEED * DeltaTime;
+    if Abs(Win.TransformProgress - Win.TargetTransformProgress) > 0.005 then
+      Win.TransformProgress := Win.TransformProgress + (Win.TargetTransformProgress - Win.TransformProgress) * POS_SPEED * DeltaTime;
+    if Abs(Win.ShadowIntensity - Win.TargetShadowIntensity) > 0.005 then
+      Win.ShadowIntensity := Win.ShadowIntensity + (Win.TargetShadowIntensity - Win.ShadowIntensity) * FADE_SPEED * DeltaTime;
+  end;
+  // Ширина при перетаскивании анимируется всегда, независимо от SpawnDelay
+  if Abs(Win.DragWidthExpansion - Win.TargetDragWidthExpansion) > 0.1 then
+    Win.DragWidthExpansion := Win.DragWidthExpansion + (Win.TargetDragWidthExpansion - Win.DragWidthExpansion) * DRAG_SPEED * DeltaTime;
+  // Позиция (центр -> финальная) движется по общему MenuAnimationProgress
+  if not Win.IsDragging then
+  begin
+    Win.X := Round(CenterX + (Win.OriginalX - CenterX) * Progress);
+    Win.Y := Round(CenterY + (Win.OriginalY - CenterY) * Progress);
+  end;
+end;
+
 procedure UpdateAnimations;
 var
   CurrentTime: Cardinal;
   DeltaTime: Single;
+  CenterX, CenterY: Integer;
 begin
   CurrentTime := GetTickCount;
   if LastFrameTime = 0 then LastFrameTime := CurrentTime;
-  
+
   DeltaTime := (CurrentTime - LastFrameTime) / 1000.0;
   if DeltaTime > 0.1 then DeltaTime := 0.1;
   LastFrameTime := CurrentTime;
-  
-  // === ПРОВЕРЯЕМ ОТЛОЖЕННОЕ ПРИМЕНЕНИЕ НАСТРОЕК (не каждый кадр) ===
+
   if PendingApply and ((CurrentTime - LastApplyTime) >= ApplyInterval) then
     ApplySettingsThrottled;
-  
-  // === ПРОВЕРЯЕМ НУЖНО ЛИ ОБНОВИТЬ ДОНАТЫ ===
-  if (CurrentTime - LastDonationUpdate) >= DonationUpdateInterval then
+
+  // Таймер для каскада появления окон: растёт во время открытия, сбрасывается при закрытии
+  if MenuVisible then
   begin
-    LoadDonations;
-    LastDonationUpdate := CurrentTime;
-  end;
-  
-  // Анимация окон
-  if Abs(RenderWindow.Alpha - RenderWindow.TargetAlpha) > 0.01 then
-    RenderWindow.Alpha := RenderWindow.Alpha + (RenderWindow.TargetAlpha - RenderWindow.Alpha) * 5.0 * DeltaTime;
-  if Abs(WorldWindow.Alpha - WorldWindow.TargetAlpha) > 0.01 then
-    WorldWindow.Alpha := WorldWindow.Alpha + (WorldWindow.TargetAlpha - WorldWindow.Alpha) * 5.0 * DeltaTime;
-  if Abs(LocomotiveWindow.Alpha - LocomotiveWindow.TargetAlpha) > 0.01 then
-    LocomotiveWindow.Alpha := LocomotiveWindow.Alpha + (LocomotiveWindow.TargetAlpha - LocomotiveWindow.Alpha) * 5.0 * DeltaTime;
-  if Abs(DonateWindow.Alpha - DonateWindow.TargetAlpha) > 0.01 then
-    DonateWindow.Alpha := DonateWindow.Alpha + (DonateWindow.TargetAlpha - DonateWindow.Alpha) * 5.0 * DeltaTime;
+    MenuOpenTimer := MenuOpenTimer + DeltaTime;
+    if MenuOpenTimer > 10.0 then MenuOpenTimer := 10.0;
+  end
+  else
+    MenuOpenTimer := 0.0;
+
+  // === АНИМАЦИЯ ОБЩЕГО СОСТОЯНИЯ МЕНЮ ===
+  if Abs(MenuAnimationProgress - MenuTargetProgress) > 0.005 then
+    MenuAnimationProgress := MenuAnimationProgress + (MenuTargetProgress - MenuAnimationProgress) * MenuAnimationSpeed * DeltaTime;
+
+  CenterX := InitResX div 2;
+  CenterY := InitResY div 2;
+
+  // При открытии окно начинает анимацию только после своего SpawnDelay; при закрытии — все сразу
+  AnimateWindow(RenderWindow,     DeltaTime, (not MenuVisible) or (MenuOpenTimer >= RenderWindow.SpawnDelay),     MenuAnimationProgress, CenterX, CenterY);
+  AnimateWindow(WorldWindow,      DeltaTime, (not MenuVisible) or (MenuOpenTimer >= WorldWindow.SpawnDelay),      MenuAnimationProgress, CenterX, CenterY);
+  AnimateWindow(LocomotiveWindow, DeltaTime, (not MenuVisible) or (MenuOpenTimer >= LocomotiveWindow.SpawnDelay), MenuAnimationProgress, CenterX, CenterY);
+  AnimateWindow(MenuWindow,       DeltaTime, (not MenuVisible) or (MenuOpenTimer >= MenuWindow.SpawnDelay),       MenuAnimationProgress, CenterX, CenterY);
   
   // Анимация секций
   with Settings do
@@ -1321,6 +1496,7 @@ begin
   end;
 end;
 
+
 procedure InitCheatMenu; stdcall;
 begin
   FillChar(Settings, SizeOf(Settings), 0);
@@ -1329,58 +1505,62 @@ begin
   Settings.BrightnessSlider.Value := 0.0;
   Settings.BrightnessSlider.MinValue := 0.0;
   Settings.BrightnessSlider.MaxValue := 255.0;
+  Settings.BrightnessSlider.HoverProgress := 0.0;
   
-  // ИСПРАВЛЕННАЯ ИНИЦИАЛИЗАЦИЯ СЛАЙДЕРОВ FREECAM (шаг 0.01, максимум 2)
-  Settings.BasespeedSlider.Value := 0.01;        // Изменено: дефолтное значение 0.5
-  Settings.BasespeedSlider.MinValue := 0.01;     // Изменено: минимум 0.0
-  Settings.BasespeedSlider.MaxValue := 1.00;     // Изменено: максимум 1.0
+  // Инициализация слайдеров FREECAM
+  Settings.BasespeedSlider.Value := 0.01;
+  Settings.BasespeedSlider.MinValue := 0.01;
+  Settings.BasespeedSlider.MaxValue := 1.00;
+  Settings.BasespeedSlider.HoverProgress := 0.0;
   
   Settings.FastspeedSlider.Value := 1.5;
   Settings.FastspeedSlider.MinValue := 0.01;
   Settings.FastspeedSlider.MaxValue := 2.0;
+  Settings.FastspeedSlider.HoverProgress := 0.0;
   
   Settings.TurnspeedSlider.Value := 1.5;
   Settings.TurnspeedSlider.MinValue := 0.01;
   Settings.TurnspeedSlider.MaxValue := 2.0;
+  Settings.TurnspeedSlider.HoverProgress := 0.0;
   
   Settings.StepForwardSlider.Value := 0.5;
   Settings.StepForwardSlider.MinValue := 0.01;
   Settings.StepForwardSlider.MaxValue := 1.0;
+  Settings.StepForwardSlider.HoverProgress := 0.0;
   
   Settings.MaxVisibleDistanceSlider.Value := 1200;
   Settings.MaxVisibleDistanceSlider.MinValue := 800;
   Settings.MaxVisibleDistanceSlider.MaxValue := 1600;
+  Settings.MaxVisibleDistanceSlider.HoverProgress := 0.0;
   
-  // НОВЫЙ СЛАЙДЕР УГЛА ОБЗОРА (ДРОБНЫЙ)
+  // Слайдер угла обзора
   Settings.ViewAngleSlider.Value := 3.0;
   Settings.ViewAngleSlider.MinValue := 0.0;
   Settings.ViewAngleSlider.MaxValue := 7.0;
+  Settings.ViewAngleSlider.HoverProgress := 0.0;
   
-  // НОВЫЙ СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ КАМЕРЫ (от 1.00 до 9.00, формат f.ff)
+  // Слайдер чувствительности камеры
   Settings.CameraSensitivitySlider.Value := 5.0;
   Settings.CameraSensitivitySlider.MinValue := 1.0;
   Settings.CameraSensitivitySlider.MaxValue := 9.0;
+  Settings.CameraSensitivitySlider.HoverProgress := 0.0;
 
-  // АДРЕСА ДЛЯ УГЛА ОБЗОРА
-  ViewAngleNopAddr1 := $723909;   // Первый адрес для нопания (6 байт)
-  ViewAngleNopAddr2 := $72384C;   // Второй адрес для нопания (7 байт)  
-  ViewAngleSliderAddr := $725C1C; // Адрес float значения
+  // Адреса для угла обзора
+  ViewAngleNopAddr1 := $723909;
+  ViewAngleNopAddr2 := $72384C;
+  ViewAngleSliderAddr := $725C1C;
 
-  // АДРЕС ДЛЯ ЧУВСТВИТЕЛЬНОСТИ КАМЕРЫ
-  CameraSensitivityAddr := $7229F8; // Адрес чувствительности камеры
+  // Адрес для чувствительности камеры
+  CameraSensitivityAddr := $7229F8;
 
-  // Читаем оригинальные значения угла обзора
+  // Читаем оригинальные значения
   ReadOriginalViewAngleValues;
-
-  // Читаем оригинальные значения чувствительности камеры
   ReadOriginalCameraSensitivityValues;
 
-
-  // Применяем патч угла обзора только если MainCamera И NewViewAngle включены
+  // Применяем патчи если нужно
   if Settings.MainCamera and Settings.NewViewAngle then
     ApplyViewAnglePatch;
 
-  // Применяем чувствительность камеры если включена
   if Settings.MainCamera and Settings.CameraSensitivity then
     ApplyCameraSensitivity;
 
@@ -1391,7 +1571,7 @@ begin
   stepforward := Settings.StepForwardSlider.Value;
   maxvisibledistance := Settings.MaxVisibleDistanceSlider.Value;
 
-  // ИСПРАВЛЕННАЯ ИНИЦИАЛИЗАЦИЯ АДРЕСОВ (БЕЗ +1!)
+  // Инициализация адресов
   SpeedXAddr := $00400000 + $84B2B;
   AllowedSpeedAddr := $00400000 + $84D25;
   ShuntingSpeedAddr := $00400000 + $853C6;
@@ -1402,634 +1582,590 @@ begin
   AdditionalAddr := $00400000 + $85630;
   RadiusAddr := $00400000 + $85F40;
   
-  // ИНИЦИАЛИЗАЦИЯ АДРЕСА МЕНЮ ПАТЧА
-  MenuCallAddr := $743B9E; // ЗАМЕНИТЕ НА ПРАВИЛЬНЫЙ АДРЕС!
+  MenuCallAddr := $743B9E;
   
-  // Адреса освещения (БЕЗ +400000!)
+  // Адреса освещения
   MainLightAddr := $4942AC;
   AdditionalLightAddr := $4942B4;
   SunOrbitAddr := $4942CC;
   SunHeightAddr := $4942B8;
   
-  // Адреса дальности (3 группы, БЕЗ +400000!)
-  WireAddrs[0] := $494408;        // Провода 1
-  WireAddrs[1] := $494414;        // Провода 2
-  DistantModelAddr := $494358;    // Дальние модели
-  TrafficLightAddrs[0] := $48DB9C; // Светофоры 1
-  TrafficLightAddrs[1] := $48DC1C; // Светофоры 2
-  TrafficLightAddrs[2] := $48DBA0; // Светофоры 3
+  // Адреса дальности
+  WireAddrs[0] := $494408;
+  WireAddrs[1] := $494414;
+  DistantModelAddr := $494358;
+  TrafficLightAddrs[0] := $48DB9C;
+  TrafficLightAddrs[1] := $48DC1C;
+  TrafficLightAddrs[2] := $48DBA0;
   
-  // Читаем оригинальные значения освещения
+  // Читаем оригинальные значения
   ReadOriginalLightingValues;
-  
-  // Читаем оригинальные значения дальности
   ReadOriginalDistanceValues;
   
-  // Применяем патч если он был включен в конфиге
+  // Применяем патчи если нужно
   if Settings.NewClubPositions then
     ApplyClubPositionsPatch;
     
-  // Применяем дальность если она была включена в конфиге
   if Settings.MaxVisibleDistance then
     ApplyDistanceSettings;
 
   LoadConfig;
 
-  // Инициализация окон
-  RenderWindow.Title := 'RENDER';
+  SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
+
+  // Инициализация окон с transform анимацией
+  RenderWindow.Title := GetText('RenderTitle');
   RenderWindow.X := 50;
-  RenderWindow.Y := 40;
-  RenderWindow.Width := 240;
+  RenderWindow.Y := 50;
+  RenderWindow.Width := 280;
+  RenderWindow.OriginalWidth := 280;
   RenderWindow.Height := 120;
   RenderWindow.Alpha := 0.0;
   RenderWindow.TargetAlpha := 1.0;
+  RenderWindow.OriginalX := 50;
+  RenderWindow.OriginalY := 50;
+  RenderWindow.Scale := 0.3;
+  RenderWindow.TargetScale := 1.0;
+  RenderWindow.TransformProgress := 0.0;
+  RenderWindow.TargetTransformProgress := 1.0;
+  RenderWindow.Rotation := 0.0;
+  RenderWindow.TargetRotation := 0.0;
+  RenderWindow.TranslateY := -200.0;
+  RenderWindow.TargetTranslateY := 0.0;
+  RenderWindow.DragWidthExpansion := 0.0;
+  RenderWindow.TargetDragWidthExpansion := 0.0;
+  RenderWindow.ShadowIntensity := 0.8;
+  RenderWindow.TargetShadowIntensity := 0.8;
+  RenderWindow.SpawnDelay := 0.0;
   
-  WorldWindow.Title := 'WORLD';
-  WorldWindow.X := 310;
-  WorldWindow.Y := 40;
-  WorldWindow.Width := 240;
+  WorldWindow.Title := GetText('WorldTitle');
+  WorldWindow.X := 350;
+  WorldWindow.Y := 50;
+  WorldWindow.Width := 280;
+  WorldWindow.OriginalWidth := 280;
   WorldWindow.Height := 100;
   WorldWindow.Alpha := 0.0;
   WorldWindow.TargetAlpha := 1.0;
+  WorldWindow.OriginalX := 350;
+  WorldWindow.OriginalY := 50;
+  WorldWindow.Scale := 0.3;
+  WorldWindow.TargetScale := 1.0;
+  WorldWindow.TransformProgress := 0.0;
+  WorldWindow.TargetTransformProgress := 1.0;
+  WorldWindow.Rotation := 0.0;
+  WorldWindow.TargetRotation := 0.0;
+  WorldWindow.TranslateY := -150.0;
+  WorldWindow.TargetTranslateY := 0.0;
+  WorldWindow.DragWidthExpansion := 0.0;
+  WorldWindow.TargetDragWidthExpansion := 0.0;
+  WorldWindow.ShadowIntensity := 0.8;
+  WorldWindow.TargetShadowIntensity := 0.8;
+  WorldWindow.SpawnDelay := 0.1;
   
-  LocomotiveWindow.Title := 'LOCOMOTIVE';
-  LocomotiveWindow.X := 570;
-  LocomotiveWindow.Y := 40;
-  LocomotiveWindow.Width := 240;
+  LocomotiveWindow.Title := GetText('LocomotiveTitle');
+  LocomotiveWindow.X := 650;
+  LocomotiveWindow.Y := 50;
+  LocomotiveWindow.Width := 280;
+  LocomotiveWindow.OriginalWidth := 280;
   LocomotiveWindow.Height := 100;
   LocomotiveWindow.Alpha := 0.0;
   LocomotiveWindow.TargetAlpha := 1.0;
+  LocomotiveWindow.OriginalX := 650;
+  LocomotiveWindow.OriginalY := 50;
+  LocomotiveWindow.Scale := 0.3;
+  LocomotiveWindow.TargetScale := 1.0;
+  LocomotiveWindow.TransformProgress := 0.0;
+  LocomotiveWindow.TargetTransformProgress := 1.0;
+  LocomotiveWindow.Rotation := 0.0;
+  LocomotiveWindow.TargetRotation := 0.0;
+  LocomotiveWindow.TranslateY := -100.0;
+  LocomotiveWindow.TargetTranslateY := 0.0;
+  LocomotiveWindow.DragWidthExpansion := 0.0;
+  LocomotiveWindow.TargetDragWidthExpansion := 0.0;
+  LocomotiveWindow.ShadowIntensity := 0.8;
+  LocomotiveWindow.TargetShadowIntensity := 0.8;
+  LocomotiveWindow.SpawnDelay := 0.2;
   
-  // === ИСПРАВЛЯЕМ ПОЗИЦИЮ ОКНА ДОНАТОВ ===
-  DonateWindow.Title := 'ДОНАТЫ';
-  DonateWindow.X := 830; // Сдвигаем правее, чтобы не пересекалось с другими окнами
-  DonateWindow.Y := 40;  // Ставим на уровень остальных окон
-  DonateWindow.Width := 280;
-  DonateWindow.Height := 350;
-  DonateWindow.Alpha := 0.0;
-  DonateWindow.TargetAlpha := 1.0;
-  
-  // Загружаем донаты при инициализации
-  LoadDonations;
-  LastDonationUpdate := GetTickCount;
+  MenuWindow.Title := GetText('MenuTitle');
+  MenuWindow.X := 950;
+  MenuWindow.Y := 50;
+  MenuWindow.Width := 320;
+  MenuWindow.OriginalWidth := 320;
+  MenuWindow.Height := 200;
+  MenuWindow.Alpha := 0.0;
+  MenuWindow.TargetAlpha := 1.0;
+  MenuWindow.OriginalX := 950;
+  MenuWindow.OriginalY := 50;
+  MenuWindow.Scale := 0.3;
+  MenuWindow.TargetScale := 1.0;
+  MenuWindow.TransformProgress := 0.0;
+  MenuWindow.TargetTransformProgress := 1.0;
+  MenuWindow.Rotation := 0.0;
+  MenuWindow.TargetRotation := 0.0;
+  MenuWindow.TranslateY := -250.0;
+  MenuWindow.TargetTranslateY := 0.0;
+  MenuWindow.DragWidthExpansion := 0.0;
+  MenuWindow.TargetDragWidthExpansion := 0.0;
+  MenuWindow.ShadowIntensity := 0.8;
+  MenuWindow.TargetShadowIntensity := 0.8;
+  MenuWindow.SpawnDelay := 0.3;
 end;
 
-procedure DrawExpandButton(X, Y: Integer; Expanded: Boolean; Alpha: Integer);
+// Современная кнопка развертывания
+procedure DrawModernExpandButton(X, Y: Integer; Expanded: Boolean; Alpha: Integer; HoverProgress: Single = 0.0);
 var
   CenterX, CenterY: Integer;
+  ButtonColor: Integer;
+  IconColor: Integer;
+  Size: Integer;
 begin
   CenterX := X + BUTTON_SIZE div 2;
   CenterY := Y + BUTTON_SIZE div 2;
+  Size := Round(10 + HoverProgress * 2);
   
-  DrawCircle2D_Fill(CenterX, CenterY, 8, $404040, Alpha);
-  DrawCircle2D(CenterX, CenterY, 8, $CCCCCC, Alpha div 2);
+  ButtonColor := LerpColor(COLOR_SURFACE_VARIANT, COLOR_PRIMARY, HoverProgress);
+  IconColor := LerpColor(COLOR_ON_SURFACE, COLOR_ON_PRIMARY, HoverProgress);
   
-  DrawLine2D(CenterX - 4, CenterY, CenterX + 4, CenterY, $CCCCCC, Alpha, 2.0);
+  // Фон кнопки
+  DrawCircle2D_Fill(CenterX, CenterY, Size, ButtonColor, Alpha);
+  DrawCircle2D(CenterX, CenterY, Size, COLOR_BORDER_LIGHT, Alpha div 3);
+  
+  // Иконка
+  DrawLine2D(CenterX - 5, CenterY, CenterX + 5, CenterY, IconColor, Alpha, 2.0);
   if not Expanded then
-    DrawLine2D(CenterX, CenterY - 4, CenterX, CenterY + 4, $CCCCCC, Alpha, 2.0);
+    DrawLine2D(CenterX, CenterY - 5, CenterX, CenterY + 5, IconColor, Alpha, 2.0);
 end;
 
-procedure DrawCheckbox(X, Y: Integer; Text: string; Checked: Boolean; Alpha: Integer);
+// Современный чекбокс
+procedure DrawModernCheckbox(X, Y: Integer; Text: string; Checked: Boolean; Alpha: Integer; HoverProgress: Single = 0.0);
 var
-  BgColor, TextColor: Integer;
+  BgColor, BorderColor, TextColor, CheckColor: Integer;
 begin
   if Checked then
   begin
-    BgColor := $0066FF;
-    TextColor := $FFFFFF;
+    BgColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, HoverProgress);
+    BorderColor := BgColor;
+    TextColor := COLOR_ON_SURFACE;
+    CheckColor := COLOR_ON_PRIMARY;
   end
   else
   begin
-    BgColor := $2A2A2A;
-    TextColor := $BBBBBB;
+    BgColor := LerpColor(COLOR_SURFACE, COLOR_SURFACE_VARIANT, HoverProgress);
+    BorderColor := LerpColor(COLOR_BORDER, COLOR_BORDER_LIGHT, HoverProgress);
+    TextColor := COLOR_ON_SURFACE;
+    CheckColor := COLOR_ON_PRIMARY;
   end;
   
-  DrawRectangle2D(X, Y, CHECKBOX_SIZE, CHECKBOX_SIZE, BgColor, Alpha, True);
-  DrawRectangle2D(X, Y, CHECKBOX_SIZE, CHECKBOX_SIZE, $444444, Alpha, False);
+  // Фон чекбокса
+  DrawStyledRect(X, Y, CHECKBOX_SIZE, CHECKBOX_SIZE, BgColor, Alpha, True, BorderColor);
   
+  // Галочка
   if Checked then
   begin
-    DrawLine2D(X + 4, Y + 8, X + 7, Y + 11, $FFFFFF, Alpha, 2.0);
-    DrawLine2D(X + 7, Y + 11, X + 12, Y + 5, $FFFFFF, Alpha, 2.0);
+    DrawLine2D(X + 4, Y + 9, X + 7, Y + 12, CheckColor, Alpha, 2.0);
+    DrawLine2D(X + 7, Y + 12, X + 13, Y + 6, CheckColor, Alpha, 2.0);
   end;
   
-  DrawText(X + CHECKBOX_SIZE + 8, Y - 1, Text, TextColor, Alpha);
+  // Текст
+  DrawModernText(X + CHECKBOX_SIZE + 10, Y - 1, Text, TextColor, Alpha, 0.75);
 end;
 
-procedure DrawSlider(X, Y: Integer; var Slider: TSlider; Text: string; Alpha: Integer);
+// Современный слайдер
+procedure DrawModernSlider(X, Y: Integer; var Slider: TSlider; Text: string; Alpha: Integer; WinScale: Single = 1.0);
 var
   Progress: Single;
   SliderX: Integer;
   ValueText: string;
+  TrackColor, ActiveColor, ThumbColor: Integer;
+  ThumbSize: Integer;
+  ScaledWidth: Integer;
 begin
   if Alpha <= 0 then Exit;
   
+  ScaledWidth := Round(SLIDER_WIDTH * WinScale);
   Progress := (Slider.Value - Slider.MinValue) / (Slider.MaxValue - Slider.MinValue);
-  SliderX := X + Round(Progress * SLIDER_WIDTH);
+  SliderX := X + Round(Progress * ScaledWidth);
   
   ValueText := FormatValue(Slider.Value);
   
-  // Поднял текст ещё выше и уменьшил размер шрифта в 2 раза
-  DrawText2D(0, X, Y - 20, Text + ': ' + ValueText, $FFFFFF, Alpha, 0.55);
+  // Цвета в зависимости от состояния
+  TrackColor := COLOR_SURFACE_VARIANT;
+  ActiveColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, Slider.HoverProgress);
+  ThumbColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, Slider.HoverProgress);
+  ThumbSize := Round(8 + Slider.HoverProgress * 3);
   
-  // Трек
-  DrawRectangle2D(X, Y + 8, SLIDER_WIDTH, 6, $1A1A1A, Alpha, True);
+  // Заголовок и значение
+  DrawModernText(X, Y - 22, Text + ': ' + ValueText, COLOR_ON_SURFACE, Alpha, 0.7);
+  
+  // Трек слайдера
+  DrawStyledRect(X, Y + 8, ScaledWidth, 6, TrackColor, Alpha, True, COLOR_BORDER);
   
   // Активная часть
   if Progress > 0 then
-    DrawRectangle2D(X, Y + 8, Round(Progress * SLIDER_WIDTH), 6, $0066FF, Alpha, True);
+    DrawStyledRect(X, Y + 8, Round(Progress * ScaledWidth), 6, ActiveColor, Alpha, True, ActiveColor);
   
-  // Ползунок с увеличенной областью клика
-  DrawCircle2D_Fill(SliderX, Y + 11, 12, $0088FF, Alpha);
-  DrawCircle2D_Fill(SliderX, Y + 11, 8, $00AAFF, Alpha);
+  // Ползунок
+  DrawCircle2D_Fill(SliderX, Y + 11, ThumbSize + 2, COLOR_SURFACE, Alpha);
+  DrawCircle2D_Fill(SliderX, Y + 11, ThumbSize, ThumbColor, Alpha);
+  DrawCircle2D(SliderX, Y + 11, ThumbSize + 1, COLOR_BORDER_LIGHT, Alpha div 3);
 end;
 
-procedure DrawToggle(X, Y: Integer; Text: string; Enabled: Boolean; Alpha: Integer; HasExpandButton: Boolean = False; ExpandButtonX: Integer = 0; Expanded: Boolean = False);
+// Современная кнопка переключения
+procedure DrawModernToggle(X, Y: Integer; Text: string; Enabled: Boolean; Alpha: Integer; HasExpandButton: Boolean = False; ExpandButtonX: Integer = 0; Expanded: Boolean = False; HoverProgress: Single = 0.0);
 var
-  BgColor, TextColor: Integer;
+  BgColor, BorderColor, TextColor: Integer;
+  TextX: Integer;
 begin
   if Enabled then
   begin
-    BgColor := $0066FF;
-    TextColor := $FFFFFF;
+    BgColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, HoverProgress);
+    BorderColor := BgColor;
+    TextColor := COLOR_ON_PRIMARY;
   end
   else
   begin
-    BgColor := $2A2A2A;
-    TextColor := $BBBBBB;
+    BgColor := LerpColor(COLOR_SURFACE, COLOR_SURFACE_VARIANT, HoverProgress);
+    BorderColor := LerpColor(COLOR_BORDER, COLOR_BORDER_LIGHT, HoverProgress);
+    TextColor := LerpColor(COLOR_ON_SURFACE, COLOR_ON_SURFACE, HoverProgress);
   end;
   
-  DrawRectangle2D(X, Y, 220, ITEM_HEIGHT, BgColor, Alpha, True);
-  DrawRectangle2D(X, Y, 220, ITEM_HEIGHT, $444444, Alpha, False);
+  // Фон кнопки
+  DrawStyledRect(X, Y, 240, ITEM_HEIGHT, BgColor, Alpha, True, BorderColor);
   
-  DrawText(X + 12, Y, Text, TextColor, Alpha);
+  // Текст
+  TextX := X + 16;
+  DrawModernText(TextX, Y + 6, Text, TextColor, Alpha, 0.8);
   
+  // Кнопка развертывания
   if HasExpandButton then
-    DrawExpandButton(ExpandButtonX, Y + 4, Expanded, Alpha);
+    DrawModernExpandButton(ExpandButtonX, Y + 6, Expanded, Alpha, HoverProgress);
 end;
 
-// === НОВАЯ ФУНКЦИЯ: Отрисовка кнопки ===
-procedure DrawButton(X, Y, Width, Height: Integer; Text: string; Alpha: Integer; Highlighted: Boolean = False);
+// Современная кнопка языка
+procedure DrawModernLanguageButton(X, Y, Width, Height: Integer; Text: string; Alpha: Integer; Selected: Boolean = False; HoverProgress: Single = 0.0);
 var
-  BgColor, TextColor: Integer;
+  BgColor, BorderColor, TextColor: Integer;
   TextWidth, TextX: Integer;
 begin
-  if Highlighted then
+  if Selected then
   begin
-    BgColor := $0088FF;
-    TextColor := $FFFFFF;
+    BgColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, HoverProgress);
+    BorderColor := BgColor;
+    TextColor := COLOR_ON_PRIMARY;
   end
   else
   begin
-    BgColor := $404040;
-    TextColor := $CCCCCC;
+    BgColor := LerpColor(COLOR_SURFACE, COLOR_SURFACE_VARIANT, HoverProgress);
+    BorderColor := LerpColor(COLOR_BORDER, COLOR_BORDER_LIGHT, HoverProgress);
+    TextColor := COLOR_ON_SURFACE;
   end;
   
-  DrawRectangle2D(X, Y, Width, Height, BgColor, Alpha, True);
-  DrawRectangle2D(X, Y, Width, Height, $666666, Alpha, False);
+  // Фон кнопки
+  DrawStyledRect(X, Y, Width, Height, BgColor, Alpha, True, BorderColor);
   
-  // Правильно центрируем текст по ширине
-  TextWidth := Length(Text) * 7; // примерно 7 пикселей на символ
+  // Центрированный текст
+  TextWidth := Length(Text) * 8;
   TextX := X + (Width - TextWidth) div 2;
   
-  DrawText(TextX - 30, Y + (Height - 20) div 2, Text, TextColor, Alpha);
+  DrawModernText(TextX, Y + (Height - 20) div 2, Text, TextColor, Alpha, 0.75);
 end;
 
-// === НОВАЯ ФУНКЦИЯ: Разбивка текста на строки ===
-function WrapText(const Text: string; MaxWidth: Integer): TStringList;
-var
-  CurrentLine: string;
-  i: Integer;
-  CurrentChar: Char;
-  WordBuffer: string;
-begin
-  Result := TStringList.Create;
-  CurrentLine := '';
-  WordBuffer := '';
-  
-  for i := 1 to Length(Text) do
-  begin
-    CurrentChar := Text[i];
-    
-    if CurrentChar = ' ' then
-    begin
-      // Проверяем, поместится ли слово в текущую строку
-      if Length(CurrentLine + ' ' + WordBuffer) <= MaxWidth then
-      begin
-        if CurrentLine = '' then
-          CurrentLine := WordBuffer
-        else
-          CurrentLine := CurrentLine + ' ' + WordBuffer;
-      end
-      else
-      begin
-        // Переносим на новую строку
-        if CurrentLine <> '' then
-          Result.Add(CurrentLine);
-        CurrentLine := WordBuffer;
-      end;
-      WordBuffer := '';
-    end
-    else
-    begin
-      WordBuffer := WordBuffer + CurrentChar;
-    end;
-  end;
-  
-  // Добавляем последнее слово
-  if WordBuffer <> '' then
-  begin
-    if Length(CurrentLine + ' ' + WordBuffer) <= MaxWidth then
-    begin
-      if CurrentLine = '' then
-        CurrentLine := WordBuffer
-      else
-        CurrentLine := CurrentLine + ' ' + WordBuffer;
-    end
-    else
-    begin
-      if CurrentLine <> '' then
-        Result.Add(CurrentLine);
-      CurrentLine := WordBuffer;
-    end;
-  end;
-  
-  // Добавляем последнюю строку
-  if CurrentLine <> '' then
-    Result.Add(CurrentLine);
-end;
-
-// === НОВАЯ ФУНКЦИЯ: Отрисовка элемента доната ===
-procedure DrawDonationItem(X, Y: Integer; const Donation: TDonation; Alpha: Integer);
-var
-  NameColor, AmountColor, MessageColor: Integer;
-  TextY, ItemHeight: Integer;
-  DisplayName: string;
-  MessageLines: TStringList;
-  i: Integer;
-begin
-  NameColor := $FFFFFF;
-  AmountColor := $00DD00;
-  MessageColor := $BBBBBB;
-  
-  // Вычисляем высоту элемента в зависимости от количества строк сообщения
-  ItemHeight := DONATION_ITEM_HEIGHT;
-  MessageLines := nil;
-  
-  if Donation.Message <> '' then
-  begin
-    MessageLines := WrapText(Donation.Message, 25); // ~32 символа на строку
-    // Ограничиваем максимальную высоту (не более 3 строк сообщения)
-    if MessageLines.Count > 3 then
-    begin
-      while MessageLines.Count > 3 do
-        MessageLines.Delete(MessageLines.Count - 1);
-      MessageLines[MessageLines.Count - 1] := MessageLines[MessageLines.Count - 1] + '...';
-    end;
-    ItemHeight := DONATION_ITEM_HEIGHT + (MessageLines.Count - 1) * 15; // добавляем по 15px на строку
-  end;
-  
-  // Фон элемента (динамическая высота)
-  DrawRectangle2D(X, Y, 250, ItemHeight, $252525, Alpha, True);
-  DrawRectangle2D(X, Y, 250, ItemHeight, $404040, Alpha, False);
-  
-  TextY := Y + 3;
-  
-  // Ограничиваем длину имени (максимум 18 символов)
-  DisplayName := Donation.Name;
-  if Length(DisplayName) > 18 then
-    DisplayName := Copy(DisplayName, 1, 15) + '...';
-  
-  // Имя донатера
-  DrawText(X + 8, TextY, DisplayName, NameColor, Alpha);
-  
-  // Сумма доната (справа)
-  DrawText(X + 190, TextY, Donation.Amount, AmountColor, Alpha);
-  
-  // Сообщение (если есть) - многострочное
-  if (MessageLines <> nil) and (MessageLines.Count > 0) then
-  begin
-    Inc(TextY, 18);
-    for i := 0 to MessageLines.Count - 1 do
-    begin
-      DrawText2D(0, X + 8, TextY + i * 15, MessageLines[i], MessageColor, Alpha, 0.7);
-    end;
-    MessageLines.Free;
-  end;
-end;
-
-// === НОВАЯ ФУНКЦИЯ: Отрисовка стрелок прокрутки ===
-procedure DrawScrollArrow(X, Y: Integer; IsUp: Boolean; Alpha: Integer);
-var
-  CenterX, CenterY: Integer;
-begin
-  CenterX := X + 12;
-  CenterY := Y + 10;
-  
-  DrawCircle2D_Fill(CenterX, CenterY, 10, $404040, Alpha);
-  DrawCircle2D(CenterX, CenterY, 10, $666666, Alpha);
-  
-  if IsUp then
-  begin
-    DrawLine2D(CenterX, CenterY - 4, CenterX - 4, CenterY + 2, $CCCCCC, Alpha, 2.0);
-    DrawLine2D(CenterX, CenterY - 4, CenterX + 4, CenterY + 2, $CCCCCC, Alpha, 2.0);
-  end
-  else
-  begin
-    DrawLine2D(CenterX, CenterY + 4, CenterX - 4, CenterY - 2, $CCCCCC, Alpha, 2.0);
-    DrawLine2D(CenterX, CenterY + 4, CenterX + 4, CenterY - 2, $CCCCCC, Alpha, 2.0);
-  end;
-end;
-
-procedure DrawWindow(var Win: TWindow; WindowType: Integer);
+// Главная функция отрисовки окна с transform эффектами
+procedure DrawTransformWindow(var Win: TWindow; WindowType: Integer);
 var
   Alpha: Integer;
   ContentY: Integer;
   SectionHeight: Integer;
   ExpandButtonX: Integer;
   TotalHeight: Integer;
-  i, VisibleCount, StartIndex: Integer;
+  ScaledWidth, ScaledHeight: Integer;
+  ScaledX, ScaledY: Integer;
+  OffsetX, OffsetY: Integer;
+  HeaderGradientStart, HeaderGradientEnd: Integer;
+  // Transform координаты
+  TransformX1, TransformY1, TransformX2, TransformY2: Integer;
+  TransformX3, TransformY3, TransformX4, TransformY4: Integer;
+  CenterX, CenterY: Integer;
 begin
   Alpha := Round(Win.Alpha * 255);
   if Alpha <= 0 then Exit;
   
-  // Вычисляем динамическую высоту окна в зависимости от типа
+  // === ПРИМЕНЯЕМ МАСШТАБИРОВАНИЕ + АНИМАЦИЮ РАСШИРЕНИЯ ПРИ ПЕРЕТАСКИВАНИИ ===
+  ScaledWidth := Round(Win.Width * Win.Scale) + Round(Win.DragWidthExpansion);
+  ScaledHeight := Round(Win.Height * Win.Scale);
+
+  // Центрирование масштабированного окна + расширение drag-эффекта по центру
+  OffsetX := (Win.Width - Round(Win.Width * Win.Scale)) div 2 - Round(Win.DragWidthExpansion / 2);
+  OffsetY := (Win.Height - ScaledHeight) div 2;
+
+  ScaledX := Win.X + OffsetX;
+  // TranslateY добавляет вертикальное смещение для анимации "влёта" сверху
+  ScaledY := Win.Y + OffsetY + Round(Win.TranslateY);
+  
+  // Вычисляем динамическую высоту окна
   TotalHeight := HEADER_HEIGHT + MARGIN * 3;
   
   case WindowType of
     0: // RENDER окно
     begin
-      TotalHeight := TotalHeight + ITEM_HEIGHT; // Freecam
+      TotalHeight := TotalHeight + ITEM_HEIGHT;
       if Settings.FreecamSection.AnimProgress > 0.01 then
-        TotalHeight := TotalHeight + Round(140 * Settings.FreecamSection.AnimProgress) + MARGIN;
+        TotalHeight := TotalHeight + Round(150 * Settings.FreecamSection.AnimProgress) + MARGIN;
       
-      TotalHeight := TotalHeight + ITEM_HEIGHT; // Main Camera
+      TotalHeight := TotalHeight + ITEM_HEIGHT;
       if Settings.MainCameraSection.AnimProgress > 0.01 then
-        TotalHeight := TotalHeight + Round(180 * Settings.MainCameraSection.AnimProgress) + MARGIN; // УВЕЛИЧЕНО СО 120 ДО 180
+        TotalHeight := TotalHeight + Round(200 * Settings.MainCameraSection.AnimProgress) + MARGIN;
     end;
     
     1: // WORLD окно
     begin
-      TotalHeight := TotalHeight + ITEM_HEIGHT; // Max Visible Distance
+      TotalHeight := TotalHeight + ITEM_HEIGHT;
       if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
-        TotalHeight := TotalHeight + Round(150 * Settings.MaxVisibleDistanceSection.AnimProgress) + MARGIN;
+        TotalHeight := TotalHeight + Round(180 * Settings.MaxVisibleDistanceSection.AnimProgress) + MARGIN;
       
-      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN; // New Sky
+      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;
     end;
     
     2: // LOCOMOTIVE окно
     begin
-      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN; // Прямо "Исправления КЛУБ"
+      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;
     end;
     
-    3: // DONATE окно
+    3: // MENU окно
     begin
-      TotalHeight := 350; // Фиксированная высота для окна донатов
+      TotalHeight := 220;
     end;
   end;
   
-  // Обновляем высоту окна
   Win.Height := TotalHeight;
+  ScaledHeight := Round(Win.Height * Win.Scale);
+  OffsetY := (Win.Height - ScaledHeight) div 2;
+  ScaledY := Win.Y + OffsetY + Round(Win.TranslateY);
   
-  // Тень
-  DrawRectangle2D(Win.X + 4, Win.Y + 4, Win.Width, Win.Height, $000000, Alpha div 4, True);
+  // Центр для трансформации
+  CenterX := ScaledX + ScaledWidth div 2;
+  CenterY := ScaledY + ScaledHeight div 2;
   
-  // Заголовок
-  DrawRectangle2D(Win.X, Win.Y, Win.Width, HEADER_HEIGHT, $404080, Alpha, True);
-  DrawRectangle2D(Win.X, Win.Y, Win.Width, HEADER_HEIGHT, $6060A0, Alpha, False);
-  DrawText(Win.X + 12, Win.Y + 11, Win.Title, $FFFFFF, Alpha);
+  // Вычисляем углы прямоугольника с учетом трансформации
+  TransformX1 := ScaledX;
+  TransformY1 := ScaledY;
+  TransformX2 := ScaledX + ScaledWidth;
+  TransformY2 := ScaledY;
+  TransformX3 := ScaledX + ScaledWidth;
+  TransformY3 := ScaledY + ScaledHeight;
+  TransformX4 := ScaledX;
+  TransformY4 := ScaledY + ScaledHeight;
   
-  // Тело
-  DrawRectangle2D(Win.X, Win.Y + HEADER_HEIGHT, Win.Width, Win.Height - HEADER_HEIGHT, $2A2A2A, Alpha, True);
-  DrawRectangle2D(Win.X, Win.Y + HEADER_HEIGHT, Win.Width, Win.Height - HEADER_HEIGHT, $404040, Alpha, False);
+  // Применяем трансформацию к углам
+  TransformCoords(TransformX1, TransformY1, CenterX, CenterY, 1.0, Win.Rotation);
+  TransformCoords(TransformX2, TransformY2, CenterX, CenterY, 1.0, Win.Rotation);
+  TransformCoords(TransformX3, TransformY3, CenterX, CenterY, 1.0, Win.Rotation);
+  TransformCoords(TransformX4, TransformY4, CenterX, CenterY, 1.0, Win.Rotation);
   
-  ContentY := Win.Y + HEADER_HEIGHT + MARGIN;
+  // === СОВРЕМЕННАЯ ТЕНЬ ===
+  DrawShadow(ScaledX, ScaledY, ScaledWidth, ScaledHeight, Round(Win.ShadowIntensity * Alpha), Win.ShadowIntensity);
+  
+//  // === ГРАДИЕНТНЫЙ ЗАГОЛОВОК ===
+  HeaderGradientStart := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, 0.3);
+  HeaderGradientEnd := LerpColor(COLOR_PRIMARY_VARIANT, COLOR_PRIMARY, 0.2);
+  
+  // Основной фон заголовка
+  DrawStyledRect(ScaledX, ScaledY, ScaledWidth, Round(HEADER_HEIGHT * Win.Scale), HeaderGradientStart, Alpha, True, COLOR_BORDER_LIGHT);
+  
+  // Имитация градиента через несколько слоев
+  //DrawStyledRect(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale) - 8, ScaledWidth, 8, HeaderGradientEnd, Alpha div 2, True, 0);
+
+  // Текст заголовка
+  DrawModernText(ScaledX + Round(16 * Win.Scale), ScaledY + Round(12 * Win.Scale), Win.Title, COLOR_ON_PRIMARY, Alpha, 0.9);
+  
+  // === ТЕЛО ОКНА ===
+  DrawStyledRect(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale), ScaledWidth, ScaledHeight - Round(HEADER_HEIGHT * Win.Scale), COLOR_BACKGROUND, Alpha, True, COLOR_BORDER);
+  
+  ContentY := ScaledY + Round(HEADER_HEIGHT * Win.Scale) + Round(MARGIN * Win.Scale);
   
   case WindowType of
     0: // RENDER окно
     begin
       // Freecam
-      ExpandButtonX := Win.X + 200;
-      DrawToggle(Win.X + MARGIN, ContentY, 'Свободная Камера', Settings.Freecam, Alpha, True, ExpandButtonX, Settings.FreecamSection.Expanded);
-      Inc(ContentY, ITEM_HEIGHT + MARGIN);
+      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FreeCameraText'), Settings.Freecam, Alpha, True, ExpandButtonX, Settings.FreecamSection.Expanded, Settings.FreecamSection.AnimProgress);
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
       // Freecam секция
       if Settings.FreecamSection.AnimProgress > 0.01 then
       begin
-        SectionHeight := Round(140 * Settings.FreecamSection.AnimProgress);
-        DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $202020, Alpha, True);
-        DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $353535, Alpha, False);
+        SectionHeight := Round(150 * Settings.FreecamSection.AnimProgress * Win.Scale);
         
-        if SectionHeight > 30 then
+        // Фон секции
+        DrawStyledRect(ScaledX + Round((MARGIN + 12) * Win.Scale), ContentY, Round(240 * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+        
+        if SectionHeight > Round(40 * Win.Scale) then
         begin
-          DrawSlider(Win.X + MARGIN + 20, ContentY + 20, Settings.BasespeedSlider, 'Базовая скорость', Alpha);
-          DrawSlider(Win.X + MARGIN + 20, ContentY + 60, Settings.FastspeedSlider, 'Скорость с Shift', Alpha);
+          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.BasespeedSlider, GetText('BaseSpeedText'), Alpha, Win.Scale);
+          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(75 * Win.Scale), Settings.FastspeedSlider, GetText('FastSpeedText'), Alpha, Win.Scale);
         end;
         
-        Inc(ContentY, SectionHeight + MARGIN);
+        Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
       
       // Main Camera
-      ExpandButtonX := Win.X + 200;
-      DrawToggle(Win.X + MARGIN, ContentY, 'Основная Камера', Settings.MainCamera, Alpha, True, ExpandButtonX, Settings.MainCameraSection.Expanded);
-      Inc(ContentY, ITEM_HEIGHT + MARGIN);
+      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MainCameraText'), Settings.MainCamera, Alpha, True, ExpandButtonX, Settings.MainCameraSection.Expanded, Settings.MainCameraSection.AnimProgress);
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
-      // Main Camera секция (УВЕЛИЧЕНА СО 120 ДО 180)
+      // Main Camera секция
       if Settings.MainCameraSection.AnimProgress > 0.01 then
       begin
-        SectionHeight := Round(180 * Settings.MainCameraSection.AnimProgress);
-        DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $202020, Alpha, True);
-        DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $353535, Alpha, False);
+        SectionHeight := Round(200 * Settings.MainCameraSection.AnimProgress * Win.Scale);
         
-        if SectionHeight > 30 then
-          DrawSlider(Win.X + MARGIN + 20, ContentY + 20, Settings.StepForwardSlider, 'Шаг вперёд', Alpha);
+        // Фон секции
+        DrawStyledRect(ScaledX + Round((MARGIN + 12) * Win.Scale), ContentY, Round(240 * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
         
-        // НОВЫЕ ЭЛЕМЕНТЫ
-        if SectionHeight > 60 then
-          DrawCheckbox(Win.X + MARGIN + 20, ContentY + 50, 'Новый Zoom', Settings.NewViewAngle, Alpha);
+        if SectionHeight > Round(40 * Win.Scale) then
+          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.StepForwardSlider, GetText('StepForwardText'), Alpha, Win.Scale);
         
-        if (SectionHeight > 90) and Settings.NewViewAngle then
-          DrawSlider(Win.X + MARGIN + 20, ContentY + 80, Settings.ViewAngleSlider, 'Значение', Alpha);
+        if SectionHeight > Round(70 * Win.Scale) then
+          DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(60 * Win.Scale), GetText('NewZoomText'), Settings.NewViewAngle, Alpha);
         
-        // ДОБАВЛЯЕМ ЧУВСТВИТЕЛЬНОСТЬ КАМЕРЫ
-        if SectionHeight > 120 then
-          DrawCheckbox(Win.X + MARGIN + 20, ContentY + 110, 'Чувствительность', Settings.CameraSensitivity, Alpha);
+        if (SectionHeight > Round(110 * Win.Scale)) and Settings.NewViewAngle then
+          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(95 * Win.Scale), Settings.ViewAngleSlider, GetText('ValueText'), Alpha, Win.Scale);
         
-        if (SectionHeight > 150) and Settings.CameraSensitivity then
-          DrawSlider(Win.X + MARGIN + 20, ContentY + 140, Settings.CameraSensitivitySlider, 'Значение', Alpha);
+        if SectionHeight > Round(140 * Win.Scale) then
+          DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(130 * Win.Scale), GetText('SensitivityText'), Settings.CameraSensitivity, Alpha);
         
-        Inc(ContentY, SectionHeight + MARGIN);
+        if (SectionHeight > Round(170 * Win.Scale)) and Settings.CameraSensitivity then
+          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(165 * Win.Scale), Settings.CameraSensitivitySlider, GetText('ValueText'), Alpha, Win.Scale);
+        
+        Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
-      
-
     end;
     
     1: // WORLD окно
     begin
       // Max Visible Distance
-      ExpandButtonX := Win.X + 200;
-      DrawToggle(Win.X + MARGIN, ContentY, 'Макс. дальность', Settings.MaxVisibleDistance, Alpha, True, ExpandButtonX, Settings.MaxVisibleDistanceSection.Expanded);
-      Inc(ContentY, ITEM_HEIGHT + MARGIN);
+      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MaxDistanceText'), Settings.MaxVisibleDistance, Alpha, True, ExpandButtonX, Settings.MaxVisibleDistanceSection.Expanded, Settings.MaxVisibleDistanceSection.AnimProgress);
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
       // Max Visible Distance секция
       if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
       begin
-        SectionHeight := Round(150 * Settings.MaxVisibleDistanceSection.AnimProgress);
-        DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $202020, Alpha, True);
-        DrawRectangle2D(Win.X + MARGIN + 10, ContentY, 210, SectionHeight, $353535, Alpha, False);
+        SectionHeight := Round(180 * Settings.MaxVisibleDistanceSection.AnimProgress * Win.Scale);
         
-        if SectionHeight > 30 then
+        // Фон секции
+        DrawStyledRect(ScaledX + Round((MARGIN + 12) * Win.Scale), ContentY, Round(240 * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+        
+        if SectionHeight > Round(40 * Win.Scale) then
         begin
-          DrawSlider(Win.X + MARGIN + 20, ContentY + 20, Settings.MaxVisibleDistanceSlider, 'Дальность (м.)', Alpha);
+          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.MaxVisibleDistanceSlider, GetText('DistanceText'), Alpha, Win.Scale);
           
-          if SectionHeight > 60 then
+          if SectionHeight > Round(70 * Win.Scale) then
           begin
-            DrawCheckbox(Win.X + MARGIN + 20, ContentY + 50, 'Провода', Settings.ShowWires, Alpha);
-            DrawCheckbox(Win.X + MARGIN + 20, ContentY + 75, 'Дальние модели', Settings.ShowDistantModels, Alpha);
+            DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(60 * Win.Scale), GetText('WiresText'), Settings.ShowWires, Alpha);
+            DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(90 * Win.Scale), GetText('DistantModelsText'), Settings.ShowDistantModels, Alpha);
           end;
-          if SectionHeight > 100 then
-            DrawCheckbox(Win.X + MARGIN + 20, ContentY + 100, 'Светофоры', Settings.ShowTrafficLights, Alpha);
+          if SectionHeight > Round(120 * Win.Scale) then
+            DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(120 * Win.Scale), GetText('TrafficLightsText'), Settings.ShowTrafficLights, Alpha);
         end;
         
-        Inc(ContentY, SectionHeight + MARGIN);
+        Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
       
       // New Sky
-      DrawToggle(Win.X + MARGIN, ContentY, 'Новая логика неба', Settings.NewSky, Alpha);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('NewSkyText'), Settings.NewSky, Alpha);
     end;
     
     2: // LOCOMOTIVE окно
     begin
-      // ПРЯМО "Исправления КЛУБ" без секции
-      DrawToggle(Win.X + MARGIN, ContentY, 'Исправления БИЛ-В', Settings.NewClubPositions, Alpha);
+      // Исправления КЛУБ
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('ClubFixesText'), Settings.NewClubPositions, Alpha);
     end;
     
-    3: // DONATE окно
+    3: // MENU окно
     begin
-      // Статус загрузки
-      if not DonationsLoaded then
-      begin
-        DrawText(Win.X + MARGIN + 20, ContentY + 10, 'Загрузка донатов...', $FFFF00, Alpha);
-      end
-      else if DonationCount = 0 then
-      begin
-        DrawText(Win.X + MARGIN + 20, ContentY + 10, 'Список донатов пуст', $FF6666, Alpha);
-      end
-      else
-      begin
-        // Вычисляем количество видимых донатов (максимум 4 из-за переменной высоты)
-        VisibleCount := 4;
-        if DonationCount < VisibleCount then
-          VisibleCount := DonationCount;
-        
-        // Ограничиваем скролл
-        if DonationScrollOffset > DonationCount - VisibleCount then
-          DonationScrollOffset := DonationCount - VisibleCount;
-        if DonationScrollOffset < 0 then
-          DonationScrollOffset := 0;
-        
-        // Кнопки прокрутки (только если донатов больше 4)
-        if DonationCount > 4 then
-        begin
-          // Стрелка вверх
-          if DonationScrollOffset > 0 then
-            DrawScrollArrow(Win.X + Win.Width - 35, ContentY + 5, True, Alpha)
-          else
-            DrawScrollArrow(Win.X + Win.Width - 35, ContentY + 5, True, Alpha div 3);
-          
-          // Стрелка вниз  
-          if DonationScrollOffset < DonationCount - 4 then
-            DrawScrollArrow(Win.X + Win.Width - 35, ContentY + 200, False, Alpha)
-          else
-            DrawScrollArrow(Win.X + Win.Width - 35, ContentY + 200, False, Alpha div 3);
-        end;
-        
-        // Отображаем донаты с переменным интервалом
-        StartIndex := DonationScrollOffset;
-        ContentY := ContentY + 5; // Небольшой отступ сверху
-        for i := 0 to VisibleCount - 1 do
-        begin
-          if StartIndex + i < DonationCount then
-          begin
-            DrawDonationItem(Win.X + MARGIN, ContentY, Donations[StartIndex + i], Alpha);
-            
-            // Вычисляем высоту текущего элемента для следующей позиции
-            if Donations[StartIndex + i].Message <> '' then
-            begin
-              // Примерно считаем количество строк в сообщении (макс 3 строки)
-              ContentY := ContentY + DONATION_ITEM_HEIGHT + (Min(3, (Length(Donations[StartIndex + i].Message) div 32) + 1) - 1) * 15 + 8;
-            end
-            else
-            begin
-              ContentY := ContentY + DONATION_ITEM_HEIGHT + 8;
-            end;
-          end;
-        end;
-      end;
+      // Заголовок языка
+      DrawModernText(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(15 * Win.Scale), GetText('LanguageText'), COLOR_ON_SURFACE, Alpha, 0.85);
+      Inc(ContentY, Round(50 * Win.Scale));
       
-      // Кнопка "Поддержать проект" внизу окна
-      DrawButton(Win.X + MARGIN, Win.Y + Win.Height - 45, Win.Width - MARGIN * 2, 35, 
-                'Поддержать проект', Alpha);
+      // Кнопки языков в ряд
+      DrawModernLanguageButton(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale), GetText('RussianText'), Alpha, CurrentLanguage = langRussian);
+      DrawModernLanguageButton(ScaledX + Round((MARGIN + 100) * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale), GetText('UkrainianText'), Alpha, CurrentLanguage = langUkrainian);
+      DrawModernLanguageButton(ScaledX + Round((MARGIN + 200) * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale), GetText('EnglishText'), Alpha, CurrentLanguage = langEnglish);
     end;
   end;
 end;
 
-procedure DrawInfoBar;
+// Современная информационная панель
+procedure DrawModernInfoBar;
 var
   Alpha, BarWidth, BarHeight, BarX, BarY: Integer;
   InfoText: string;
+  GradientColor1, GradientColor2: Integer;
 begin
-  Alpha := Round(RenderWindow.Alpha * 255);
+  Alpha := Round(RenderWindow.Alpha * 200); // Немного прозрачнее чем окна
   if Alpha <= 0 then Exit;
   
-  InfoText := 'ZDS-Booster v1 | vk.com/raildriver';
-  BarWidth := 320;
-  BarHeight := 30;
-  BarX := 10;
-  BarY := InitResY - BarHeight - 10;
+  InfoText := GetText('InfoText');
+  BarWidth := 400;
+  BarHeight := 38;
+  BarX := 16;
+  BarY := InitResY - BarHeight - 16;
+  
+  GradientColor1 := COLOR_SURFACE;
+  GradientColor2 := COLOR_SURFACE_VARIANT;
   
   // Тень
-  DrawRectangle2D(BarX + 3, BarY + 3, BarWidth, BarHeight, $000000, Alpha div 4, True);
+  DrawShadow(BarX, BarY, BarWidth, BarHeight, Alpha div 2, 0.6);
   
-  // Основной прямоугольник в стиле заголовка окна
-  DrawRectangle2D(BarX, BarY, BarWidth, BarHeight, $404080, Alpha, True);
-  DrawRectangle2D(BarX, BarY, BarWidth, BarHeight, $6060A0, Alpha, False);
+  // Основной фон с градиентом
+  DrawStyledRect(BarX, BarY, BarWidth, BarHeight, GradientColor1, Alpha, True, COLOR_BORDER_LIGHT);
+  DrawStyledRect(BarX, BarY + BarHeight - 8, BarWidth, 8, GradientColor2, Alpha div 2, True, 0);
   
-  // Текст чуть повыше
-  DrawText(BarX + 8, BarY + 3, InfoText, $FFFFFF, Alpha);
+  // Иконка (простая точка)
+  DrawCircle2D_Fill(BarX + 16, BarY + BarHeight div 2, 5, COLOR_ACCENT, Alpha);
+  
+  // Текст
+  DrawModernText(BarX + 32, BarY + 9, InfoText, COLOR_ON_SURFACE, Alpha, 0.8);
 end;
 
 procedure DrawCheatMenu; stdcall;
 var
   BackgroundAlpha: Integer;
+  OverlayColor: Integer;
+  AnyWindowVisible: Boolean;
 begin
-  if not MenuVisible then Exit;
-  
-  // === ОПТИМИЗИРОВАННОЕ ЧТЕНИЕ КОНФИГА ДЛЯ СИНХРОНИЗАЦИИ ===
-  LoadConfigThrottled;
-  
+  // Продолжаем рисовать во время анимации закрытия, пока альфа окон не угаснет
+  AnyWindowVisible := (RenderWindow.Alpha > 0.01) or (WorldWindow.Alpha > 0.01) or
+                      (LocomotiveWindow.Alpha > 0.01) or (MenuWindow.Alpha > 0.01);
+  if (not MenuVisible) and (not AnyWindowVisible) then Exit;
+
+  if MenuVisible then
+    LoadConfigThrottled;
+
   UpdateAnimations;
 
   Begin2D;
   try
-    // Затемнение фона ТОЛЬКО если ГЛОБАЛЬНЫЙ слайдер больше 0
+    // Современное затемнение фона
     if Settings.BrightnessSlider.Value > 0 then
     begin
-      BackgroundAlpha := Round(Settings.BrightnessSlider.Value * RenderWindow.Alpha);
-      DrawRectangle2D(0, 0, InitResX, InitResY, $000011, BackgroundAlpha, True);
+      BackgroundAlpha := Round(Settings.BrightnessSlider.Value * RenderWindow.Alpha * 0.7);
+      OverlayColor := LerpColor(COLOR_BACKGROUND, COLOR_SHADOW, 0.3);
+      DrawRectangle2D(0, 0, InitResX, InitResY, OverlayColor, BackgroundAlpha, True);
     end;
     
-    DrawWindow(RenderWindow, 0);      // RENDER окно
-    DrawWindow(WorldWindow, 1);       // WORLD окно  
-    DrawWindow(LocomotiveWindow, 2);  // LOCOMOTIVE окно
-    DrawWindow(DonateWindow, 3);      // DONATE окно
-    DrawInfoBar;
+    // Отрисовка окон с transform эффектами
+    DrawTransformWindow(RenderWindow, 0);      // RENDER окно
+    DrawTransformWindow(WorldWindow, 1);       // WORLD окно  
+    DrawTransformWindow(LocomotiveWindow, 2);  // LOCOMOTIVE окно
+    DrawTransformWindow(MenuWindow, 3);        // MENU окно
+    DrawModernInfoBar;
   finally
     End2D;
   end;
 end;
 
-// === ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ПЕРЕТАСКИВАНИЯ СЛАЙДЕРА ===
+// Оптимизированная функция перетаскивания слайдера
 procedure HandleSliderDrag(X: Integer; var Slider: TSlider; SliderX: Integer);
 var
   NewProgress: Single;
@@ -2037,7 +2173,7 @@ var
 begin
   if not Slider.IsDragging then Exit;
   
-  OldValue := Slider.Value; // Сохраняем старое значение
+  OldValue := Slider.Value;
   
   NewProgress := (X - SliderX) / SLIDER_WIDTH;
   if NewProgress < 0 then NewProgress := 0;
@@ -2045,10 +2181,9 @@ begin
   
   Slider.Value := Slider.MinValue + NewProgress * (Slider.MaxValue - Slider.MinValue);
   
-  // Применяем настройки только если значение действительно изменилось
   if Abs(Slider.Value - OldValue) > 0.001 then
   begin
-    // === СИНХРОНИЗАЦИЯ С ГЛОБАЛЬНЫМИ ПЕРЕМЕННЫМИ ===
+    // Синхронизация с глобальными переменными
     if @Slider = @Settings.BasespeedSlider then
       MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
     if @Slider = @Settings.FastspeedSlider then
@@ -2061,73 +2196,133 @@ begin
       maxvisibledistance := Settings.MaxVisibleDistanceSlider.Value;
     if @Slider = @Settings.ViewAngleSlider then
     begin
-      // Записываем в память только если MainCamera И NewViewAngle включены
       if Settings.MainCamera and Settings.NewViewAngle then
         WriteFloatToMemory(ViewAngleSliderAddr, Settings.ViewAngleSlider.Value);
     end;
     if @Slider = @Settings.CameraSensitivitySlider then
     begin
-      // Записываем в память только если MainCamera И CameraSensitivity включены
       if Settings.MainCamera and Settings.CameraSensitivity then
         WriteFloatToMemory(CameraSensitivityAddr, Settings.CameraSensitivitySlider.Value);
     end;
 
-  // МГНОВЕННОЕ сохранение конфига для отзывчивости интерфейса
-  SaveConfig;
+    SaveConfig;
   
-  // ОТЛОЖЕННОЕ применение настроек к памяти (только для дальности)
-  // Слайдер яркости меню не нуждается в throttling, так как не записывает в память игры
-  if (@Slider <> @Settings.BrightnessSlider) then
-    ApplySettingsThrottled;
-end;
+    if (@Slider <> @Settings.BrightnessSlider) then
+      ApplySettingsThrottled;
+  end;
 end;
 
 procedure HandleMenuHover(X, Y: Integer); stdcall;
 begin
   if not MenuVisible then Exit;
   
-  // Обработка драггинга окон
+  // Обработка драггинга окон с анимацией "подхвата":
+  //   - расширение по ширине, усиление тени, лёгкий наклон и приподнятие (scale bump)
   if RenderWindow.IsDragging then
   begin
     RenderWindow.X := X - RenderWindow.DragOffsetX;
     RenderWindow.Y := Y - RenderWindow.DragOffsetY;
+    RenderWindow.OriginalX := RenderWindow.X;
+    RenderWindow.OriginalY := RenderWindow.Y;
+    RenderWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
+    RenderWindow.TargetShadowIntensity := 1.8;
+    RenderWindow.TargetRotation := 0.04;   // ~2.3° наклон
+    RenderWindow.TargetScale := 1.04;
+  end
+  else
+  begin
+    RenderWindow.TargetDragWidthExpansion := 0.0;
+    RenderWindow.TargetShadowIntensity := 0.8;
+    if MenuVisible then
+    begin
+      RenderWindow.TargetRotation := 0.0;
+      RenderWindow.TargetScale := 1.0;
+    end;
   end;
-  
+
   if WorldWindow.IsDragging then
   begin
     WorldWindow.X := X - WorldWindow.DragOffsetX;
     WorldWindow.Y := Y - WorldWindow.DragOffsetY;
+    WorldWindow.OriginalX := WorldWindow.X;
+    WorldWindow.OriginalY := WorldWindow.Y;
+    WorldWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
+    WorldWindow.TargetShadowIntensity := 1.8;
+    WorldWindow.TargetRotation := -0.04;  // в другую сторону — разнообразие
+    WorldWindow.TargetScale := 1.04;
+  end
+  else
+  begin
+    WorldWindow.TargetDragWidthExpansion := 0.0;
+    WorldWindow.TargetShadowIntensity := 0.8;
+    if MenuVisible then
+    begin
+      WorldWindow.TargetRotation := 0.0;
+      WorldWindow.TargetScale := 1.0;
+    end;
   end;
-  
+
   if LocomotiveWindow.IsDragging then
   begin
     LocomotiveWindow.X := X - LocomotiveWindow.DragOffsetX;
     LocomotiveWindow.Y := Y - LocomotiveWindow.DragOffsetY;
-  end;
-  
-  if DonateWindow.IsDragging then
+    LocomotiveWindow.OriginalX := LocomotiveWindow.X;
+    LocomotiveWindow.OriginalY := LocomotiveWindow.Y;
+    LocomotiveWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
+    LocomotiveWindow.TargetShadowIntensity := 1.8;
+    LocomotiveWindow.TargetRotation := 0.04;
+    LocomotiveWindow.TargetScale := 1.04;
+  end
+  else
   begin
-    DonateWindow.X := X - DonateWindow.DragOffsetX;
-    DonateWindow.Y := Y - DonateWindow.DragOffsetY;
+    LocomotiveWindow.TargetDragWidthExpansion := 0.0;
+    LocomotiveWindow.TargetShadowIntensity := 0.8;
+    if MenuVisible then
+    begin
+      LocomotiveWindow.TargetRotation := 0.0;
+      LocomotiveWindow.TargetScale := 1.0;
+    end;
+  end;
+
+  if MenuWindow.IsDragging then
+  begin
+    MenuWindow.X := X - MenuWindow.DragOffsetX;
+    MenuWindow.Y := Y - MenuWindow.DragOffsetY;
+    MenuWindow.OriginalX := MenuWindow.X;
+    MenuWindow.OriginalY := MenuWindow.Y;
+    MenuWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
+    MenuWindow.TargetShadowIntensity := 1.8;
+    MenuWindow.TargetRotation := -0.04;
+    MenuWindow.TargetScale := 1.04;
+  end
+  else
+  begin
+    MenuWindow.TargetDragWidthExpansion := 0.0;
+    MenuWindow.TargetShadowIntensity := 0.8;
+    if MenuVisible then
+    begin
+      MenuWindow.TargetRotation := 0.0;
+      MenuWindow.TargetScale := 1.0;
+    end;
   end;
   
   // Обработка драггинга слайдеров
-  if Settings.BrightnessSlider.IsDragging then // Слайдер яркости меню (глобальный)
-    HandleSliderDrag(X, Settings.BrightnessSlider, RenderWindow.X + MARGIN + 20);
+  if Settings.BrightnessSlider.IsDragging then
+    HandleSliderDrag(X, Settings.BrightnessSlider, RenderWindow.X + MARGIN + 24);
   if Settings.BasespeedSlider.IsDragging then
-    HandleSliderDrag(X, Settings.BasespeedSlider, RenderWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.BasespeedSlider, RenderWindow.X + MARGIN + 24);
   if Settings.FastspeedSlider.IsDragging then
-    HandleSliderDrag(X, Settings.FastspeedSlider, RenderWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.FastspeedSlider, RenderWindow.X + MARGIN + 24);
   if Settings.TurnspeedSlider.IsDragging then
-    HandleSliderDrag(X, Settings.TurnspeedSlider, RenderWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.TurnspeedSlider, RenderWindow.X + MARGIN + 24);
   if Settings.StepForwardSlider.IsDragging then
-    HandleSliderDrag(X, Settings.StepForwardSlider, RenderWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.StepForwardSlider, RenderWindow.X + MARGIN + 24);
   if Settings.MaxVisibleDistanceSlider.IsDragging then
-    HandleSliderDrag(X, Settings.MaxVisibleDistanceSlider, WorldWindow.X + MARGIN + 20);
-  if Settings.ViewAngleSlider.IsDragging then    // НОВЫЙ СЛАЙДЕР
-    HandleSliderDrag(X, Settings.ViewAngleSlider, RenderWindow.X + MARGIN + 20);
-  if Settings.CameraSensitivitySlider.IsDragging then // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ
-    HandleSliderDrag(X, Settings.CameraSensitivitySlider, RenderWindow.X + MARGIN + 20);
+    HandleSliderDrag(X, Settings.MaxVisibleDistanceSlider, WorldWindow.X + MARGIN + 24);
+  if Settings.ViewAngleSlider.IsDragging then
+    HandleSliderDrag(X, Settings.ViewAngleSlider, RenderWindow.X + MARGIN + 24);
+  if Settings.CameraSensitivitySlider.IsDragging then
+    HandleSliderDrag(X, Settings.CameraSensitivitySlider, RenderWindow.X + MARGIN + 24);
 end;
 
 procedure HandleMenuClick(X, Y: Integer); stdcall;
@@ -2138,48 +2333,47 @@ var
 begin
   if not MenuVisible then Exit;
   
-  if (RenderWindow.Alpha < 0.1) and (WorldWindow.Alpha < 0.1) and (LocomotiveWindow.Alpha < 0.1) and (DonateWindow.Alpha < 0.1) then Exit;
+  if (RenderWindow.Alpha < 0.1) and (WorldWindow.Alpha < 0.1) and (LocomotiveWindow.Alpha < 0.1) and (MenuWindow.Alpha < 0.1) then Exit;
   
-  // DONATE WINDOW
-  if DonateWindow.Alpha > 0.1 then
+  // MENU WINDOW
+  if MenuWindow.Alpha > 0.1 then
   begin
-    ContentY := DonateWindow.Y + HEADER_HEIGHT + MARGIN;
+    ContentY := MenuWindow.Y + HEADER_HEIGHT + MARGIN;
     
     // Заголовок для драггинга
-    if InRect(X, Y, DonateWindow.X, DonateWindow.Y, DonateWindow.Width, HEADER_HEIGHT) then
+    if InRect(X, Y, MenuWindow.X, MenuWindow.Y, MenuWindow.Width, HEADER_HEIGHT) then
     begin
-      DonateWindow.IsDragging := True;
-      DonateWindow.DragOffsetX := X - DonateWindow.X;
-      DonateWindow.DragOffsetY := Y - DonateWindow.Y;
+      MenuWindow.IsDragging := True;
+      MenuWindow.DragOffsetX := X - MenuWindow.X;
+      MenuWindow.DragOffsetY := Y - MenuWindow.Y;
       Exit;
     end;
     
-    // Кнопка "Поддержать проект"
-    if InRect(X, Y, DonateWindow.X + MARGIN, DonateWindow.Y + DonateWindow.Height - 45, 
-              DonateWindow.Width - MARGIN * 2, 35) then
+    // Кнопки языков
+    Inc(ContentY, 50); // Пропускаем заголовок
+    
+    // Русский
+    if InRect(X, Y, MenuWindow.X + MARGIN, ContentY, 90, 35) then
     begin
-      OpenDonationURL;
+      CurrentLanguage := langRussian;
+      SaveConfig;
       Exit;
     end;
     
-    // Стрелки прокрутки (только если донатов больше 4)
-    if DonationCount > 4 then
+    // Украинский
+    if InRect(X, Y, MenuWindow.X + MARGIN + 100, ContentY, 90, 35) then
     begin
-      // Стрелка вверх
-      if InRect(X, Y, DonateWindow.X + DonateWindow.Width - 35, ContentY + 5, 25, 20) then
-      begin
-        if DonationScrollOffset > 0 then
-          Dec(DonationScrollOffset);
-        Exit;
-      end;
-      
-      // Стрелка вниз
-      if InRect(X, Y, DonateWindow.X + DonateWindow.Width - 35, ContentY + 200, 25, 20) then
-      begin
-        if DonationScrollOffset < DonationCount - 4 then
-          Inc(DonationScrollOffset);
-        Exit;
-      end;
+      CurrentLanguage := langUkrainian;
+      SaveConfig;
+      Exit;
+    end;
+    
+    // Английский
+    if InRect(X, Y, MenuWindow.X + MARGIN + 200, ContentY, 90, 35) then
+    begin
+      CurrentLanguage := langEnglish;
+      SaveConfig;
+      Exit;
     end;
   end;
   
@@ -2198,7 +2392,7 @@ begin
     end;
     
     // Freecam expand button
-    if InRect(X, Y, RenderWindow.X + 200, ContentY + 4, BUTTON_SIZE, BUTTON_SIZE) then
+    if InRect(X, Y, RenderWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
       Settings.FreecamSection.Expanded := not Settings.FreecamSection.Expanded;
       Exit;
@@ -2211,13 +2405,8 @@ begin
       if Settings.Freecam then Settings.FreecamSection.Expanded := True;
   
       SaveConfig;
-  
-      // ИСПРАВЛЯЕМ: вызываем синхронизацию ПОСЛЕ сохранения
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
-  
-      // ДОБАВЛЯЕМ ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ
-      LoadConfigForced; // Принудительно перечитываем конфиг
-  
+      LoadConfigForced;
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
@@ -2226,15 +2415,15 @@ begin
     FreecamSectionY := ContentY;
     if Settings.FreecamSection.AnimProgress > 0.01 then
     begin
-      SectionHeight := Round(140 * Settings.FreecamSection.AnimProgress);
-      if SectionHeight > 30 then
+      SectionHeight := Round(150 * Settings.FreecamSection.AnimProgress);
+      if SectionHeight > 40 then
       begin
-        if InRect(X, Y, RenderWindow.X + MARGIN + 20, FreecamSectionY + 10, SLIDER_WIDTH + 25, 40) then
+        if InRect(X, Y, RenderWindow.X + MARGIN + 24, FreecamSectionY + 15, SLIDER_WIDTH + 30, 30) then
         begin
           Settings.BasespeedSlider.IsDragging := True;
           Exit;
         end;
-        if InRect(X, Y, RenderWindow.X + MARGIN + 20, FreecamSectionY + 50, SLIDER_WIDTH + 25, 40) then
+        if InRect(X, Y, RenderWindow.X + MARGIN + 24, FreecamSectionY + 65, SLIDER_WIDTH + 30, 30) then
         begin
           Settings.FastspeedSlider.IsDragging := True;
           Exit;
@@ -2244,7 +2433,7 @@ begin
     end;
     
     // Main Camera expand button
-    if InRect(X, Y, RenderWindow.X + 200, ContentY + 4, BUTTON_SIZE, BUTTON_SIZE) then
+    if InRect(X, Y, RenderWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
       Settings.MainCameraSection.Expanded := not Settings.MainCameraSection.Expanded;
       Exit;
@@ -2258,13 +2447,11 @@ begin
         Settings.MainCameraSection.Expanded := True
       else
       begin
-        // При выключении MainCamera - отключаем патч угла обзора и чувствительности
         if ViewAnglePatched then
           RemoveViewAnglePatch;
         RestoreCameraSensitivity;
       end;
       
-      // При включении MainCamera - проверяем нужно ли включить патчи
       if Settings.MainCamera then
       begin
         if Settings.NewViewAngle then
@@ -2279,25 +2466,24 @@ begin
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
     
-    // Main Camera section (УВЕЛИЧЕНА СО 120 ДО 180)
+    // Main Camera section
     MainCameraSectionY := ContentY;
     if Settings.MainCameraSection.AnimProgress > 0.01 then
     begin
-      SectionHeight := Round(180 * Settings.MainCameraSection.AnimProgress);
+      SectionHeight := Round(200 * Settings.MainCameraSection.AnimProgress);
       
       // Клик по слайдеру StepForward
-      if (SectionHeight > 30) and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 10, SLIDER_WIDTH + 25, 40) then
+      if (SectionHeight > 40) and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 15, SLIDER_WIDTH + 30, 30) then
       begin
         Settings.StepForwardSlider.IsDragging := True;
         Exit;
       end;
       
-      // НОВАЯ ГАЛОЧКА - клик по галочке "Новый угол обзора"
-      if (SectionHeight > 60) and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 50, 180, CHECKBOX_SIZE) then
+      // Клик по галочке "Новый угол обзора"
+      if (SectionHeight > 70) and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 60, 200, 20) then
       begin
         Settings.NewViewAngle := not Settings.NewViewAngle;
         
-        // Применяем или убираем патч в зависимости от состояния MainCamera И NewViewAngle
         if Settings.MainCamera and Settings.NewViewAngle then
           ApplyViewAnglePatch
         else
@@ -2307,19 +2493,18 @@ begin
         Exit;
       end;
       
-      // НОВЫЙ СЛАЙДЕР - клик по слайдеру угла обзора
-      if (SectionHeight > 90) and Settings.NewViewAngle and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 70, SLIDER_WIDTH + 25, 40) then
+      // Клик по слайдеру угла обзора
+      if (SectionHeight > 110) and Settings.NewViewAngle and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 85, SLIDER_WIDTH + 30, 30) then
       begin
         Settings.ViewAngleSlider.IsDragging := True;
         Exit;
       end;
       
-      // ГАЛОЧКА ЧУВСТВИТЕЛЬНОСТИ КАМЕРЫ
-      if (SectionHeight > 120) and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 110, 180, CHECKBOX_SIZE) then
+      // Галочка чувствительности камеры
+      if (SectionHeight > 140) and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 130, 200, 20) then
       begin
         Settings.CameraSensitivity := not Settings.CameraSensitivity;
         
-        // Применяем или убираем чувствительность в зависимости от состояния MainCamera И CameraSensitivity
         if Settings.MainCamera and Settings.CameraSensitivity then
           ApplyCameraSensitivity
         else
@@ -2329,8 +2514,8 @@ begin
         Exit;
       end;
       
-      // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ КАМЕРЫ
-      if (SectionHeight > 150) and Settings.CameraSensitivity and InRect(X, Y, RenderWindow.X + MARGIN + 20, MainCameraSectionY + 130, SLIDER_WIDTH + 25, 40) then
+      // Слайдер чувствительности камеры
+      if (SectionHeight > 170) and Settings.CameraSensitivity and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 155, SLIDER_WIDTH + 30, 30) then
       begin
         Settings.CameraSensitivitySlider.IsDragging := True;
         Exit;
@@ -2355,7 +2540,7 @@ begin
     end;
     
     // Max Visible Distance expand button
-    if InRect(X, Y, WorldWindow.X + 200, ContentY + 4, BUTTON_SIZE, BUTTON_SIZE) then
+    if InRect(X, Y, WorldWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
       Settings.MaxVisibleDistanceSection.Expanded := not Settings.MaxVisibleDistanceSection.Expanded;
       Exit;
@@ -2372,18 +2557,12 @@ begin
       end
       else
       begin
-        // При выключении восстанавливаем оригинальные значения
         RestoreOriginalDistanceValues;
       end;
       
-      // Сначала сохраняем, потом синхронизируем
       SaveConfig;
-      
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
-      
-      // Принудительно обновляем время последнего чтения конфига
       LastConfigReadTime := GetTickCount;
-      
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
@@ -2392,39 +2571,36 @@ begin
     MaxVisibleDistanceSectionY := ContentY;
     if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
     begin
-      SectionHeight := Round(150 * Settings.MaxVisibleDistanceSection.AnimProgress);
-      if SectionHeight > 30 then
+      SectionHeight := Round(180 * Settings.MaxVisibleDistanceSection.AnimProgress);
+      if SectionHeight > 40 then
       begin
         // Слайдер дальности
-        if InRect(X, Y, WorldWindow.X + MARGIN + 20, MaxVisibleDistanceSectionY + 10, SLIDER_WIDTH + 25, 40) then
+        if InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 15, SLIDER_WIDTH + 30, 30) then
         begin
           Settings.MaxVisibleDistanceSlider.IsDragging := True;
           Exit;
         end;
         
-        // Чекбоксы с исправленной логикой
-        if (SectionHeight > 60) and InRect(X, Y, WorldWindow.X + MARGIN + 20, MaxVisibleDistanceSectionY + 50, 180, CHECKBOX_SIZE) then
+        // Чекбоксы
+        if (SectionHeight > 70) and InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 60, 200, 20) then
         begin
           Settings.ShowWires := not Settings.ShowWires;
-          // Применяем настройки только если главный переключатель включен
           if Settings.MaxVisibleDistance then 
             ApplyDistanceSettings;
           SaveConfig;
           Exit;
         end;
-        if (SectionHeight > 85) and InRect(X, Y, WorldWindow.X + MARGIN + 20, MaxVisibleDistanceSectionY + 75, 180, CHECKBOX_SIZE) then
+        if (SectionHeight > 100) and InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 90, 200, 20) then
         begin
           Settings.ShowDistantModels := not Settings.ShowDistantModels;
-          // Применяем настройки только если главный переключатель включен
           if Settings.MaxVisibleDistance then 
             ApplyDistanceSettings;
           SaveConfig;
           Exit;
         end;
-        if (SectionHeight > 110) and InRect(X, Y, WorldWindow.X + MARGIN + 20, MaxVisibleDistanceSectionY + 100, 180, CHECKBOX_SIZE) then
+        if (SectionHeight > 130) and InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 120, 200, 20) then
         begin
           Settings.ShowTrafficLights := not Settings.ShowTrafficLights;
-          // Применяем настройки только если главный переключатель включен
           if Settings.MaxVisibleDistance then 
             ApplyDistanceSettings;
           SaveConfig;
@@ -2458,7 +2634,7 @@ begin
       Exit;
     end;
     
-    // ПРЯМО "Исправления КЛУБ" (без секции)
+    // Исправления КЛУБ
     if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
     begin
       Settings.NewClubPositions := not Settings.NewClubPositions;
@@ -2477,61 +2653,190 @@ procedure HandleMenuMouseUp; stdcall;
 begin
   if not MenuVisible then Exit;
   
+  // Останавливаем драггинг окон
   RenderWindow.IsDragging := False;
   WorldWindow.IsDragging := False;
   LocomotiveWindow.IsDragging := False;
-  DonateWindow.IsDragging := False;
+  MenuWindow.IsDragging := False;
   
+  // Возвращаем размеры окон к нормальным
+  RenderWindow.TargetDragWidthExpansion := 0.0;
+  WorldWindow.TargetDragWidthExpansion := 0.0;
+  LocomotiveWindow.TargetDragWidthExpansion := 0.0;
+  MenuWindow.TargetDragWidthExpansion := 0.0;
+
+  // Возвращаем тени к нормальным
+  RenderWindow.TargetShadowIntensity := 0.8;
+  WorldWindow.TargetShadowIntensity := 0.8;
+  LocomotiveWindow.TargetShadowIntensity := 0.8;
+  MenuWindow.TargetShadowIntensity := 0.8;
+
+  // Сбрасываем наклон и подъём от перетаскивания — плавный возврат к норме
+  RenderWindow.TargetRotation := 0.0;
+  WorldWindow.TargetRotation := 0.0;
+  LocomotiveWindow.TargetRotation := 0.0;
+  MenuWindow.TargetRotation := 0.0;
+
+  RenderWindow.TargetScale := 1.0;
+  WorldWindow.TargetScale := 1.0;
+  LocomotiveWindow.TargetScale := 1.0;
+  MenuWindow.TargetScale := 1.0;
+  
+  // Останавливаем драггинг слайдеров
   Settings.BrightnessSlider.IsDragging := False;
   Settings.BasespeedSlider.IsDragging := False;
   Settings.FastspeedSlider.IsDragging := False;
   Settings.TurnspeedSlider.IsDragging := False;
   Settings.StepForwardSlider.IsDragging := False;
   Settings.MaxVisibleDistanceSlider.IsDragging := False;
-  Settings.ViewAngleSlider.IsDragging := False;      // НОВЫЙ СЛАЙДЕР
-  Settings.CameraSensitivitySlider.IsDragging := False; // СЛАЙДЕР ЧУВСТВИТЕЛЬНОСТИ
+  Settings.ViewAngleSlider.IsDragging := False;
+  Settings.CameraSensitivitySlider.IsDragging := False;
 
-  // ПРИНУДИТЕЛЬНО применяем все настройки при отпускании мыши
+  // Применяем все настройки при отпускании мыши
   if Settings.MaxVisibleDistance then
     ApplyDistanceSettings;
   if Settings.MainCamera and Settings.CameraSensitivity then
     ApplyCameraSensitivity;
-  
-  // Конфиг уже сохранен в HandleSliderDrag, дублировать не нужно
 end;
 
 procedure ToggleMenu; stdcall;
+var
+  CenterX, CenterY: Integer;
 begin
   MenuVisible := not MenuVisible;
   
   if MenuVisible then
   begin
     ShowCursor(True);
-    
-    // === ПРИНУДИТЕЛЬНО ЧИТАЕМ КОНФИГ ПРИ ОТКРЫТИИ МЕНЮ ===
     LoadConfigForced;
     
+    LastFrameTime := GetTickCount;
+    
+    CenterX := InitResX div 2;
+    CenterY := InitResY div 2;
+    
+    MenuAnimationProgress := 0.0;
+    MenuTargetProgress := 1.0;
+    
+    // === RENDER WINDOW ===
+    // НЕ ТРОГАЕМ OriginalX и OriginalY!
+    RenderWindow.X := CenterX;
+    RenderWindow.Y := CenterY;
     RenderWindow.Alpha := 0.0;
     RenderWindow.TargetAlpha := 1.0;
+    RenderWindow.Scale := 0.3;
+    RenderWindow.TargetScale := 1.0;
+    RenderWindow.TransformProgress := 0.0;
+    RenderWindow.TargetTransformProgress := 1.0;
+    RenderWindow.Rotation := 15.0 * PI / 180.0;
+    RenderWindow.TargetRotation := 0.0;
+    RenderWindow.TranslateY := -200.0;
+    RenderWindow.TargetTranslateY := 0.0;
+    RenderWindow.DragWidthExpansion := 0.0;
+    RenderWindow.TargetDragWidthExpansion := 0.0;
+    RenderWindow.ShadowIntensity := 0.0;
+    RenderWindow.TargetShadowIntensity := 0.8;
+    RenderWindow.IsDragging := False;
+    
+    // === WORLD WINDOW ===
+    WorldWindow.X := CenterX;
+    WorldWindow.Y := CenterY;
     WorldWindow.Alpha := 0.0;
     WorldWindow.TargetAlpha := 1.0;
+    WorldWindow.Scale := 0.3;
+    WorldWindow.TargetScale := 1.0;
+    WorldWindow.TransformProgress := 0.0;
+    WorldWindow.TargetTransformProgress := 1.0;
+    WorldWindow.Rotation := -10.0 * PI / 180.0;
+    WorldWindow.TargetRotation := 0.0;
+    WorldWindow.TranslateY := -150.0;
+    WorldWindow.TargetTranslateY := 0.0;
+    WorldWindow.DragWidthExpansion := 0.0;
+    WorldWindow.TargetDragWidthExpansion := 0.0;
+    WorldWindow.ShadowIntensity := 0.0;
+    WorldWindow.TargetShadowIntensity := 0.8;
+    WorldWindow.IsDragging := False;
+    
+    // === LOCOMOTIVE WINDOW ===
+    LocomotiveWindow.X := CenterX;
+    LocomotiveWindow.Y := CenterY;
     LocomotiveWindow.Alpha := 0.0;
     LocomotiveWindow.TargetAlpha := 1.0;
-    DonateWindow.Alpha := 0.0;
-    DonateWindow.TargetAlpha := 1.0;
+    LocomotiveWindow.Scale := 0.3;
+    LocomotiveWindow.TargetScale := 1.0;
+    LocomotiveWindow.TransformProgress := 0.0;
+    LocomotiveWindow.TargetTransformProgress := 1.0;
+    LocomotiveWindow.Rotation := 20.0 * PI / 180.0;
+    LocomotiveWindow.TargetRotation := 0.0;
+    LocomotiveWindow.TranslateY := -100.0;
+    LocomotiveWindow.TargetTranslateY := 0.0;
+    LocomotiveWindow.DragWidthExpansion := 0.0;
+    LocomotiveWindow.TargetDragWidthExpansion := 0.0;
+    LocomotiveWindow.ShadowIntensity := 0.0;
+    LocomotiveWindow.TargetShadowIntensity := 0.8;
+    LocomotiveWindow.IsDragging := False;
     
-    // Патчим вызов при открытии меню
+    // === MENU WINDOW ===
+    MenuWindow.X := CenterX;
+    MenuWindow.Y := CenterY;
+    MenuWindow.Alpha := 0.0;
+    MenuWindow.TargetAlpha := 1.0;
+    MenuWindow.Scale := 0.3;
+    MenuWindow.TargetScale := 1.0;
+    MenuWindow.TransformProgress := 0.0;
+    MenuWindow.TargetTransformProgress := 1.0;
+    MenuWindow.Rotation := -25.0 * PI / 180.0;
+    MenuWindow.TargetRotation := 0.0;
+    MenuWindow.TranslateY := -250.0;
+    MenuWindow.TargetTranslateY := 0.0;
+    MenuWindow.DragWidthExpansion := 0.0;
+    MenuWindow.TargetDragWidthExpansion := 0.0;
+    MenuWindow.ShadowIntensity := 0.0;
+    MenuWindow.TargetShadowIntensity := 0.8;
+    MenuWindow.IsDragging := False;
+    
     ApplyMenuPatch;
   end
   else
   begin
     ShowCursor(False);
+
+    MenuTargetProgress := 0.0;
+
+    // Отпускаем перетаскивание, чтобы окна корректно «улетели» обратно к центру
+    RenderWindow.IsDragging := False;
+    WorldWindow.IsDragging := False;
+    LocomotiveWindow.IsDragging := False;
+    MenuWindow.IsDragging := False;
+
     RenderWindow.TargetAlpha := 0.0;
-    WorldWindow.TargetAlpha := 0.0;
-    LocomotiveWindow.TargetAlpha := 0.0;
-    DonateWindow.TargetAlpha := 0.0;
+    RenderWindow.TargetScale := 0.3;
+    RenderWindow.TargetTransformProgress := 0.0;
+    RenderWindow.TargetRotation := -15.0 * PI / 180.0;
+    RenderWindow.TargetTranslateY := -200.0;
+    RenderWindow.TargetShadowIntensity := 0.0;
     
-    // Восстанавливаем вызов при закрытии меню
+    WorldWindow.TargetAlpha := 0.0;
+    WorldWindow.TargetScale := 0.3;
+    WorldWindow.TargetTransformProgress := 0.0;
+    WorldWindow.TargetRotation := 10.0 * PI / 180.0;
+    WorldWindow.TargetTranslateY := -150.0;
+    WorldWindow.TargetShadowIntensity := 0.0;
+    
+    LocomotiveWindow.TargetAlpha := 0.0;
+    LocomotiveWindow.TargetScale := 0.3;
+    LocomotiveWindow.TargetTransformProgress := 0.0;
+    LocomotiveWindow.TargetRotation := -20.0 * PI / 180.0;
+    LocomotiveWindow.TargetTranslateY := -100.0;
+    LocomotiveWindow.TargetShadowIntensity := 0.0;
+    
+    MenuWindow.TargetAlpha := 0.0;
+    MenuWindow.TargetScale := 0.3;
+    MenuWindow.TargetTransformProgress := 0.0;
+    MenuWindow.TargetRotation := 25.0 * PI / 180.0;
+    MenuWindow.TargetTranslateY := -250.0;
+    MenuWindow.TargetShadowIntensity := 0.0;
+    
     RemoveMenuPatch;
   end;
 end;
