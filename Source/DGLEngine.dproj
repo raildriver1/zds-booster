@@ -69,4 +69,4 @@
     <DCCReference Include="Modules\TFrustumClass.pas" />
     <DCCReference Include="Modules\Variables.pas" />
   </ItemGroup>
-</Project>
+</Project>

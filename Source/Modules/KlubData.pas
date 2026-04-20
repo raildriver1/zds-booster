@@ -1041,14 +1041,24 @@ end;
 function GetPressureURf: Single;
 var
   addr: Cardinal;
+  locType: Integer;
 begin
+  Result := 0.0;
+
   try
-    // Базовый адрес для большинства локомотивов
+    // тип локомотива
+    locType := PInteger(Pointer(BaseAddress + $4F8D93C))^;
+
     addr := PCardinal(BaseAddress + $8D10D78)^;
-    if addr <> 0 then
-      Result := PSingle(addr + $20)^
+    if addr = 0 then Exit;
+
+    case locType of
+      812: // ЧС8
+        Result := PSingle(addr + $50)^;
     else
-      Result := 0.0;
+        Result := PSingle(addr + $20)^;
+    end;
+
   except
     Result := 0.0;
   end;
@@ -1085,7 +1095,7 @@ begin
     DecimalSeparator := '.';
     try
       // Базовый адрес для большинства локомотивов
-      addr := PCardinal(BaseAddress + $8D10D78)^;
+      addr := PCardinal(BaseAddress + $08D10D78)^;
       if addr <> 0 then
       begin
         val := PSingle(addr + $20)^;
@@ -1202,7 +1212,19 @@ begin
     Result := 0.0;
   end;
 end;
-      
+812: // ЧС8 (вариант с другим адресом)
+begin
+  try
+    tempAddr := PCardinal(baseAddr + $00348538)^;
+    if tempAddr <> 0 then
+    begin
+      addr := tempAddr + $B8;
+      Result := PSingle(addr)^;
+    end;
+  except
+    Result := 0.0;
+  end;
+end;
       621: // ЧС4Т (CHS4T)
       begin
         try
@@ -1237,7 +1259,7 @@ end;
       end;
       
       // Остальные случаи (ЧС8, 2ЭС4К и др.)
-      812,   // ЧС8 (CHS8)
+         // ЧС8 (CHS8)
       23142: // 2ЭС4К (2ES4K)
       begin
         try

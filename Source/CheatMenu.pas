@@ -1,8 +1,8 @@
 ﻿unit CheatMenu;
 
 interface
-uses 
-  Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils, ShellAPI, Math;
+uses
+  Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils, KlubData, ShellAPI, Math;
 
 type
   TSlider = record
@@ -90,6 +90,8 @@ type
     
     // Locomotive
     NewClubPositions: Boolean;
+    DeveloperMenu: Boolean;
+    DeveloperSection: TExpandableSection;
   end;
 
 procedure InitCheatMenu; stdcall;
@@ -250,7 +252,8 @@ type
     MaxDistanceText: string;
     NewSkyText: string;
     ClubFixesText: string;
-    
+    DeveloperMenuText: string;
+
     // Подэлементы
     BaseSpeedText: string;
     FastSpeedText: string;
@@ -286,6 +289,7 @@ const
       MaxDistanceText: 'Макс. дальность';
       NewSkyText: 'Новая логика неба';
       ClubFixesText: 'Исправления БИЛ-В';
+      DeveloperMenuText: 'Меню разработчика';
       BaseSpeedText: 'Базовая скорость';
       FastSpeedText: 'Скорость с Shift';
       StepForwardText: 'Шаг вперёд';
@@ -313,6 +317,7 @@ const
       MaxDistanceText: 'Макс. відстань';
       NewSkyText: 'Нова логіка неба';
       ClubFixesText: 'Виправлення БІЛ-В';
+      DeveloperMenuText: 'Меню розробника';
       BaseSpeedText: 'Базова швидкість';
       FastSpeedText: 'Швидкість з Shift';
       StepForwardText: 'Крок вперед';
@@ -340,6 +345,7 @@ const
       MaxDistanceText: 'Max Distance';
       NewSkyText: 'New Sky Logic';
       ClubFixesText: 'BIL-V Fixes';
+      DeveloperMenuText: 'Developer Menu';
       BaseSpeedText: 'Base Speed';
       FastSpeedText: 'Shift Speed';
       StepForwardText: 'Step Forward';
@@ -370,6 +376,7 @@ begin
   else if TextType = 'MaxDistanceText' then Result := LanguageTexts[CurrentLanguage].MaxDistanceText
   else if TextType = 'NewSkyText' then Result := LanguageTexts[CurrentLanguage].NewSkyText
   else if TextType = 'ClubFixesText' then Result := LanguageTexts[CurrentLanguage].ClubFixesText
+  else if TextType = 'DeveloperMenuText' then Result := LanguageTexts[CurrentLanguage].DeveloperMenuText
   else if TextType = 'BaseSpeedText' then Result := LanguageTexts[CurrentLanguage].BaseSpeedText
   else if TextType = 'FastSpeedText' then Result := LanguageTexts[CurrentLanguage].FastSpeedText
   else if TextType = 'StepForwardText' then Result := LanguageTexts[CurrentLanguage].StepForwardText
@@ -1871,6 +1878,49 @@ begin
 end;
 
 // Главная функция отрисовки окна с transform эффектами
+// Безопасные обёртки над функциями KlubData: если игра ещё не инициализирована,
+// чтение по указателям может упасть — возвращаем '—' вместо падения меню.
+function SK_Speed: string;       begin try Result := GetSpeed;       except Result := '—'; end; end;
+function SK_Limit: string;       begin try Result := GetLimitSpeed;  except Result := '—'; end; end;
+function SK_Distance: string;    begin try Result := GetDistance;    except Result := '—'; end; end;
+function SK_Track: string;       begin try Result := GetTrackNumber; except Result := '—'; end; end;
+function SK_TM: string;          begin try Result := GetPressureTM;  except Result := '—'; end; end;
+function SK_UR: string;          begin try Result := GetPressureUR;  except Result := '—'; end; end;
+function SK_TC: string;          begin try Result := GetPressureTC;  except Result := '—'; end; end;
+function SK_Accel: string;       begin try Result := GetAcceleration; except Result := '—'; end; end;
+function SK_Coord: string;       begin try Result := GetCoordinatesFormatted; except Result := '—'; end; end;
+function SK_Signal: string;      begin try Result := GetSvetoforValue; except Result := '—'; end; end;
+function SK_Target: string;      begin try Result := IntToStr(GetTargetSpeedValue); except Result := '—'; end; end;
+function SK_ALS: string;         begin try Result := IntToStr(GetALS); except Result := '—'; end; end;
+
+procedure DrawDevRow(X, Y: Integer; const Caption, Value: string; Alpha: Integer; WinScale: Single);
+begin
+  DrawModernText(X, Y, Caption, COLOR_ON_SURFACE, Alpha, 0.65 * WinScale);
+  DrawModernText(X + Round(90 * WinScale), Y, Value, COLOR_ACCENT, Alpha, 0.65 * WinScale);
+end;
+
+procedure DrawDeveloperValues(X, Y: Integer; Alpha: Integer; WinScale: Single; SectionHeight: Integer);
+var
+  RowH, CurY, MaxY: Integer;
+begin
+  RowH := Round(18 * WinScale);
+  CurY := Y;
+  MaxY := Y + SectionHeight - Round(20 * WinScale);
+
+  if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Speed:',    SK_Speed + ' km/h', Alpha, WinScale);    Inc(CurY, RowH); end;
+  if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Limit:',    SK_Limit + ' km/h', Alpha, WinScale);    Inc(CurY, RowH); end;
+  if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Target:',   SK_Target + ' km/h', Alpha, WinScale);   Inc(CurY, RowH); end;
+  if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Distance:', SK_Distance + ' m', Alpha, WinScale);    Inc(CurY, RowH); end;
+  if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Track:',    SK_Track, Alpha, WinScale);              Inc(CurY, RowH); end;
+  if CurY <= MaxY then begin DrawDevRow(X, CurY, 'TM:',       SK_TM, Alpha, WinScale);                 Inc(CurY, RowH); end;
+  if CurY <= MaxY then begin DrawDevRow(X, CurY, 'UR:',       SK_UR, Alpha, WinScale);                 Inc(CurY, RowH); end;
+  if CurY <= MaxY then begin DrawDevRow(X, CurY, 'TC:',       SK_TC, Alpha, WinScale);                 Inc(CurY, RowH); end;
+  if CurY <= MaxY then begin DrawDevRow(X, CurY, 'ALS:',      SK_ALS, Alpha, WinScale);                Inc(CurY, RowH); end;
+  if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Accel:',    SK_Accel, Alpha, WinScale);              Inc(CurY, RowH); end;
+  if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Coords:',   SK_Coord, Alpha, WinScale);              Inc(CurY, RowH); end;
+  if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Signal:',   SK_Signal, Alpha, WinScale);             Inc(CurY, RowH); end;
+end;
+
 procedure DrawTransformWindow(var Win: TWindow; WindowType: Integer);
 var
   Alpha: Integer;
@@ -1928,7 +1978,11 @@ begin
     
     2: // LOCOMOTIVE окно
     begin
-      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;
+      // ClubFixes toggle + Developer toggle
+      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN + ITEM_HEIGHT + MARGIN;
+      // Expanded section
+      if Settings.DeveloperSection.AnimProgress > 0.01 then
+        TotalHeight := TotalHeight + Round(230 * Settings.DeveloperSection.AnimProgress) + MARGIN;
     end;
     
     3: // MENU окно
@@ -2079,6 +2133,23 @@ begin
     begin
       // Исправления КЛУБ
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('ClubFixesText'), Settings.NewClubPositions, Alpha);
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
+      // Меню разработчика (toggle + expand)
+      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('DeveloperMenuText'), Settings.DeveloperMenu, Alpha, True, ExpandButtonX, Settings.DeveloperSection.Expanded, Settings.DeveloperSection.AnimProgress);
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
+      if Settings.DeveloperSection.AnimProgress > 0.01 then
+      begin
+        SectionHeight := Round(230 * Settings.DeveloperSection.AnimProgress * Win.Scale);
+
+        // Фон секции
+        DrawStyledRect(ScaledX + Round((MARGIN + 12) * Win.Scale), ContentY, Round(240 * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+
+        if Settings.DeveloperMenu and (SectionHeight > Round(30 * Win.Scale)) then
+          DrawDeveloperValues(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(12 * Win.Scale), Alpha, Win.Scale, SectionHeight);
+      end;
     end;
     
     3: // MENU окно
