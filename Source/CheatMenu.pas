@@ -92,6 +92,7 @@ type
     NewClubPositions: Boolean;
     DeveloperMenu: Boolean;
     DeveloperSection: TExpandableSection;
+    RA3Hover: Boolean;
   end;
 
 procedure InitCheatMenu; stdcall;
@@ -100,6 +101,9 @@ procedure HandleMenuClick(X, Y: Integer); stdcall;
 procedure HandleMenuHover(X, Y: Integer); stdcall;
 procedure HandleMenuMouseUp; stdcall;
 procedure ToggleMenu; stdcall;
+procedure ApplyMenuPatch;
+procedure RemoveMenuPatch;
+function IsRA3HoverEnabled: Boolean;
 
 function GetFreecamBasespeed: Single; stdcall;
 function GetFreecamFastspeed: Single; stdcall;
@@ -253,6 +257,7 @@ type
     NewSkyText: string;
     ClubFixesText: string;
     DeveloperMenuText: string;
+    RA3HoverText: string;
 
     // Подэлементы
     BaseSpeedText: string;
@@ -290,6 +295,7 @@ const
       NewSkyText: 'Новая логика неба';
       ClubFixesText: 'Исправления БИЛ-В';
       DeveloperMenuText: 'Меню разработчика';
+      RA3HoverText: 'RA3 подсветка';
       BaseSpeedText: 'Базовая скорость';
       FastSpeedText: 'Скорость с Shift';
       StepForwardText: 'Шаг вперёд';
@@ -318,6 +324,7 @@ const
       NewSkyText: 'Нова логіка неба';
       ClubFixesText: 'Виправлення БІЛ-В';
       DeveloperMenuText: 'Меню розробника';
+      RA3HoverText: 'RA3 підсвітка';
       BaseSpeedText: 'Базова швидкість';
       FastSpeedText: 'Швидкість з Shift';
       StepForwardText: 'Крок вперед';
@@ -346,6 +353,7 @@ const
       NewSkyText: 'New Sky Logic';
       ClubFixesText: 'BIL-V Fixes';
       DeveloperMenuText: 'Developer Menu';
+      RA3HoverText: 'RA3 Highlight';
       BaseSpeedText: 'Base Speed';
       FastSpeedText: 'Shift Speed';
       StepForwardText: 'Step Forward';
@@ -377,6 +385,7 @@ begin
   else if TextType = 'NewSkyText' then Result := LanguageTexts[CurrentLanguage].NewSkyText
   else if TextType = 'ClubFixesText' then Result := LanguageTexts[CurrentLanguage].ClubFixesText
   else if TextType = 'DeveloperMenuText' then Result := LanguageTexts[CurrentLanguage].DeveloperMenuText
+  else if TextType = 'RA3HoverText' then Result := LanguageTexts[CurrentLanguage].RA3HoverText
   else if TextType = 'BaseSpeedText' then Result := LanguageTexts[CurrentLanguage].BaseSpeedText
   else if TextType = 'FastSpeedText' then Result := LanguageTexts[CurrentLanguage].FastSpeedText
   else if TextType = 'StepForwardText' then Result := LanguageTexts[CurrentLanguage].StepForwardText
@@ -990,6 +999,7 @@ begin
         if Key = 'max_distance' then Settings.MaxVisibleDistance := (Value = '1');
         if Key = 'newsky' then Settings.NewSky := (Value = '1');
         if Key = 'new_club_positions' then Settings.NewClubPositions := (Value = '1');
+        if Key = 'ra3_hover' then Settings.RA3Hover := (Value = '1');
         if Key = 'new_view_angle' then Settings.NewViewAngle := (Value = '1');
         if Key = 'camera_sensitivity' then Settings.CameraSensitivity := (Value = '1');
 
@@ -1065,6 +1075,7 @@ begin
     if Settings.MaxVisibleDistance then WriteLn(F, 'max_distance: 1') else WriteLn(F, 'max_distance: 0');
     if Settings.NewSky then WriteLn(F, 'newsky: 1') else WriteLn(F, 'newsky: 0');
     if Settings.NewClubPositions then WriteLn(F, 'new_club_positions: 1') else WriteLn(F, 'new_club_positions: 0');
+    if Settings.RA3Hover then WriteLn(F, 'ra3_hover: 1') else WriteLn(F, 'ra3_hover: 0');
     if Settings.NewViewAngle then WriteLn(F, 'new_view_angle: 1') else WriteLn(F, 'new_view_angle: 0');
     if Settings.CameraSensitivity then WriteLn(F, 'camera_sensitivity: 1') else WriteLn(F, 'camera_sensitivity: 0');
     
@@ -2135,6 +2146,10 @@ begin
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('ClubFixesText'), Settings.NewClubPositions, Alpha);
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
+      // RA3 подсветка
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('RA3HoverText'), Settings.RA3Hover, Alpha);
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
       // Меню разработчика (toggle + expand)
       ExpandButtonX := ScaledX + Round(220 * Win.Scale);
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('DeveloperMenuText'), Settings.DeveloperMenu, Alpha, True, ExpandButtonX, Settings.DeveloperSection.Expanded, Settings.DeveloperSection.AnimProgress);
@@ -2716,7 +2731,21 @@ begin
       SaveConfig;
       Exit;
     end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
+    // RA3 подсветка
+    if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.RA3Hover := not Settings.RA3Hover;
+      SaveConfig;
+      Exit;
+    end;
   end;
+end;
+
+function IsRA3HoverEnabled: Boolean;
+begin
+  Result := Settings.RA3Hover;
 end;
 
 // === ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ОТПУСКАНИЯ МЫШИ ===

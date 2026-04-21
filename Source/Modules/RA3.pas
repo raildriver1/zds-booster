@@ -10,7 +10,7 @@ procedure ApplyRA3BlockTransform(x, y, z, AngZ: Single);
 implementation
 
 uses
-  OpenGL, Windows, SysUtils, Variables, EngineUtils, DrawFunc3D, Textures, KlubData;
+  OpenGL, Windows, SysUtils, Variables, EngineUtils, DrawFunc3D, Advanced3D, Textures, KlubData, CheatMenu;
 
 const
   ADDR_CAM_X: Cardinal = $9008028;
@@ -28,6 +28,13 @@ var
   RA3_DynamicInitialized: Boolean = False;
   RA3_CabInitialized: Boolean = False;
   RA3_CameraWritten: Boolean = False;
+  RA3_WagonInitialized: Boolean = False;
+
+  WagonModelIDs: array of Integer;
+  WagonTextureIDs: array of Integer;
+  WagonWheelsetID: Integer = 0;
+  WagonWheelsetTextureID: Integer = 0;
+  WagonWheelRotation: Single = 0;
 
   LocoModelIDs: array of Integer;
   LocoTextureIDs: array of Integer;
@@ -76,6 +83,147 @@ var
   WheelRotation: Single = 0;
   WheelModelIDs: array[0..3] of Integer;
   TelegaTextureID: Integer = 0;
+
+  HoveredController: Boolean = False;
+  HoveredBrake: Boolean = False;
+
+  HoverMode: Boolean = False;
+  PatchActive: Boolean = False;
+
+  DraggingController: Boolean = False;
+  LastLButtonState: Boolean = False;
+  DragStartX: Single = 0;
+  DragStartValue: Integer = 0;
+  DragStartAngle: Single = 0;
+
+const
+  // Нижний якорь контроллера (у основания)
+  CONTROLLER_POS_X: Single = 0.199975;
+  CONTROLLER_POS_Y: Single = 10.4241;
+  CONTROLLER_POS_Z: Single = 2.59945;
+  // Верхний якорь (верхушка рукояти) — для расширения зоны по высоте
+  CONTROLLER_TOP_X: Single = 0.199975;
+  CONTROLLER_TOP_Y: Single = 10.4241;
+  CONTROLLER_TOP_Z: Single = 2.85;
+
+  BRAKE_POS_X: Single = 0.981241;
+  BRAKE_POS_Y: Single = 10.3818;
+  BRAKE_POS_Z: Single = 2.5848;
+
+  HOVER_RADIUS_PX: Integer = 50;
+  DRAG_PX_PER_STEP: Single = 30.0;
+  DRAG_ANGLE_PER_PX: Single = 1.5;
+
+  // ===== Параметры вагонов — крути эти значения =====
+  WAGON_COUNT = 3;
+  // Смещение первого вагона относительно начала координат локомотива (по оси Y):
+  WAGON_FIRST_OFFSET_Y: Single = -23.0;
+  // Шаг между вагонами по Y (негатив — «назад»):
+  WAGON_STEP_Y: Single = -23.0;
+  // X и Z локального положения (обычно оставить 0):
+  WAGON_POS_X: Single = 0.0;
+  WAGON_POS_Z: Single = 0.0;
+  // Колёсные пары вагона (относительно центра вагона):
+  WAGON_WS_X: Single = 0.000053;
+  WAGON_WS_Z: Single = 0.710448;
+  WAGON_WS_Y_1: Single =  8.40357;
+  WAGON_WS_Y_2: Single =  6.25357;
+  WAGON_WS_Y_3: Single = -6.17666;
+  WAGON_WS_Y_4: Single = -8.32665;
+
+function IsKeyDownEx(Key: Integer): Boolean;
+begin
+  Result := (GetAsyncKeyState(Key) and $8000) <> 0;
+end;
+
+procedure SyncHoverModeWithSettings;
+var
+  want: Boolean;
+begin
+  want := IsRA3HoverEnabled;
+  if want = HoverMode then Exit;
+  HoverMode := want;
+  if HoverMode then
+    ShowCursor(True)
+  else
+  begin
+    ShowCursor(False);
+    if PatchActive then
+    begin
+      RemoveMenuPatch;
+      PatchActive := False;
+    end;
+    DraggingController := False;
+  end;
+end;
+
+// Проверка попадания курсора в «капсулу» вдоль отрезка A→B в экранных координатах
+function HitCapsule2D(const A, B: TPoint; px, py, radius: Integer): Boolean;
+var
+  abx, aby, apx, apy, t: Single;
+  len2: Single;
+  cx, cy, dx, dy: Single;
+begin
+  abx := B.X - A.X; aby := B.Y - A.Y;
+  apx := px - A.X;  apy := py - A.Y;
+  len2 := abx*abx + aby*aby;
+  if len2 < 0.0001 then t := 0
+  else t := (apx*abx + apy*aby) / len2;
+  if t < 0 then t := 0 else if t > 1 then t := 1;
+  cx := A.X + t * abx;
+  cy := A.Y + t * aby;
+  dx := px - cx; dy := py - cy;
+  Result := (dx*dx + dy*dy) < (radius * radius);
+end;
+
+procedure UpdateHover;
+var
+  v: TVertex;
+  pTop, pBot, pCenter: TPoint;
+  px, py, dx, dy, rr: Integer;
+  wantPatch: Boolean;
+begin
+  SyncHoverModeWithSettings;
+
+  HoveredController := False;
+  HoveredBrake := False;
+
+  if HoverMode then
+  begin
+    px := Round(MoveXcoord);
+    py := Round(MoveYcoord);
+    rr := HOVER_RADIUS_PX * HOVER_RADIUS_PX;
+
+    // Капсула между основанием и верхушкой контроллера
+    v.X := CONTROLLER_POS_X; v.Y := CONTROLLER_POS_Y; v.Z := CONTROLLER_POS_Z;
+    pBot := Get2DPos(v);
+    v.X := CONTROLLER_TOP_X; v.Y := CONTROLLER_TOP_Y; v.Z := CONTROLLER_TOP_Z;
+    pTop := Get2DPos(v);
+    if HitCapsule2D(pBot, pTop, px, py, HOVER_RADIUS_PX) then
+      HoveredController := True;
+
+    // Тормозной — круговая зона
+    v.X := BRAKE_POS_X; v.Y := BRAKE_POS_Y; v.Z := BRAKE_POS_Z;
+    pCenter := Get2DPos(v);
+    dx := pCenter.X - px; dy := pCenter.Y - py;
+    if (dx*dx + dy*dy) < rr then
+      HoveredBrake := True;
+  end;
+
+  // Патч держим пока: 1) наведён, ИЛИ 2) идёт драг контроллера.
+  // Снимаем когда оба условия сняты (курсор ушёл И ЛКМ отпущена).
+  wantPatch := HoverMode and (HoveredController or DraggingController);
+  if wantPatch and not PatchActive then
+  begin
+    ApplyMenuPatch;
+    PatchActive := True;
+  end
+  else if (not wantPatch) and PatchActive then
+  begin
+    RemoveMenuPatch;
+    PatchActive := False;
+  end;
+end;
 
 procedure DrawSimpleModel(ModelID: Integer; x, y, z: Single; TextureID: Integer = 0);
 begin
@@ -257,6 +405,195 @@ until FindNext(sr2) <> 0;
   end;
 end;
 
+procedure InitWagonRA3;
+var
+  sr, sr2: TSearchRec;
+  basePath, matPath, texPath: string;
+  k: Integer;
+  rgbaNames: array[1..18] of string;
+
+function FindTexture(const path: string; const IsWheelset: Boolean): string;
+var
+  sr: TSearchRec;
+begin
+  Result := '';
+
+  if FindFirst(path + '*.bmp', faAnyFile, sr) = 0 then
+  begin
+    repeat
+      if IsWheelset then
+      begin
+        if Pos('wheelset', LowerCase(sr.Name)) > 0 then
+        begin
+          Result := path + sr.Name;
+          Break;
+        end;
+      end
+      else
+      begin
+        if Pos('rgba', LowerCase(sr.Name)) > 0 then
+        begin
+          Result := path + sr.Name;
+          Break;
+        end;
+      end;
+
+    until FindNext(sr) <> 0;
+
+    FindClose(sr);
+  end;
+end;
+
+  function LoadWagonModel(const fileName, tex: string): Integer;
+  begin
+    Result := LoadModel(fileName, 0, False);
+  end;
+
+begin
+  if RA3_WagonInitialized then Exit;
+  RA3_WagonInitialized := True;
+
+  basePath := 'C:\ZDSimulator55.008new\ra3\wagon\';
+
+  SetLength(WagonModelIDs, 0);
+  SetLength(WagonTextureIDs, 0);
+
+  WagonWheelsetID := 0;
+  WagonWheelsetTextureID := 0;
+
+  rgbaNames[1]  := 'ra3_1_RGBA.bmp';
+  rgbaNames[2]  := 'ra3_2_RGBA.bmp';
+  rgbaNames[3]  := 'ra3_3_RGBA.bmp';
+  rgbaNames[4]  := 'ra3_4_RGBA.bmp';
+  rgbaNames[5]  := 'ra3_5_RGBA.bmp';
+  rgbaNames[6]  := 'ra3_6_RGBA.bmp';
+  rgbaNames[7]  := 'ra3_7_RGBA.bmp';
+  rgbaNames[8]  := 'ra3_8_RGBA.bmp';
+  rgbaNames[9]  := 'ra3_9_RGBA.bmp';
+  rgbaNames[10] := 'ra3_10_RGBA.bmp';
+  rgbaNames[11] := 'ra3_11_RGBA.bmp';
+  rgbaNames[12] := 'ra3_12_RGBA.bmp';
+  rgbaNames[13] := 'ra3_13_RGBA.bmp';
+  rgbaNames[14] := 'ra3_14_RGBA.bmp';
+  rgbaNames[15] := 'ra3_15_RGBA.bmp';
+  rgbaNames[16] := 'ra3_16_RGBA.bmp';
+  rgbaNames[17] := 'ra3_17_RGBA.bmp';
+  rgbaNames[18] := 'ra3_18_RGBA.bmp';
+
+  if FindFirst(basePath + '*', faDirectory, sr) = 0 then
+  begin
+    repeat
+      if (sr.Name = '.') or (sr.Name = '..') then Continue;
+
+      matPath := basePath + sr.Name + '\';
+      if not DirectoryExists(matPath) then Continue;
+
+      texPath := FindTexture(matPath, False);
+
+      // --- wheelset отдельно ---
+      if (WagonWheelsetID = 0) and FileExists(matPath + 'wheelset.dmd') then
+      begin
+        WagonWheelsetID := LoadModel(matPath + 'wheelset.dmd', 0, False);
+
+        if texPath <> '' then
+          WagonWheelsetTextureID := LoadTextureFromFile(texPath, 0, -1);
+      end;
+
+      // --- корпус вагона ---
+      if FindFirst(matPath + '*.dmd', faAnyFile, sr2) = 0 then
+      begin
+        repeat
+          if Pos('wheelset', LowerCase(sr2.Name)) > 0 then
+            Continue;
+
+          SetLength(WagonModelIDs, Length(WagonModelIDs) + 1);
+          SetLength(WagonTextureIDs, Length(WagonTextureIDs) + 1);
+
+          WagonModelIDs[High(WagonModelIDs)] :=
+            LoadModel(matPath + sr2.Name, 0, False);
+
+          if texPath <> '' then
+            WagonTextureIDs[High(WagonTextureIDs)] :=
+              LoadTextureFromFile(texPath, 0, -1)
+          else
+            WagonTextureIDs[High(WagonTextureIDs)] := 0;
+
+        until FindNext(sr2) <> 0;
+
+        FindClose(sr2);
+      end;
+
+    until FindNext(sr) <> 0;
+
+    FindClose(sr);
+  end;
+end;
+
+procedure DrawWagonRA3;
+var
+  w, i: Integer;
+  wagonY: Single;
+
+  procedure DrawModelSafe(ModelID, TexID: Integer);
+  begin
+    if ModelID = 0 then Exit;
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+
+    Position3D(WAGON_POS_X, wagonY, WAGON_POS_Z);
+
+    if TexID <> 0 then
+      SetTexture(TexID)
+    else
+      SetTexture(0);
+
+    DrawModel(ModelID, 0, False);
+
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+  end;
+
+  procedure DrawWheelset(offsetY: Single);
+  begin
+    if WagonWheelsetID = 0 then Exit;
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+
+    Position3D(WAGON_WS_X, wagonY + offsetY, WAGON_WS_Z);
+    RotateX(WagonWheelRotation);
+
+    if WagonWheelsetTextureID <> 0 then
+      SetTexture(WagonWheelsetTextureID)
+    else
+      SetTexture(0);
+
+    DrawModel(WagonWheelsetID, 0, False);
+
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+  end;
+
+begin
+  WagonWheelRotation := WagonWheelRotation + StrToFloatDef(GetSpeed, 0) * 0.05;
+
+  for w := 0 to WAGON_COUNT - 1 do
+  begin
+    wagonY := WAGON_FIRST_OFFSET_Y + w * WAGON_STEP_Y;
+
+    // корпус вагона
+    for i := 0 to High(WagonModelIDs) do
+      DrawModelSafe(WagonModelIDs[i], WagonTextureIDs[i]);
+
+    // 4 колесные пары
+    DrawWheelset(WAGON_WS_Y_1);
+    DrawWheelset(WAGON_WS_Y_2);
+    DrawWheelset(WAGON_WS_Y_3);
+    DrawWheelset(WAGON_WS_Y_4);
+  end;
+end;
+
 procedure InitCabRA3;
 var
   i: Integer;
@@ -396,12 +733,50 @@ procedure UpdateControllerAndDraw;
 var
   NowTick: Cardinal;
   Addr: Cardinal;
+  lbNow: Boolean;
+  deltaPx: Single;
+  steps, newValue: Integer;
+  mouseHandled: Boolean;
 begin
   if ControllerModelID = 0 then Exit;
 
   NowTick := GetTickCount;
+  lbNow := IsKeyDownEx(VK_LBUTTON);
+  mouseHandled := False;
 
-  if (NowTick - InputTimer) > 500 then
+  // Старт драга: курсор на контроллере и только что нажали ЛКМ
+  if HoveredController and lbNow and not LastLButtonState then
+  begin
+    DraggingController := True;
+    DragStartX := MoveXcoord;
+    DragStartValue := ControllerMemValue;
+    DragStartAngle := ControllerAngle;
+  end;
+
+  // Отпустили ЛКМ — конец драга
+  if DraggingController and not lbNow then
+    DraggingController := False;
+
+  LastLButtonState := lbNow;
+
+  if DraggingController then
+  begin
+    deltaPx := MoveXcoord - DragStartX;
+
+    TargetAngle := DragStartAngle + deltaPx * DRAG_ANGLE_PER_PX;
+    if TargetAngle > 45 then TargetAngle := 45
+    else if TargetAngle < -45 then TargetAngle := -45;
+
+    steps := Trunc(deltaPx / DRAG_PX_PER_STEP);
+    newValue := DragStartValue + steps;
+    if newValue < 0 then newValue := 0
+    else if newValue > 5 then newValue := 5;
+    ControllerMemValue := newValue;
+
+    mouseHandled := True;
+  end;
+
+  if (not mouseHandled) and ((NowTick - InputTimer) > 500) then
   begin
     InputTimer := NowTick;
 
@@ -442,11 +817,16 @@ begin
   BeginObj3D;
   glDisable(GL_LIGHTING);
 
-  Position3D(0.199975, 10.4241, 2.59945);
+  Position3D(CONTROLLER_POS_X, CONTROLLER_POS_Y, CONTROLLER_POS_Z);
   RotateX(ControllerAngle);
 
   if ControllerTextureID <> 0 then
     SetTexture(ControllerTextureID);
+
+  if HoveredController then
+    glColor4f(1.0, 1.0, 0.0, 1.0)
+  else
+    glColor4f(1.0, 1.0, 1.0, 1.0);
 
   DrawModel(ControllerModelID, 0, False);
 
@@ -458,7 +838,19 @@ end;
 
 procedure DrawControllerBraking;
 begin
-  DrawSimpleModel(ControllerBrakingModelID, 0.981241, 10.3818, 2.5848, ControllerTextureID);
+  if ControllerBrakingModelID = 0 then Exit;
+  BeginObj3D;
+  glDisable(GL_LIGHTING);
+  Position3D(BRAKE_POS_X, BRAKE_POS_Y, BRAKE_POS_Z);
+  if ControllerTextureID <> 0 then
+    SetTexture(ControllerTextureID);
+  if HoveredBrake then
+    glColor4f(1.0, 1.0, 0.0, 1.0)
+  else
+    glColor4f(1.0, 1.0, 1.0, 1.0);
+  DrawModel(ControllerBrakingModelID, 0, False);
+  glEnable(GL_LIGHTING);
+  EndObj3D;
 end;
 
 procedure DrawButtons;
@@ -550,6 +942,7 @@ begin
   if not IsRA3Active then Exit;
   InitCabRA3;
   InitLocoRA3;
+  InitWagonRA3;
   InitDynamicRA3;
   WriteRA3CameraInit;
 end;
@@ -558,10 +951,12 @@ procedure DrawRA3;
 begin
   if not IsRA3Active then Exit;
   InitRA3;
+  UpdateHover;
   DrawCabRA3;
   DrawLocoRA3;
   DrawTelega;
   DrawWheels;
+  DrawWagonRA3;
   UpdateControllerAndDraw;
   DrawControllerBraking;
   DrawButtons;
