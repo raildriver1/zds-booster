@@ -39,7 +39,8 @@ uses
   Vfw in 'Modules\Headers\Vfw.pas',
   TFrustumClass in 'Modules\TFrustumClass.pas',
   EngineCore in 'Modules\EngineCore.pas',
-  KlubData in 'Modules\KlubData.pas';
+  KlubData in 'Modules\KlubData.pas',
+  RA3 in 'Modules\RA3.pas';
 
 //Function needed for engine header
 function DLL_ver : byte; stdcall;

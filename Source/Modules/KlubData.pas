@@ -30,6 +30,7 @@ function GetRoutePathFromMemory: string; // Получение пути марш
 
 function GetSpeedValue: Integer;     // Скорость как число
 function GetTargetSpeedValue: Integer;     // Целевая Скорость как число
+function GetControllerED4M: Integer;
 
 function GetDistanceValue: Integer; // Расстояние как число
 function GetTrackNumberInt: Byte;   // Номер пути в байте
@@ -117,6 +118,21 @@ end;
 function Min(A, B: Integer): Integer;
 begin
   if A < B then Result := A else Result := B;
+end;
+
+function GetControllerED4M: Integer;
+var
+  Addr: Cardinal;
+begin
+  Result := 0;
+  try
+    Addr := BaseAddress + $08DD5B05;
+
+    Result := PByte(Addr)^;
+
+  except
+    Result := 0;
+  end;
 end;
 
 // Функция для чтения параметров из settings.ini

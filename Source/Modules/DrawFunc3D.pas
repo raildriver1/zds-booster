@@ -226,6 +226,9 @@ exports
 procedure FreeEng;
 procedure InitEng;
 
+function GetAlsEnState: Boolean;
+function GetAlsEnVisibleSignalCount: Integer;
+
 function  GETLIGHT(ID: integer) : integer;
 procedure _glTexCoord2f(X,Y : GLFloat; Layer : integer = -1); stdcall;
 procedure _glTexCoord3f(X,Y,Z : GLFloat; Layer : integer = -1);
@@ -293,7 +296,7 @@ fbo_w, fbo_h, fbo_z : cardinal;
 fbo2 : cardinal;
 
 implementation
-uses Advanced3D, DrawFunc2D;
+uses Advanced3D, DrawFunc2D, RA3;
 
 type TAMesh = record
 Ident : cardinal;
@@ -3743,7 +3746,7 @@ var
 
 begin
   try
-    // Патчим HookKLUB для ЧС8
+    // Патчим HookKLUB для ED4M
     try
       HookAddr := Cardinal(@HookKLUB);
       CallAddress := $006296F6; // ← АДРЕС ДЛЯ ЭД4М
@@ -3766,7 +3769,7 @@ begin
   except
     on E: Exception do
     begin
-      AddToLogFile(EngineLog, 'Ошибка в WriteHookAddressCHS8: ' + E.Message);
+      AddToLogFile(EngineLog, 'Ошибка в WriteHookAddressED4M: ' + E.Message);
     end;
   end;
 end;
@@ -10301,8 +10304,17 @@ begin
   // Основная отрисовка
   try
     BeginObj3D();
-    Position3D(AngZ, z, y);
-    RotateZ(x);
+    //Position3D(AngZ, z, y);
+    //RotateZ(x);
+
+    // RA3 block
+    if IsRA3Active then
+      ApplyRA3BlockTransform(x, y, z, AngZ)
+    else
+    begin
+      Position3D(AngZ, z, y);
+      RotateZ(x);
+    end;
     SetTexture(BLOCKTextureID);
 
 
@@ -10342,6 +10354,11 @@ begin
   BLOCKTextureID := 0;
   AddToLogFile(EngineLog, 'BLOCK система сброшена для переинициализации');
 end;
+
+
+
+// RA3-specific code moved to Modules\RA3.pas
+
 
 procedure HookKLUB(
   x: Single;
@@ -11351,11 +11368,14 @@ end;
 
 begin
 
+  DrawRA3;
+
   // ===== ИНИЦИАЛИЗАЦИЯ СВЕТОФОРНОЙ СИСТЕМЫ =====
   if not SystemInitialized then
   begin
     InitializeTrafficLightSystem;
     LoadBoosterConfig;
+    InitRA3;
     try
       baseStructAddr := PCardinal(Pointer($00400000 + $8D10D70))^;
       CachedYellowBlockID := PWord(Pointer(baseStructAddr + $1A))^;
@@ -11372,6 +11392,7 @@ begin
       begin
         blokhookklub := True;
         DrawBLOCK(x, y, z, AngZ);
+        //DrawBLOCK(x-20, y, z, 0);
       end;
 
 
@@ -11973,6 +11994,40 @@ glPushMatrix();
       _glTexCoord2f(0.0, 1.0); glVertex3f(-1.0,  1.0, -1.0);
     glEnd();
 glPopMatrix();
+end;
+
+function GetAlsEnState: Boolean;
+begin
+  Result := als_en_state;
+end;
+
+function GetAlsEnVisibleSignalCount: Integer;
+var
+  i, idx, count: Integer;
+  seq: string;
+  ch: Char;
+begin
+  Result := 0;
+  seq := CachedSignalSequence;
+  if seq = '' then Exit;
+
+  idx := Length(seq);
+  for i := 1 to Length(seq) do
+    if seq[i] = 'К' then
+    begin
+      idx := i - 1;
+      Break;
+    end;
+
+  count := 0;
+  for i := 1 to idx do
+  begin
+    ch := seq[i];
+    if (ch = 'Ж') or (ch = 'З') then
+      Inc(count);
+  end;
+
+  Result := count;
 end;
 
 end.
