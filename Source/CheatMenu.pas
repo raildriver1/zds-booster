@@ -304,7 +304,7 @@ const
       RussianText: 'Русский';
       UkrainianText: 'Українська';
       EnglishText: 'English';
-      InfoText: 'ZDS-Booster v1.1 | vk.com/raildriver';
+      InfoText: 'ZDS-Booster v1.3 | vk.com/raildriver';
     ),
     // Украинский
     (
@@ -332,7 +332,7 @@ const
       RussianText: 'Русский';
       UkrainianText: 'Українська';
       EnglishText: 'English';
-      InfoText: 'ZDS-Booster v1.1 | t.me/raildrive';
+      InfoText: 'ZDS-Booster v1.3 | t.me/raildrive';
     ),
     // Английский
     (
@@ -360,7 +360,7 @@ const
       RussianText: 'Русский';
       UkrainianText: 'Українська';
       EnglishText: 'English';
-      InfoText: 'ZDS-Booster v1.1 | t.me/raildrive';
+      InfoText: 'ZDS-Booster v1.3 | t.me/raildrive';
     )
   );
 

@@ -17,8 +17,8 @@ const
   ADDR_CAM_Y: Cardinal = $900802C;
   ADDR_CAM_Z: Cardinal = $9008030;
 
-  CAM_INIT_X: Single = 0.8500000238;
-  CAM_INIT_Y: Single = 9.70000267;
+  CAM_INIT_X: Single = 0.5500000119;
+  CAM_INIT_Y: Single = 9.800003052;
   CAM_INIT_Z: Single = 3.200000048;
 
   BUTTON_PRESS_DELTA: Single = 0.005;
@@ -69,6 +69,9 @@ var
   InputTimer: Cardinal = 0;
   MemTimer: Cardinal = 0;
   LastWriteValue: Integer = -1;
+
+  WheelRotation: Single = 0;
+  WheelModelIDs: array[0..3] of Integer;
 
 function IsRA3Active: Boolean;
 begin
@@ -145,14 +148,19 @@ end;
 
 procedure InitLocoRA3;
 var
-  sr: TSearchRec;
+  sr, sr2: TSearchRec;
   i: Integer;
-  basePath, matPath, modelPath, texPath: string;
+  basePath, matPath, texPath: string;
 begin
   if RA3_LocoInitialized then Exit;
   RA3_LocoInitialized := True;
 
   basePath := 'C:\ZDSimulator55.008new\ra3\loco\';
+
+WheelModelIDs[0] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_1.dmd', 0, False);
+WheelModelIDs[1] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_2.dmd', 0, False);
+WheelModelIDs[2] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_3.dmd', 0, False);
+WheelModelIDs[3] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_4.dmd', 0, False);
 
   SetLength(LocoModelIDs, 0);
   SetLength(LocoTextureIDs, 0);
@@ -166,22 +174,10 @@ begin
       begin
         matPath := basePath + sr.Name + '\';
 
-        SetLength(LocoModelIDs, i + 1);
-        SetLength(LocoTextureIDs, i + 1);
-
-        LocoModelIDs[i] := 0;
-        LocoTextureIDs[i] := 0;
-
         if not DirectoryExists(matPath) then
-        begin
-          Inc(i);
           Continue;
-        end;
 
-        modelPath := matPath + 'main.dmd';
-        if FileExists(modelPath) then
-          LocoModelIDs[i] := LoadModel(modelPath, 0, False);
-
+        // --- текстура ---
         texPath := '';
         if FileExists(matPath + 'ra3_1_RGBA.bmp') then texPath := matPath + 'ra3_1_RGBA.bmp'
         else if FileExists(matPath + 'ra3_2_RGBA.bmp') then texPath := matPath + 'ra3_2_RGBA.bmp'
@@ -202,8 +198,29 @@ begin
         else if FileExists(matPath + 'ra3_17_RGBA.bmp') then texPath := matPath + 'ra3_17_RGBA.bmp'
         else if FileExists(matPath + 'ra3_18_RGBA.bmp') then texPath := matPath + 'ra3_18_RGBA.bmp';
 
-        if texPath <> '' then
-          LocoTextureIDs[i] := LoadTextureFromFile(texPath, 0, -1);
+        // --- загружаем ВСЕ .dmd ---
+        if FindFirst(matPath + '*.dmd', faAnyFile, sr2) = 0 then
+        begin
+repeat
+  if Pos('wheelset', LowerCase(sr2.Name)) > 0 then
+    Continue;
+
+  SetLength(LocoModelIDs, Length(LocoModelIDs) + 1);
+  SetLength(LocoTextureIDs, Length(LocoTextureIDs) + 1);
+
+  LocoModelIDs[High(LocoModelIDs)] :=
+    LoadModel(matPath + sr2.Name, 0, False);
+
+  if texPath <> '' then
+    LocoTextureIDs[High(LocoTextureIDs)] :=
+      LoadTextureFromFile(texPath, 0, -1)
+  else
+    LocoTextureIDs[High(LocoTextureIDs)] := 0;
+
+until FindNext(sr2) <> 0;
+
+          FindClose(sr2);
+        end;
 
         Inc(i);
       end;
@@ -251,10 +268,46 @@ begin
   end;
 end;
 
+procedure DrawWheels;
+const
+  X = 0.000053;
+  Z = 0.710448;
+var
+  Y: array[0..3] of Single;
+  i: Integer;
+begin
+  Y[0] := 8.36029;
+  Y[1] := 6.21029;
+  Y[2] := -6.64924;
+  Y[3] := -8.79924;
+
+  // обновляем вращение
+  WheelRotation := WheelRotation + StrToFloatDef(GetSpeed, 0) * 0.05;
+
+  for i := 0 to 3 do
+  begin
+    if WheelModelIDs[i] = 0 then Continue;
+
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+
+    Position3D(X, Y[i], Z);
+    RotateX(WheelRotation);
+
+    DrawModel(WheelModelIDs[i], 0, False);
+
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+  end;
+end;
+
 procedure DrawLocoRA3;
 var
   i: Integer;
 begin
+  // вращение от скорости
+  WheelRotation := WheelRotation + StrToFloat(GetSpeed) * 0.05;
+
   for i := 0 to High(LocoModelIDs) do
   begin
     if LocoModelIDs[i] = 0 then
@@ -264,6 +317,7 @@ begin
     glDisable(GL_LIGHTING);
 
     Position3D(0, 0, 0);
+    
 
     if LocoTextureIDs[i] <> 0 then
       SetTexture(LocoTextureIDs[i]);
@@ -463,7 +517,7 @@ end;
 procedure DrawArrows;
 begin
   DrawArrow(ArrowPMModelID,  1.16464, 10.6383, 2.75221,  0.481073, -0.141711,  0);
-  DrawArrow(ArrowTC1ModelID, 1.06527, 10.669,  2.75172,  0, 4.0 * 15.5, 0);
+  DrawArrow(ArrowTC1ModelID, 1.06527, 10.669,  2.75172,  0, 0, 0);
   DrawArrow(ArrowTC2ModelID, 1.06527, 10.679,  2.75172,  0.492883, -0.092628, -0.170907);
   DrawArrow(ArrowTMModelID,  1.16464, 10.6383, 2.75221,  0.481069, -0.141727, -0.084749);
 end;
@@ -483,6 +537,7 @@ begin
   InitRA3;
   DrawCabRA3;
   DrawLocoRA3;
+  DrawWheels;
   UpdateControllerAndDraw;
   DrawControllerBraking;
   DrawButtons;
