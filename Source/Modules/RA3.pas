@@ -60,6 +60,9 @@ var
   ArrowTC2ModelID: Integer = 0;
   ArrowTMModelID: Integer = 0;
 
+  TelegaMotorID: Integer = 0;
+  TelegaNemotorID: Integer = 0;
+
   CabModelIDs: array[0..7] of Integer;
   CabTextureIDs: array[0..7] of Integer;
 
@@ -72,6 +75,20 @@ var
 
   WheelRotation: Single = 0;
   WheelModelIDs: array[0..3] of Integer;
+  TelegaTextureID: Integer = 0;
+
+procedure DrawSimpleModel(ModelID: Integer; x, y, z: Single; TextureID: Integer = 0);
+begin
+  if ModelID = 0 then Exit;
+  BeginObj3D;
+  glDisable(GL_LIGHTING);
+  Position3D(x, y, z);
+  if TextureID <> 0 then
+    SetTexture(TextureID);
+  DrawModel(ModelID, 0, False);
+  glEnable(GL_LIGHTING);
+  EndObj3D;
+end;
 
 function IsRA3Active: Boolean;
 begin
@@ -161,6 +178,16 @@ WheelModelIDs[0] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\w
 WheelModelIDs[1] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_2.dmd', 0, False);
 WheelModelIDs[2] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_3.dmd', 0, False);
 WheelModelIDs[3] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_4.dmd', 0, False);
+
+TelegaMotorID :=
+  LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\telega_motor.dmd', 0, False);
+
+TelegaNemotorID :=
+  LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\telega_nemotor.dmd', 0, False);
+
+texPath := 'C:\ZDSimulator55.008new\ra3\loco\Material10.001\ra3_10_RGBA.bmp';
+if FileExists(texPath) then
+  TelegaTextureID := LoadTextureFromFile(texPath, 0, -1);
 
   SetLength(LocoModelIDs, 0);
   SetLength(LocoTextureIDs, 0);
@@ -268,6 +295,11 @@ begin
   end;
 end;
 
+procedure DrawTelega;
+begin
+  DrawSimpleModel(TelegaMotorID, 0, 0, 0, TelegaTextureID);
+end;
+
 procedure DrawWheels;
 const
   X = 0.000053;
@@ -281,7 +313,6 @@ begin
   Y[2] := -6.64924;
   Y[3] := -8.79924;
 
-  // обновляем вращение
   WheelRotation := WheelRotation + StrToFloatDef(GetSpeed, 0) * 0.05;
 
   for i := 0 to 3 do
@@ -293,6 +324,9 @@ begin
 
     Position3D(X, Y[i], Z);
     RotateX(WheelRotation);
+
+    if TelegaTextureID <> 0 then
+      SetTexture(TelegaTextureID);
 
     DrawModel(WheelModelIDs[i], 0, False);
 
@@ -420,18 +454,7 @@ begin
   EndObj3D;
 end;
 
-procedure DrawSimpleModel(ModelID: Integer; x, y, z: Single; TextureID: Integer = 0);
-begin
-  if ModelID = 0 then Exit;
-  BeginObj3D;
-  glDisable(GL_LIGHTING);
-  Position3D(x, y, z);
-  if TextureID <> 0 then
-    SetTexture(TextureID);
-  DrawModel(ModelID, 0, False);
-  glEnable(GL_LIGHTING);
-  EndObj3D;
-end;
+
 
 procedure DrawControllerBraking;
 begin
@@ -537,6 +560,7 @@ begin
   InitRA3;
   DrawCabRA3;
   DrawLocoRA3;
+  DrawTelega;
   DrawWheels;
   UpdateControllerAndDraw;
   DrawControllerBraking;
