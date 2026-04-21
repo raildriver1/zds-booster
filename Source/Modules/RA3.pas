@@ -564,24 +564,36 @@ begin
 end;
 
 
+
+const
+  WAGON_CENTER_OFFSET_X: Single = 0.0;
+  WAGON_CENTER_OFFSET_Y: Single = 0.0;
+  WAGON_CENTER_OFFSET_Z: Single = 0.0;
+
+
 procedure DrawWagonRA3;
 var
   w, i: Integer;
   wagonAngZ: Single;
   locoAngZ, wagAng, diff: Double;
-  locoX, locoY: Double;
-  wagX, wagY: Double;
+  locoX, locoY, locoZ: Double;
+  wagX, wagY, wagZ, wagPitch: Double;
   dx, dy, cosA, sinA: Double;
-  localX, localY: Single;
+  localX, localY, relZ: Single;
   poezdBase, ebxAddr, locsecPtr: Cardinal;
+  speed: Single;
+  shakeX, shakeY, shakeZ, shakeAng: Single;
+  shakeTime: Double;
+  shakeIntensity: Single;
 
   procedure DrawModelSafe(ModelID, TexID: Integer);
   begin
     if ModelID = 0 then Exit;
     BeginObj3D;
     glDisable(GL_LIGHTING);
-    Position3D(localX, localY, WAGON_POS_Z);
-    RotateZ(wagonAngZ);
+    Position3D(localX + shakeX, localY + shakeY, relZ + shakeZ);
+    RotateZ(wagonAngZ + shakeAng);
+    Position3D(WAGON_CENTER_OFFSET_X, WAGON_CENTER_OFFSET_Y, WAGON_CENTER_OFFSET_Z);
     if TexID <> 0 then SetTexture(TexID)
     else SetTexture(0);
     DrawModel(ModelID, 0, False);
@@ -590,25 +602,21 @@ var
   end;
 
 procedure DrawWheelset(offsetY: Single);
-begin
-  if WagonWheelsetID = 0 then Exit;
-  BeginObj3D;
-  glDisable(GL_LIGHTING);
-
-  // Та же позиция и поворот что и у корпуса
-  Position3D(localX, localY, WAGON_POS_Z);
-  RotateZ(wagonAngZ);
-
-  // Теперь смещаем колёсную пару ВНУТРИ системы координат вагона
-  Position3D(WAGON_WS_X, offsetY, WAGON_WS_Z);
-  RotateX(WagonWheelRotation);
-
-  if WagonWheelsetTextureID <> 0 then SetTexture(WagonWheelsetTextureID)
-  else SetTexture(0);
-  DrawModel(WagonWheelsetID, 0, False);
-  glEnable(GL_LIGHTING);
-  EndObj3D;
-end;
+  begin
+    if WagonWheelsetID = 0 then Exit;
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    // Без shakeX/Y/Z/Ang — колёса жёстко на рельсах
+    Position3D(localX, localY, relZ);
+    RotateZ(wagonAngZ);
+    Position3D(WAGON_WS_X, offsetY, WAGON_WS_Z);
+    RotateX(WagonWheelRotation);
+    if WagonWheelsetTextureID <> 0 then SetTexture(WagonWheelsetTextureID)
+    else SetTexture(0);
+    DrawModel(WagonWheelsetID, 0, False);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+  end;
 
 begin
   WagonWheelRotation := WagonWheelRotation + StrToFloatDef(GetSpeed, 0) * 0.05;
@@ -616,22 +624,31 @@ begin
   poezdBase := PCardinal(POEZD_PTR_ADDR)^;
   if poezdBase = 0 then Exit;
 
-  locoAngZ := PDouble($09007C5C)^;
-
   locsecPtr := PCardinal($0074AEA0)^;
   if locsecPtr = 0 then Exit;
+
+  locoAngZ := PDouble($09007C5C)^;
   locoX := PDouble(locsecPtr + 24)^;
   locoY := PDouble(locsecPtr + 32)^;
+  locoZ := PDouble(locsecPtr + 40)^;
 
   cosA := Cos(locoAngZ * Pi / 180.0);
   sinA := Sin(locoAngZ * Pi / 180.0);
+
+  speed := Abs(StrToFloatDef(GetSpeed, 0));
+  shakeTime := GetTickCount / 1000.0;
 
   for w := 0 to GetWagonCount - 1 do
   begin
     ebxAddr := poezdBase + 108 + Cardinal(w) * 144;
 
+    wagPitch := PDouble(ebxAddr - $24)^;
+    if Abs(wagPitch) > 0.1 then
+      Continue;
+
     wagX := PDouble(ebxAddr - $6C)^;
     wagY := PDouble(ebxAddr - $64)^;
+    wagZ := PDouble(ebxAddr - $2C)^;
 
     wagAng := PDouble(ebxAddr - $14)^;
     diff := wagAng - locoAngZ;
@@ -643,6 +660,17 @@ begin
     dy := wagY - locoY;
     localX := dx * cosA - dy * sinA;
     localY := (dx * sinA + dy * cosA) * 1.05;
+
+    relZ := 0.0;
+
+    // Тряска — каждый вагон со своей фазой и частотой
+    shakeIntensity := speed / 400.0;
+    if shakeIntensity > 0.03 then shakeIntensity := 0.03;
+
+    shakeX := Sin(shakeTime * (7.3 + w * 2.1) + w * 17.0) * shakeIntensity;
+    shakeY := 0.0;
+    shakeZ := 0.0;
+    shakeAng := Sin(shakeTime * (6.4 + w * 1.5) + w * 13.0) * shakeIntensity * 15.0;
 
     for i := 0 to High(WagonModelIDs) do
       DrawModelSafe(WagonModelIDs[i], WagonTextureIDs[i]);
