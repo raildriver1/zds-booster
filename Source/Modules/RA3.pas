@@ -23,6 +23,8 @@ const
 
   BUTTON_PRESS_DELTA: Single = 0.005;
 
+
+
 var
   RA3_LocoInitialized: Boolean = False;
   RA3_DynamicInitialized: Boolean = False;
@@ -114,10 +116,8 @@ const
   DRAG_PX_PER_STEP: Single = 30.0;
   DRAG_ANGLE_PER_PX: Single = 1.5;
 
-  // ===== Параметры вагонов — крути эти значения =====
-  WAGON_COUNT = 3;
   // Смещение первого вагона относительно начала координат локомотива (по оси Y):
-  WAGON_FIRST_OFFSET_Y: Single = -23.0;
+  WAGON_FIRST_OFFSET_Y: Single = -23.33;
   // Шаг между вагонами по Y (негатив — «назад»):
   WAGON_STEP_Y: Single = -23.0;
   // X и Z локального положения (обычно оставить 0):
@@ -130,6 +130,8 @@ const
   WAGON_WS_Y_2: Single =  6.25357;
   WAGON_WS_Y_3: Single = -6.17666;
   WAGON_WS_Y_4: Single = -8.32665;
+
+
 
 function IsKeyDownEx(Key: Integer): Boolean;
 begin
@@ -529,64 +531,122 @@ begin
   end;
 end;
 
+const
+  NSVETOFORS_ADDR: Cardinal = $091D4EA8; // из ассемблера
+  POEZD_PTR_ADDR = $0074B52C;
+  POEZD_FIRST_WAGON_OFFSET = 108; // начальное смещение ebx от базы
+  WAGON_STRIDE = 144;             // 0x90 байт на вагон
+
+  // Смещения относительно ebx (указателя на текущий вагон)
+  // ebx указывает на поле [+108] первого вагона
+  // Позиции читаются как [ebx - 0x6C], [ebx - 0x64], [ebx - 0x2C]
+  REL_OFF_X    = -$6C;  // -108 -> позиция X (double)
+  REL_OFF_Y    = -$64;  // -100 -> позиция Y (double)
+  REL_OFF_Z    = -$2C;  // -44  -> позиция Z (double)
+  REL_OFF_ANGZ = -$14;  // -20  -> RotateZ (double)
+  REL_OFF_PITCH= -$24;  // -36  -> RotateX/pitch (double)
+
+function GetLocoAngleZ: Single;
+begin
+  // NSVETOFORS[584] для локомотива — или из LOCSECTIONS
+  // *((double *)&U__VARIABLES____LOCSECTIONS + 61) — это RotateZ локомотива
+  // Но проще взять U__VARIABLES____PREVLOKANGLEZDEG
+  Result := PSingle($09110D3C)^;  // off_74B4F4 = PREVLOKANGLEZDEG (нужно уточнить)
+end;
+
+function GetWagonAngleZ(wagonIdx: Integer): Single;
+var
+  i: Integer;
+begin
+  i := wagonIdx + 1;
+  // 584 = offset AngleZ (градусы) внутри NSVETOFORS
+  Result := PDouble(NSVETOFORS_ADDR + Cardinal(144 * i + 584))^;
+end;
+
+
 procedure DrawWagonRA3;
 var
   w, i: Integer;
-  wagonY: Single;
+  wagonAngZ: Single;
+  locoAngZ, wagAng, diff: Double;
+  locoX, locoY: Double;
+  wagX, wagY: Double;
+  dx, dy, cosA, sinA: Double;
+  localX, localY: Single;
+  poezdBase, ebxAddr, locsecPtr: Cardinal;
 
   procedure DrawModelSafe(ModelID, TexID: Integer);
   begin
     if ModelID = 0 then Exit;
-
     BeginObj3D;
     glDisable(GL_LIGHTING);
-
-    Position3D(WAGON_POS_X, wagonY, WAGON_POS_Z);
-
-    if TexID <> 0 then
-      SetTexture(TexID)
-    else
-      SetTexture(0);
-
+    Position3D(localX, localY, WAGON_POS_Z);
+    RotateZ(wagonAngZ);
+    if TexID <> 0 then SetTexture(TexID)
+    else SetTexture(0);
     DrawModel(ModelID, 0, False);
-
     glEnable(GL_LIGHTING);
     EndObj3D;
   end;
 
-  procedure DrawWheelset(offsetY: Single);
-  begin
-    if WagonWheelsetID = 0 then Exit;
+procedure DrawWheelset(offsetY: Single);
+begin
+  if WagonWheelsetID = 0 then Exit;
+  BeginObj3D;
+  glDisable(GL_LIGHTING);
 
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
+  // Та же позиция и поворот что и у корпуса
+  Position3D(localX, localY, WAGON_POS_Z);
+  RotateZ(wagonAngZ);
 
-    Position3D(WAGON_WS_X, wagonY + offsetY, WAGON_WS_Z);
-    RotateX(WagonWheelRotation);
+  // Теперь смещаем колёсную пару ВНУТРИ системы координат вагона
+  Position3D(WAGON_WS_X, offsetY, WAGON_WS_Z);
+  RotateX(WagonWheelRotation);
 
-    if WagonWheelsetTextureID <> 0 then
-      SetTexture(WagonWheelsetTextureID)
-    else
-      SetTexture(0);
-
-    DrawModel(WagonWheelsetID, 0, False);
-
-    glEnable(GL_LIGHTING);
-    EndObj3D;
-  end;
+  if WagonWheelsetTextureID <> 0 then SetTexture(WagonWheelsetTextureID)
+  else SetTexture(0);
+  DrawModel(WagonWheelsetID, 0, False);
+  glEnable(GL_LIGHTING);
+  EndObj3D;
+end;
 
 begin
   WagonWheelRotation := WagonWheelRotation + StrToFloatDef(GetSpeed, 0) * 0.05;
 
-  for w := 0 to WAGON_COUNT - 1 do
-  begin
-    wagonY := WAGON_FIRST_OFFSET_Y + w * WAGON_STEP_Y;
+  poezdBase := PCardinal(POEZD_PTR_ADDR)^;
+  if poezdBase = 0 then Exit;
 
-    // корпус вагона
+  locoAngZ := PDouble($09007C5C)^;
+
+  locsecPtr := PCardinal($0074AEA0)^;
+  if locsecPtr = 0 then Exit;
+  locoX := PDouble(locsecPtr + 24)^;
+  locoY := PDouble(locsecPtr + 32)^;
+
+  cosA := Cos(locoAngZ * Pi / 180.0);
+  sinA := Sin(locoAngZ * Pi / 180.0);
+
+  for w := 0 to GetWagonCount - 1 do
+  begin
+    ebxAddr := poezdBase + 108 + Cardinal(w) * 144;
+
+    wagX := PDouble(ebxAddr - $6C)^;
+    wagY := PDouble(ebxAddr - $64)^;
+
+    wagAng := PDouble(ebxAddr - $14)^;
+    diff := wagAng - locoAngZ;
+    while diff > 180 do diff := diff - 360;
+    while diff < -180 do diff := diff + 360;
+    wagonAngZ := diff;
+
+    dx := wagX - locoX;
+    dy := wagY - locoY;
+    localX := dx * cosA - dy * sinA;
+    localY := (dx * sinA + dy * cosA) * 1.05;
+
     for i := 0 to High(WagonModelIDs) do
       DrawModelSafe(WagonModelIDs[i], WagonTextureIDs[i]);
 
-    // 4 колесные пары
     DrawWheelset(WAGON_WS_Y_1);
     DrawWheelset(WAGON_WS_Y_2);
     DrawWheelset(WAGON_WS_Y_3);

@@ -31,6 +31,7 @@ function GetRoutePathFromMemory: string; // Получение пути марш
 function GetSpeedValue: Integer;     // Скорость как число
 function GetTargetSpeedValue: Integer;     // Целевая Скорость как число
 function GetControllerED4M: Integer;
+function GetWagonCount: Integer;
 
 function GetDistanceValue: Integer; // Расстояние как число
 function GetTrackNumberInt: Byte;   // Номер пути в байте
@@ -65,6 +66,16 @@ type
     MaxRange: Integer;
     SpeedLimit: Integer;
   end;
+
+
+function GetWagonCount: Integer;
+begin
+  try
+    Result := PByte($00749990)^;
+  except
+    Result := 0;
+  end;
+end;
 
 procedure WriteToLog(const Message: string);
 var
