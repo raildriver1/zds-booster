@@ -64,6 +64,19 @@ LOGO_SIZE = 128;
 implementation
 uses DrawFunc3D;
 
+// ZDS-Booster: apply anisotropic filtering + LOD bias to the currently-bound
+// GL_TEXTURE_2D. ActualMaxAniso > 1.0 means a usable level was negotiated at
+// context init (probed via glGetFloatv since the dglOpenGL extension flag is
+// unreliable on 3.0+ contexts). GL_TEXTURE_LOD_BIAS is core in GL 1.4, so we
+// don't gate it on a flag.
+procedure ApplyAnisotropy;
+begin
+  if ActualMaxAniso > 1.0 then
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, ActualMaxAniso);
+  if InitLODBias <> 0.0 then
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, InitLODBias);
+end;
+
 procedure SetDefaultJPGTransparentColorTolerance(Tolerance : byte); stdcall;
 begin
 DefJPGTolerance:=Tolerance;
@@ -380,6 +393,7 @@ var
   Format2, WOld, HOld : Word;
   NeedResize : boolean;
   i : integer;
+  ImgData : Pointer;
 begin
 
   if not GL_ARB_texture_non_power_of_two then
@@ -430,19 +444,20 @@ begin
   GL_ALPHA: Format2:=GL_COMPRESSED_ALPHA_ARB;
   end else Format2:=Format;
 
-  if not NeedResize then
+  // ZDS-Booster: prefer GPU-side glGenerateMipmap (Core in GL 3.0+) over the
+  // CPU-bound gluBuild2DMipmaps. Cuts texture upload stutter noticeably on
+  // routes with many BMPs. Falls back to GLU on legacy contexts.
+  if NeedResize then ImgData := pData2 else ImgData := pData;
 
-    if MipMapping then
-    gluBuild2DMipmaps(GL_TEXTURE_2D, Format2, Width, Height, Format, GL_UNSIGNED_BYTE, pData)
-    else
-    glTexImage2D(GL_TEXTURE_2D, 0, Format2, Width, Height, 0, Format, GL_UNSIGNED_BYTE, pData)
-
-    else
-
-    if MipMapping then
-    gluBuild2DMipmaps(GL_TEXTURE_2D, Format2, Width, Height, Format, GL_UNSIGNED_BYTE, pData2)
-    else
-    glTexImage2D(GL_TEXTURE_2D, 0, Format2, Width, Height, 0, Format, GL_UNSIGNED_BYTE, pData2);
+  if MipMapping and Assigned(glGenerateMipmap) then
+  begin
+    glTexImage2D(GL_TEXTURE_2D, 0, Format2, Width, Height, 0, Format, GL_UNSIGNED_BYTE, ImgData);
+    glGenerateMipmap(GL_TEXTURE_2D);
+  end
+  else if MipMapping then
+    gluBuild2DMipmaps(GL_TEXTURE_2D, Format2, Width, Height, Format, GL_UNSIGNED_BYTE, ImgData)
+  else
+    glTexImage2D(GL_TEXTURE_2D, 0, Format2, Width, Height, 0, Format, GL_UNSIGNED_BYTE, ImgData);
 
   if NeedResize then FreeMem(pData2);
 
@@ -465,6 +480,8 @@ begin
   if _TextureFiltering then
   glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR) else
   glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+
+  if MipMapping and _TextureFiltering then ApplyAnisotropy;
 
   glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
@@ -1052,6 +1069,8 @@ s := TMemoryStream.Create;
 
  	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+
+	ApplyAnisotropy;
 
 	glTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
 

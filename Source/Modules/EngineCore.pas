@@ -23,7 +23,7 @@ unit EngineCore;
 interface
 uses SysUtils, Windows, Messages, Variables, OpenGl, DrawFunc2D, Textures,
 EngineUtils, DrawFunc3D, Console, Sound, DPC_packages, Advanced3D, Net,
-IniFile, CheatMenu, DiscordRPC;
+IniFile, CheatMenu, DiscordRPC, FXAA, Bloom;
 
 {$R DGLEngine.res}
 {$R Logo.res}
@@ -747,6 +747,9 @@ begin
 
   glMatrixMode(GL_MODELVIEW);
   glLoadIdentity();
+
+  ResizeFXAA(Width, Height);
+  ResizeBloom(Width, Height);
 end;
 {------------------------------------------------------------------}
 procedure UpdateRenderRect(NewWidth,NewHeight : integer); stdcall;
@@ -776,6 +779,7 @@ begin
 
         FPSCount:=FPSCount+1;
 
+       BeginFXAAFrame;
        glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT);
        glLoadIdentity();
 
@@ -806,6 +810,9 @@ begin
          DrawTexture2D(Logo,InitResX-LOGO_SIZE,InitResY-LOGO_SIZE,LOGO_SIZE,LOGO_SIZE,0,i,$FFFFFF,false);
         End2D;
        end;
+
+       ApplyBloom;
+       EndFXAAFrame;
 
        glFlush();
        glFinish();
@@ -990,6 +997,14 @@ begin
       except
         // Игнорируем ошибки курсора
       end;
+    end;
+
+    // FXAA/Bloom cleanup must happen while context is still current.
+    try
+      ShutdownFXAA;
+      ShutdownBloom;
+    except
+      // ignore — engine is shutting down anyway
     end;
 
     // OpenGL очистка с защитой от зависания
@@ -1566,10 +1581,198 @@ begin
   end;
 end;
 {--------------------------------------------------------------------}
+// ZDS-Booster: bootstrap WGL ARB extensions via throwaway window.
+// Required because wglChoosePixelFormatARB / wglCreateContextAttribsARB
+// can only be queried through a live GL context, and a window's pixel
+// format can only be set once.
+procedure BootstrapWGLExtensions(
+  out ChoosePFArb   : TwglChoosePixelFormatARB;
+  out CreateCtxArb  : TwglCreateContextAttribsARB);
+var
+  DummyClass : TWndClass;
+  DummyWnd   : HWND;
+  DummyDC    : HDC;
+  DummyRC    : HGLRC;
+  DummyPFD   : TPIXELFORMATDESCRIPTOR;
+  PF         : Integer;
+  HI         : HINST;
+begin
+  ChoosePFArb  := nil;
+  CreateCtxArb := nil;
+  HI := GetModuleHandle(nil);
+
+  ZeroMemory(@DummyClass, SizeOf(DummyClass));
+  DummyClass.style         := CS_OWNDC;
+  DummyClass.lpfnWndProc   := @DefWindowProc;
+  DummyClass.hInstance     := HI;
+  DummyClass.lpszClassName := 'DGLE_WGLBootstrap';
+  if RegisterClass(DummyClass) = 0 then
+    if GetLastError <> ERROR_CLASS_ALREADY_EXISTS then Exit;
+
+  DummyWnd := CreateWindowEx(0, 'DGLE_WGLBootstrap', 'b', WS_OVERLAPPEDWINDOW,
+                             0, 0, 1, 1, 0, 0, HI, nil);
+  if DummyWnd = 0 then Exit;
+
+  DummyDC := GetDC(DummyWnd);
+  if DummyDC = 0 then
+  begin
+    DestroyWindow(DummyWnd);
+    Exit;
+  end;
+
+  ZeroMemory(@DummyPFD, SizeOf(DummyPFD));
+  DummyPFD.nSize      := SizeOf(DummyPFD);
+  DummyPFD.nVersion   := 1;
+  DummyPFD.dwFlags    := PFD_DRAW_TO_WINDOW or PFD_SUPPORT_OPENGL or PFD_DOUBLEBUFFER;
+  DummyPFD.iPixelType := PFD_TYPE_RGBA;
+  DummyPFD.cColorBits := 32;
+  DummyPFD.cDepthBits := 24;
+  DummyPFD.iLayerType := PFD_MAIN_PLANE;
+
+  PF := ChoosePixelFormat(DummyDC, @DummyPFD);
+  if (PF = 0) or (not SetPixelFormat(DummyDC, PF, @DummyPFD)) then
+  begin
+    ReleaseDC(DummyWnd, DummyDC);
+    DestroyWindow(DummyWnd);
+    Exit;
+  end;
+
+  DummyRC := wglCreateContext(DummyDC);
+  if DummyRC = 0 then
+  begin
+    ReleaseDC(DummyWnd, DummyDC);
+    DestroyWindow(DummyWnd);
+    Exit;
+  end;
+
+  if wglMakeCurrent(DummyDC, DummyRC) then
+  begin
+    ChoosePFArb  := TwglChoosePixelFormatARB(wglGetProcAddress('wglChoosePixelFormatARB'));
+    CreateCtxArb := TwglCreateContextAttribsARB(wglGetProcAddress('wglCreateContextAttribsARB'));
+    wglMakeCurrent(0, 0);
+  end;
+
+  wglDeleteContext(DummyRC);
+  ReleaseDC(DummyWnd, DummyDC);
+  DestroyWindow(DummyWnd);
+end;
+
+// ZDS-Booster: pick a pixel format with MSAA on the real DC via ARB.
+// Returns 0 on failure (caller falls back to ChoosePixelFormat).
+// OutSamples receives the number of samples actually obtained.
+function PickPixelFormatMSAA(DC : HDC; PixelDepth, ZBits : Integer;
+                             UseStencil : Boolean; RequestedSamples : Integer;
+                             ChoosePFArb : TwglChoosePixelFormatARB;
+                             out OutSamples : Integer) : Integer;
+const
+  WGL_DRAW_TO_WINDOW_ARB   = $2001;
+  WGL_ACCELERATION_ARB     = $2003;
+  WGL_SUPPORT_OPENGL_ARB   = $2010;
+  WGL_DOUBLE_BUFFER_ARB    = $2011;
+  WGL_PIXEL_TYPE_ARB       = $2013;
+  WGL_COLOR_BITS_ARB       = $2014;
+  WGL_DEPTH_BITS_ARB       = $2022;
+  WGL_STENCIL_BITS_ARB     = $2023;
+  WGL_FULL_ACCELERATION_ARB = $2027;
+  WGL_TYPE_RGBA_ARB        = $202B;
+  WGL_SAMPLE_BUFFERS_ARB   = $2041;
+  WGL_SAMPLES_ARB          = $2042;
+var
+  IA : array[0..23] of Integer;
+  FA : array[0..0] of Single;
+  Formats : array[0..7] of Integer;
+  NumFormats : GLuint;
+  TryCount, Stencil, n : Integer;
+begin
+  Result := 0;
+  OutSamples := 0;
+  if not Assigned(ChoosePFArb) then Exit;
+  if RequestedSamples <= 1 then Exit;
+
+  if UseStencil then Stencil := 8 else Stencil := 0;
+  FA[0] := 0;
+  TryCount := RequestedSamples;
+
+  // Downgrade samples on failure: 16 -> 8 -> 4 -> 2 -> give up.
+  while TryCount >= 2 do
+  begin
+    n := 0;
+    IA[n] := WGL_DRAW_TO_WINDOW_ARB;   IA[n+1] := 1; Inc(n, 2);
+    IA[n] := WGL_SUPPORT_OPENGL_ARB;   IA[n+1] := 1; Inc(n, 2);
+    IA[n] := WGL_DOUBLE_BUFFER_ARB;    IA[n+1] := 1; Inc(n, 2);
+    IA[n] := WGL_ACCELERATION_ARB;     IA[n+1] := WGL_FULL_ACCELERATION_ARB; Inc(n, 2);
+    IA[n] := WGL_PIXEL_TYPE_ARB;       IA[n+1] := WGL_TYPE_RGBA_ARB; Inc(n, 2);
+    IA[n] := WGL_COLOR_BITS_ARB;       IA[n+1] := PixelDepth; Inc(n, 2);
+    IA[n] := WGL_DEPTH_BITS_ARB;       IA[n+1] := ZBits; Inc(n, 2);
+    IA[n] := WGL_STENCIL_BITS_ARB;     IA[n+1] := Stencil; Inc(n, 2);
+    IA[n] := WGL_SAMPLE_BUFFERS_ARB;   IA[n+1] := 1; Inc(n, 2);
+    IA[n] := WGL_SAMPLES_ARB;          IA[n+1] := TryCount; Inc(n, 2);
+    IA[n] := 0;                        IA[n+1] := 0;
+
+    NumFormats := 0;
+    if ChoosePFArb(DC, @IA[0], @FA[0], 8, @Formats[0], @NumFormats)
+       and (NumFormats > 0) then
+    begin
+      Result := Formats[0];
+      OutSamples := TryCount;
+      Exit;
+    end;
+
+    TryCount := TryCount div 2;
+  end;
+end;
+
+// ZDS-Booster: create GL 4.6 Compatibility context, downgrading on failure.
+// Returns 0 if ARB path unavailable; caller falls back to wglCreateContext.
+function CreateModernGLContext(DC : HDC;
+                               CreateCtxArb : TwglCreateContextAttribsARB;
+                               out GotMajor, GotMinor : Integer) : HGLRC;
+const
+  WGL_CONTEXT_MAJOR_VERSION_ARB            = $2091;
+  WGL_CONTEXT_MINOR_VERSION_ARB            = $2092;
+  WGL_CONTEXT_PROFILE_MASK_ARB             = $9126;
+  WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB = $00000002;
+var
+  Attribs : array[0..8] of Integer;
+  Versions : array[0..4, 0..1] of Integer;
+  i : Integer;
+begin
+  Result := 0;
+  GotMajor := 0;
+  GotMinor := 0;
+  if not Assigned(CreateCtxArb) then Exit;
+
+  // Try newest first, step down on failure.
+  Versions[0, 0] := 4; Versions[0, 1] := 6;
+  Versions[1, 0] := 4; Versions[1, 1] := 3;
+  Versions[2, 0] := 4; Versions[2, 1] := 0;
+  Versions[3, 0] := 3; Versions[3, 1] := 3;
+  Versions[4, 0] := 3; Versions[4, 1] := 0;
+
+  for i := 0 to High(Versions) do
+  begin
+    Attribs[0] := WGL_CONTEXT_MAJOR_VERSION_ARB;
+    Attribs[1] := Versions[i, 0];
+    Attribs[2] := WGL_CONTEXT_MINOR_VERSION_ARB;
+    Attribs[3] := Versions[i, 1];
+    Attribs[4] := WGL_CONTEXT_PROFILE_MASK_ARB;
+    Attribs[5] := WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
+    Attribs[6] := 0;
+    Attribs[7] := 0;
+    Result := CreateCtxArb(DC, 0, @Attribs[0]);
+    if Result <> 0 then
+    begin
+      GotMajor := Versions[i, 0];
+      GotMinor := Versions[i, 1];
+      Exit;
+    end;
+  end;
+end;
+
 function glCreateWnd(Width, Height : Integer; Fullscreen : Boolean; PixelDepth, Freq : Integer; Vsync : boolean) : Boolean;
 var
   wndClass : TWndClass;
-  LocType: Integer; 
+  LocType: Integer;
   dwStyle : DWORD;
   dwExStyle : DWORD;
   DTDC :  HDC;
@@ -1580,6 +1783,13 @@ var
   EngineIni : TIniFile;
   real_win_h,real_win_w, i, Major, Minor : integer;
   SysInfo : _SYSTEM_INFO;
+  ChoosePFArb  : TwglChoosePixelFormatARB;
+  CreateCtxArb : TwglCreateContextAttribsARB;
+  MSAAPixelFormat : Integer;
+  MSAASamplesGot  : Integer;
+  ModernMajor, ModernMinor : Integer;
+  ModernRC : HGLRC;
+  AnisoQuery : GLfloat;
 
 
 
@@ -1785,7 +1995,27 @@ end;
     dwDamageMask    := 0;
   end;
 
-  PixelFormat := ChoosePixelFormat(h_DC, @pfd);
+  // ZDS-Booster: bootstrap ARB entry points before touching the real window's
+  // pixel format. If any step fails we silently fall back to the legacy path.
+  ChoosePFArb  := nil;
+  CreateCtxArb := nil;
+  MSAAPixelFormat := 0;
+  MSAASamplesGot  := 0;
+  BootstrapWGLExtensions(ChoosePFArb, CreateCtxArb);
+
+  if (InitMSAASamples >= 2) and Assigned(ChoosePFArb) then
+    MSAAPixelFormat := PickPixelFormatMSAA(h_DC, PixelDepth, InitZBuffer,
+                                           INITStencil, InitMSAASamples,
+                                           ChoosePFArb, MSAASamplesGot);
+
+  if MSAAPixelFormat <> 0 then
+    PixelFormat := MSAAPixelFormat
+  else
+  begin
+    PixelFormat := ChoosePixelFormat(h_DC, @pfd);
+    MSAASamplesGot := 0;
+  end;
+
   if (PixelFormat = 0) then
   begin
     AddToLogFile(EngineLog,'Unable to find a suitable pixel format!');
@@ -1804,7 +2034,25 @@ end;
     Exit;
   end;
 
-  h_RC := wglCreateContext(h_DC);
+  ModernRC    := 0;
+  ModernMajor := 0;
+  ModernMinor := 0;
+  if Assigned(CreateCtxArb) then
+    ModernRC := CreateModernGLContext(h_DC, CreateCtxArb, ModernMajor, ModernMinor);
+
+  if ModernRC <> 0 then
+  begin
+    h_RC := ModernRC;
+    UsingModernContext := True;
+    ActualGLMajor := ModernMajor;
+    ActualGLMinor := ModernMinor;
+  end
+  else
+  begin
+    h_RC := wglCreateContext(h_DC);
+    UsingModernContext := False;
+  end;
+
   if (h_RC = 0) then
   begin
     AddToLogFile(EngineLog,'Unable to create an OpenGL rendering context!');
@@ -1818,13 +2066,36 @@ end;
   begin
     AddToLogFile(EngineLog,'Unable to activate OpenGL rendering context!');
     glKillWnd(Fullscreen);
-    MessageBox(0, 'Unable to activate OpenGL rendering context!', 'Error', MB_OK or MB_ICONERROR);
+    MessageBox(0, 'Unable to create an OpenGL rendering context!', 'Error', MB_OK or MB_ICONERROR);
     Result := False;
     Exit;
   end;
   ReadExtensions;
   ReadImplementationProperties;
   OpenGLInitialized := True;
+  ActualMSAASamples := MSAASamplesGot;
+
+  // ZDS-Booster: enable MSAA if we actually got a multisample buffer.
+  if ActualMSAASamples >= 2 then
+    glEnable(GL_MULTISAMPLE);
+
+  // ZDS-Booster: probe anisotropic cap directly. dglOpenGL's extension flag
+  // can be unreliable on 3.0+ contexts (legacy glGetString(GL_EXTENSIONS)
+  // sometimes returns NULL even in Compatibility profile). glGetFloatv with
+  // GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT is authoritative.
+  // (Note: GL_TEXTURE_MAX_ANISOTROPY_EXT is the per-texture parameter,
+  //  GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT is the implementation limit — easy mixup.)
+  ActualMaxAniso := 1.0;
+  AnisoQuery := 0.0;
+  glGetError; // clear any pre-existing error so our check is clean
+  glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, @AnisoQuery);
+  if (glGetError = GL_NO_ERROR) and (AnisoQuery > 1.0) then
+  begin
+    if (InitAnisoLevel > 0) and (InitAnisoLevel < Trunc(AnisoQuery)) then
+      ActualMaxAniso := InitAnisoLevel
+    else
+      ActualMaxAniso := AnisoQuery;
+  end;
 
   if not DrawToPanel then
    if Vsync then VBL2(vsmSync) else VBL2(vsmNoSync);
@@ -1851,6 +2122,19 @@ end;
       AddToLogFile(EngineLog,'RAM Total      : '+inttostr(round(GetMemory/1048576+0.40))+'Mb');
       AddToLogFile(EngineLog,'Video device   : '+glGetString(GL_RENDERER));
       AddToLogFile(EngineLog,'OpenGL         : '+glGetString(GL_VERSION)+' ('+glGetString(GL_VENDOR)+')');
+      if UsingModernContext then
+        AddToLogFile(EngineLog,'Context        : Modern (Compatibility Profile '
+                     +IntToStr(ActualGLMajor)+'.'+IntToStr(ActualGLMinor)+')')
+      else
+        AddToLogFile(EngineLog,'Context        : Legacy (wglCreateContext fallback)');
+      if ActualMSAASamples >= 2 then
+        AddToLogFile(EngineLog,'MSAA           : '+IntToStr(ActualMSAASamples)+'x')
+      else
+        AddToLogFile(EngineLog,'MSAA           : off');
+      if ActualMaxAniso > 1.0 then
+        AddToLogFile(EngineLog,'Anisotropic    : '+IntToStr(Trunc(ActualMaxAniso))+'x')
+      else
+        AddToLogFile(EngineLog,'Anisotropic    : unsupported');
       //AddToLogFile(EngineLog,'OpenGL Extensions:'+glGetString(GL_EXTENSIONS));
 
       glGetIntegerv(GL_MAX_TEXTURE_SIZE,@i);
@@ -1925,6 +2209,9 @@ end;
   glEnable(GL_TEXTURE_2D);
   glEnable(GL_NORMALIZE);
   glEnable(GL_COLOR_MATERIAL);
+
+  InitFXAA(Width, Height);
+  InitBloom(Width, Height);
 
   InitEng;
 

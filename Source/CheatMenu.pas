@@ -87,7 +87,11 @@ type
     ShowTrafficLights: Boolean; 
     
     NewSky: Boolean;
-    
+
+    // Visual — engine-level post-process toggles (ZDS-Booster).
+    FXAAEnable: Boolean;
+    BloomEnable: Boolean;
+
     // Locomotive
     NewClubPositions: Boolean;
     DeveloperMenu: Boolean;
@@ -255,6 +259,8 @@ type
     MainCameraText: string;
     MaxDistanceText: string;
     NewSkyText: string;
+    FXAAText: string;
+    BloomText: string;
     ClubFixesText: string;
     DeveloperMenuText: string;
     RA3HoverText: string;
@@ -293,6 +299,8 @@ const
       MainCameraText: 'Основная Камера';
       MaxDistanceText: 'Макс. дальность';
       NewSkyText: 'Новая логика неба';
+      FXAAText: 'Сглаживание FXAA';
+      BloomText: 'Свечение (Bloom)';
       ClubFixesText: 'Исправления БИЛ-В';
       DeveloperMenuText: 'Меню разработчика';
       RA3HoverText: 'RA3 подсветка';
@@ -322,6 +330,8 @@ const
       MainCameraText: 'Основна Камера';
       MaxDistanceText: 'Макс. відстань';
       NewSkyText: 'Нова логіка неба';
+      FXAAText: 'Згладжування FXAA';
+      BloomText: 'Сяйво (Bloom)';
       ClubFixesText: 'Виправлення БІЛ-В';
       DeveloperMenuText: 'Меню розробника';
       RA3HoverText: 'RA3 підсвітка';
@@ -351,6 +361,8 @@ const
       MainCameraText: 'Main Camera';
       MaxDistanceText: 'Max Distance';
       NewSkyText: 'New Sky Logic';
+      FXAAText: 'FXAA Antialiasing';
+      BloomText: 'Bloom Glow';
       ClubFixesText: 'BIL-V Fixes';
       DeveloperMenuText: 'Developer Menu';
       RA3HoverText: 'RA3 Highlight';
@@ -383,6 +395,8 @@ begin
   else if TextType = 'MainCameraText' then Result := LanguageTexts[CurrentLanguage].MainCameraText
   else if TextType = 'MaxDistanceText' then Result := LanguageTexts[CurrentLanguage].MaxDistanceText
   else if TextType = 'NewSkyText' then Result := LanguageTexts[CurrentLanguage].NewSkyText
+  else if TextType = 'FXAAText' then Result := LanguageTexts[CurrentLanguage].FXAAText
+  else if TextType = 'BloomText' then Result := LanguageTexts[CurrentLanguage].BloomText
   else if TextType = 'ClubFixesText' then Result := LanguageTexts[CurrentLanguage].ClubFixesText
   else if TextType = 'DeveloperMenuText' then Result := LanguageTexts[CurrentLanguage].DeveloperMenuText
   else if TextType = 'RA3HoverText' then Result := LanguageTexts[CurrentLanguage].RA3HoverText
@@ -1518,7 +1532,11 @@ end;
 procedure InitCheatMenu; stdcall;
 begin
   FillChar(Settings, SizeOf(Settings), 0);
-  
+
+  // ZDS-Booster: seed Visual tab state from engine globals.
+  Settings.FXAAEnable := InitFXAAEnable;
+  Settings.BloomEnable := InitBloomEnable;
+
   // Инициализация ГЛОБАЛЬНОГО слайдера яркости
   Settings.BrightnessSlider.Value := 0.0;
   Settings.BrightnessSlider.MinValue := 0.0;
@@ -1661,7 +1679,7 @@ begin
   WorldWindow.Y := 50;
   WorldWindow.Width := 280;
   WorldWindow.OriginalWidth := 280;
-  WorldWindow.Height := 100;
+  WorldWindow.Height := 170;
   WorldWindow.Alpha := 0.0;
   WorldWindow.TargetAlpha := 1.0;
   WorldWindow.OriginalX := 350;
@@ -2138,6 +2156,14 @@ begin
       
       // New Sky
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('NewSkyText'), Settings.NewSky, Alpha);
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
+      // ZDS-Booster: FXAA постпроцесс — живое переключение, без рестарта.
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FXAAText'), Settings.FXAAEnable, Alpha);
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
+      // ZDS-Booster: Bloom — тоже живой, ApplyBloom перечитывает флаг каждый кадр.
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('BloomText'), Settings.BloomEnable, Alpha);
     end;
     
     2: // LOCOMOTIVE окно
@@ -2704,8 +2730,29 @@ begin
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
       Exit;
     end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
+    // ZDS-Booster: FXAA toggle. EndFXAAFrame re-reads InitFXAAEnable every
+    // frame, so this takes effect immediately with no restart.
+    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.FXAAEnable := not Settings.FXAAEnable;
+      InitFXAAEnable := Settings.FXAAEnable;
+      SaveConfig;
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
+    // ZDS-Booster: Bloom toggle.
+    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.BloomEnable := not Settings.BloomEnable;
+      InitBloomEnable := Settings.BloomEnable;
+      SaveConfig;
+      Exit;
+    end;
   end;
-  
+
   // LOCOMOTIVE WINDOW
   if LocomotiveWindow.Alpha > 0.1 then
   begin

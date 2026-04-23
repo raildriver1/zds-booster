@@ -12,6 +12,7 @@ implementation
 uses
   OpenGL, Windows, SysUtils, Variables, EngineUtils, DrawFunc3D, Advanced3D, Textures, KlubData, CheatMenu;
 
+
 const
   ADDR_CAM_X: Cardinal = $9008028;
   ADDR_CAM_Y: Cardinal = $900802C;
@@ -98,6 +99,9 @@ var
   DragStartValue: Integer = 0;
   DragStartAngle: Single = 0;
 
+  LastTState: Boolean = False;
+  DoorForwardOffset: Single = 0; // выезд вперёд
+
 const
   // Нижний якорь контроллера (у основания)
   CONTROLLER_POS_X: Single = 0.199975;
@@ -131,7 +135,17 @@ const
   WAGON_WS_Y_3: Single = -6.17666;
   WAGON_WS_Y_4: Single = -8.32665;
 
-
+var
+  DoorModelIDs: array of Integer;
+  DoorPos: array of record
+    x, y, z: Single;
+  end;
+  DoorTextureID: Integer = 0;
+  RightDoorsOpen: Boolean = False;
+  RightDoorOffset: Single = 0; // анимация
+var sideOffset: Single;
+const
+  DOOR_GAP = 0.35; // половина ширины проёма
 
 function IsKeyDownEx(Key: Integer): Boolean;
 begin
@@ -231,12 +245,10 @@ procedure DrawSimpleModel(ModelID: Integer; x, y, z: Single; TextureID: Integer 
 begin
   if ModelID = 0 then Exit;
   BeginObj3D;
-  glDisable(GL_LIGHTING);
   Position3D(x, y, z);
   if TextureID <> 0 then
     SetTexture(TextureID);
   DrawModel(ModelID, 0, False);
-  glEnable(GL_LIGHTING);
   EndObj3D;
 end;
 
@@ -455,6 +467,10 @@ begin
   if RA3_WagonInitialized then Exit;
   RA3_WagonInitialized := True;
 
+RightDoorOffset := 0;
+DoorForwardOffset := 0;
+RightDoorsOpen := False;
+
   basePath := 'C:\ZDSimulator55.008new\ra3\wagon\';
 
   SetLength(WagonModelIDs, 0);
@@ -481,6 +497,36 @@ begin
   rgbaNames[16] := 'ra3_16_RGBA.bmp';
   rgbaNames[17] := 'ra3_17_RGBA.bmp';
   rgbaNames[18] := 'ra3_18_RGBA.bmp';
+
+// === ДВЕРИ ===
+SetLength(DoorModelIDs, 8);
+SetLength(DoorPos, 8);
+
+DoorModelIDs[0] := LoadModel(basePath + 'Material #4.004\doors\left1.dmd', 0, False);
+DoorModelIDs[1] := LoadModel(basePath + 'Material #4.004\doors\left2.dmd', 0, False);
+DoorModelIDs[2] := LoadModel(basePath + 'Material #4.004\doors\left2_1.dmd', 0, False);
+DoorModelIDs[3] := LoadModel(basePath + 'Material #4.004\doors\left2_002.dmd', 0, False);
+
+DoorModelIDs[4] := LoadModel(basePath + 'Material #4.004\doors\right1.dmd', 0, False);
+DoorModelIDs[5] := LoadModel(basePath + 'Material #4.004\doors\right1_1.dmd', 0, False);
+DoorModelIDs[6] := LoadModel(basePath + 'Material #4.004\doors\right2.dmd', 0, False);
+DoorModelIDs[7] := LoadModel(basePath + 'Material #4.004\doors\right2_1.dmd', 0, False);
+
+// координаты
+DoorPos[0].x :=  1.54027; DoorPos[0].y := -10.364;  DoorPos[0].z := 2.72325;
+DoorPos[1].x :=  1.54086; DoorPos[1].y := -9.72216; DoorPos[1].z := 2.73019;
+DoorPos[2].x :=  1.53711; DoorPos[2].y := 10.3636;  DoorPos[2].z := 2.72394;
+DoorPos[3].x :=  1.53756; DoorPos[3].y := 9.72142;  DoorPos[3].z := 2.73681;
+
+DoorPos[4].x := -1.53711; DoorPos[4].y := -10.3636; DoorPos[4].z := 2.72394;
+DoorPos[5].x := -1.53756; DoorPos[5].y := -9.72142; DoorPos[5].z := 2.73681;
+DoorPos[6].x := -1.54086; DoorPos[6].y := 9.72214;  DoorPos[6].z := 2.73019;
+DoorPos[7].x := -1.54027; DoorPos[7].y := 10.364;   DoorPos[7].z := 2.72325;
+
+DoorTextureID := LoadTextureFromFile(
+  'C:\ZDSimulator55.008new\ra3\wagon\Material #4.004\ra3_27_RGBA.bmp',
+  0, -1
+);
 
   if FindFirst(basePath + '*', faDirectory, sr) = 0 then
   begin
@@ -565,10 +611,15 @@ end;
 
 
 
+var targetDoor: Single;
 const
   WAGON_CENTER_OFFSET_X: Single = 0.0;
   WAGON_CENTER_OFFSET_Y: Single = 0.0;
   WAGON_CENTER_OFFSET_Z: Single = 0.0;
+var
+  targetSide, targetForward: Single;
+var
+  baseX, baseY, baseZ: Single;
 
 
 procedure DrawWagonRA3;
@@ -586,35 +637,40 @@ var
   shakeTime: Double;
   shakeIntensity: Single;
 
+  baseX, baseY, baseZ: Single;
+  offsetY: Single;
+
   procedure DrawModelSafe(ModelID, TexID: Integer);
   begin
     if ModelID = 0 then Exit;
+
     BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(localX + shakeX, localY + shakeY, relZ + shakeZ);
-    RotateZ(wagonAngZ + shakeAng);
-    Position3D(WAGON_CENTER_OFFSET_X, WAGON_CENTER_OFFSET_Y, WAGON_CENTER_OFFSET_Z);
-    if TexID <> 0 then SetTexture(TexID)
-    else SetTexture(0);
-    DrawModel(ModelID, 0, False);
-    glEnable(GL_LIGHTING);
+      Position3D(localX + shakeX, localY + shakeY, relZ + shakeZ);
+      RotateZ(wagonAngZ + shakeAng);
+      Position3D(WAGON_CENTER_OFFSET_X, WAGON_CENTER_OFFSET_Y, WAGON_CENTER_OFFSET_Z);
+
+      if TexID <> 0 then
+        SetTexture(TexID);
+
+      DrawModel(ModelID, 0, False);
     EndObj3D;
   end;
 
-procedure DrawWheelset(offsetY: Single);
+  procedure DrawWheelset(offsetY: Single);
   begin
     if WagonWheelsetID = 0 then Exit;
+
     BeginObj3D;
-    glDisable(GL_LIGHTING);
-    // Без shakeX/Y/Z/Ang — колёса жёстко на рельсах
-    Position3D(localX, localY, relZ);
-    RotateZ(wagonAngZ);
-    Position3D(WAGON_WS_X, offsetY, WAGON_WS_Z);
-    RotateX(WagonWheelRotation);
-    if WagonWheelsetTextureID <> 0 then SetTexture(WagonWheelsetTextureID)
-    else SetTexture(0);
-    DrawModel(WagonWheelsetID, 0, False);
-    glEnable(GL_LIGHTING);
+      Position3D(localX, localY, relZ);
+      RotateZ(wagonAngZ);
+
+      Position3D(WAGON_WS_X, offsetY, WAGON_WS_Z);
+      RotateX(WagonWheelRotation);
+
+      if WagonWheelsetTextureID <> 0 then
+        SetTexture(WagonWheelsetTextureID);
+
+      DrawModel(WagonWheelsetID, 0, False);
     EndObj3D;
   end;
 
@@ -638,6 +694,20 @@ begin
   speed := Abs(StrToFloatDef(GetSpeed, 0));
   shakeTime := GetTickCount / 1000.0;
 
+if RightDoorsOpen then
+begin
+  if RightDoorOffset < 0.55 then
+    RightDoorOffset := RightDoorOffset + 0.05;
+end
+else
+begin
+  if RightDoorOffset > 0 then
+    RightDoorOffset := RightDoorOffset - 0.05;
+end;
+
+  // =========================
+  // ВАГОНЫ
+  // =========================
   for w := 0 to GetWagonCount - 1 do
   begin
     ebxAddr := poezdBase + 108 + Cardinal(w) * 144;
@@ -651,6 +721,7 @@ begin
     wagZ := PDouble(ebxAddr - $2C)^;
 
     wagAng := PDouble(ebxAddr - $14)^;
+
     diff := wagAng - locoAngZ;
     while diff > 180 do diff := diff - 360;
     while diff < -180 do diff := diff + 360;
@@ -658,27 +729,72 @@ begin
 
     dx := wagX - locoX;
     dy := wagY - locoY;
+
     localX := dx * cosA - dy * sinA;
     localY := (dx * sinA + dy * cosA) * 1.05;
+    relZ := 0;
 
-    relZ := 0.0;
-
-    // Тряска — каждый вагон со своей фазой и частотой
     shakeIntensity := speed / 400.0;
     if shakeIntensity > 0.03 then shakeIntensity := 0.03;
 
     shakeX := Sin(shakeTime * (7.3 + w * 2.1) + w * 17.0) * shakeIntensity;
-    shakeY := 0.0;
-    shakeZ := 0.0;
+    shakeY := 0;
+    shakeZ := 0;
     shakeAng := Sin(shakeTime * (6.4 + w * 1.5) + w * 13.0) * shakeIntensity * 15.0;
 
+    // =========================
+    // ДВЕРИ (ИСПРАВЛЕННЫЙ БЛОК)
+    // =========================
+    for i := 0 to High(DoorModelIDs) do
+begin
+  if DoorModelIDs[i] = 0 then Continue;
+
+  BeginObj3D;
+
+  Position3D(localX, localY, relZ);
+  RotateZ(wagonAngZ);
+
+  baseX := DoorPos[i].x;
+  baseY := DoorPos[i].y;
+  baseZ := DoorPos[i].z;
+
+  baseX := baseX + DoorForwardOffset;
+
+  offsetY := 0;
+
+  if i < 4 then
+  begin
+    if RightDoorsOpen then
+      offsetY := -RightDoorOffset;
+  end
+  else
+  begin
+    if RightDoorsOpen then
+      offsetY := RightDoorOffset;
+  end;
+
+  baseY := baseY + offsetY;
+
+  Position3D(baseX, baseY, baseZ);
+
+  if DoorTextureID <> 0 then
+    SetTexture(DoorTextureID);
+
+  DrawModel(DoorModelIDs[i], 0, False);
+
+  EndObj3D;
+end;
+
+    // модели вагона
     for i := 0 to High(WagonModelIDs) do
       DrawModelSafe(WagonModelIDs[i], WagonTextureIDs[i]);
 
+    // колесные пары
     DrawWheelset(WAGON_WS_Y_1);
     DrawWheelset(WAGON_WS_Y_2);
     DrawWheelset(WAGON_WS_Y_3);
     DrawWheelset(WAGON_WS_Y_4);
+
   end;
 end;
 
@@ -745,7 +861,6 @@ begin
     if WheelModelIDs[i] = 0 then Continue;
 
     BeginObj3D;
-    glDisable(GL_LIGHTING);
 
     Position3D(X, Y[i], Z);
     RotateX(WheelRotation);
@@ -755,7 +870,6 @@ begin
 
     DrawModel(WheelModelIDs[i], 0, False);
 
-    glEnable(GL_LIGHTING);
     EndObj3D;
   end;
 end;
@@ -773,17 +887,15 @@ begin
       Continue;
 
     BeginObj3D;
-    glDisable(GL_LIGHTING);
 
     Position3D(0, 0, 0);
-    
+
 
     if LocoTextureIDs[i] <> 0 then
       SetTexture(LocoTextureIDs[i]);
 
     DrawModel(LocoModelIDs[i], 0, False);
 
-    glEnable(GL_LIGHTING);
     EndObj3D;
   end;
 end;
@@ -798,7 +910,6 @@ begin
       Continue;
 
     BeginObj3D;
-    glDisable(GL_LIGHTING);
 
     Position3D(0, 0, 0);
 
@@ -807,7 +918,6 @@ begin
 
     DrawModel(CabModelIDs[i], 0, False);
 
-    glEnable(GL_LIGHTING);
     EndObj3D;
   end;
 end;
@@ -903,7 +1013,6 @@ begin
   end;
 
   BeginObj3D;
-  glDisable(GL_LIGHTING);
 
   Position3D(CONTROLLER_POS_X, CONTROLLER_POS_Y, CONTROLLER_POS_Z);
   RotateX(ControllerAngle);
@@ -918,7 +1027,6 @@ begin
 
   DrawModel(ControllerModelID, 0, False);
 
-  glEnable(GL_LIGHTING);
   EndObj3D;
 end;
 
@@ -928,7 +1036,6 @@ procedure DrawControllerBraking;
 begin
   if ControllerBrakingModelID = 0 then Exit;
   BeginObj3D;
-  glDisable(GL_LIGHTING);
   Position3D(BRAKE_POS_X, BRAKE_POS_Y, BRAKE_POS_Z);
   if ControllerTextureID <> 0 then
     SetTexture(ControllerTextureID);
@@ -937,7 +1044,6 @@ begin
   else
     glColor4f(1.0, 1.0, 1.0, 1.0);
   DrawModel(ControllerBrakingModelID, 0, False);
-  glEnable(GL_LIGHTING);
   EndObj3D;
 end;
 
@@ -1005,7 +1111,6 @@ procedure DrawArrow(ModelID: Integer; x, y, z, rx, ry, rz: Single);
 begin
   if ModelID = 0 then Exit;
   BeginObj3D;
-  glDisable(GL_LIGHTING);
   Position3D(x, y, z);
   RotateX(rx);
   RotateY(ry);
@@ -1013,7 +1118,6 @@ begin
   if ControllerTextureID <> 0 then
     SetTexture(ControllerTextureID);
   DrawModel(ModelID, 0, False);
-  glEnable(GL_LIGHTING);
   EndObj3D;
 end;
 
@@ -1036,10 +1140,23 @@ begin
 end;
 
 procedure DrawRA3;
+var
+  tNow: Boolean;
 begin
   if not IsRA3Active then Exit;
+
   InitRA3;
   UpdateHover;
+
+  // --- обработка кнопки T (нормальный toggle) ---
+  tNow := IsKeyDown(Ord('T'));
+
+  if tNow and not LastTState then
+    RightDoorsOpen := not RightDoorsOpen;
+
+  LastTState := tNow;
+
+  // --- отрисовка ---
   DrawCabRA3;
   DrawLocoRA3;
   DrawTelega;

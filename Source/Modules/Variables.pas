@@ -117,6 +117,23 @@ var
   InitZfar : single = 2200.0;
   initAngle : single = 45.0;
   InitZBuffer : byte = 24;
+
+  // ZDS-Booster: modern GL / quality settings
+  InitMSAASamples : integer = 4;        // 0 = off, 2/4/8/16 = MSAA level requested at context creation
+  InitAnisoLevel  : integer = 16;       // 0 = off, else anisotropic filtering level requested
+  InitFXAAEnable  : boolean = true;     // post-process FXAA antialiasing
+  InitBloomEnable : boolean = true;     // post-process bloom
+  InitBloomStrength : single = 0.85;    // bloom additive gain
+  InitBloomThreshold : single = 0.75;   // min luma to contribute to bloom
+  InitLODBias     : single = -0.5;      // negative = sharper mips at distance
+  ActualGLMajor   : integer = 0;        // filled after context creation
+  ActualGLMinor   : integer = 0;
+  ActualMSAASamples : integer = 0;      // 0 if MSAA not obtained
+  ActualMaxAniso  : single  = 1.0;      // 1.0 means no anisotropy
+  UsingModernContext : boolean = false; // true if wglCreateContextAttribsARB succeeded
+  FXAAActive       : boolean = false;   // true after successful FXAA init
+  BloomActive      : boolean = false;   // true after successful bloom init
+
   WinX : integer = 0;
   WinY : integer = 0;
   CurW,CurH : integer;
@@ -130,7 +147,7 @@ var
 
   newsky : boolean = false;
 
-  Config_Freecam: Boolean = False;     // Глобальная переменная состояния фрикама
+  Config_Freecam: Boolean = False;     // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
   Config_MainCamera: Boolean = False;
   Config_MaxDistance: Boolean = False;
   Config_NewSky: Boolean = False;

@@ -40,7 +40,9 @@ uses
   TFrustumClass in 'Modules\TFrustumClass.pas',
   EngineCore in 'Modules\EngineCore.pas',
   KlubData in 'Modules\KlubData.pas',
-  RA3 in 'Modules\RA3.pas';
+  RA3 in 'Modules\RA3.pas',
+  FXAA in 'Modules\FXAA.pas',
+  Bloom in 'Modules\Bloom.pas';
 
 //Function needed for engine header
 function DLL_ver : byte; stdcall;
