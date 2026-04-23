@@ -100,7 +100,11 @@ var
   DragStartAngle: Single = 0;
 
   LastTState: Boolean = False;
-  DoorForwardOffset: Single = 0; // выезд вперёд
+  LastYState: Boolean = False;
+  LeftDoorsOpen: Boolean = False;
+  LeftDoorOffset: Single = 0;
+  LeftForwardOffset: Single = 0;
+  DoorForwardOffset: Single = 0;
 
 const
   // Нижний якорь контроллера (у основания)
@@ -142,10 +146,13 @@ var
   end;
   DoorTextureID: Integer = 0;
   RightDoorsOpen: Boolean = False;
-  RightDoorOffset: Single = 0; // анимация
-var sideOffset: Single;
+  RightDoorOffset: Single = 0;
 const
-  DOOR_GAP = 0.35; // половина ширины проёма
+  DOOR_FORWARD_MAX: Single = 0.12; // выдвиг по X наружу перед разъездом
+  DOOR_SIDE_MAX: Single = 0.55;    // разъезд по Y
+  DOOR_STEP: Single = 0.04;
+  // направление каждой створки по Y при открытии (пары: 0-1, 2-3, 4-5, 6-7)
+  DOOR_Y_DIR: array[0..7] of Integer = (-1, 1, 1, -1, -1, 1, -1, 1);
 
 function IsKeyDownEx(Key: Integer): Boolean;
 begin
@@ -470,6 +477,9 @@ begin
 RightDoorOffset := 0;
 DoorForwardOffset := 0;
 RightDoorsOpen := False;
+LeftDoorOffset := 0;
+LeftForwardOffset := 0;
+LeftDoorsOpen := False;
 
   basePath := 'C:\ZDSimulator55.008new\ra3\wagon\';
 
@@ -638,7 +648,6 @@ var
   shakeIntensity: Single;
 
   baseX, baseY, baseZ: Single;
-  offsetY: Single;
 
   procedure DrawModelSafe(ModelID, TexID: Integer);
   begin
@@ -694,15 +703,36 @@ begin
   speed := Abs(StrToFloatDef(GetSpeed, 0));
   shakeTime := GetTickCount / 1000.0;
 
+// левые двери
+if LeftDoorsOpen then
+begin
+  if LeftForwardOffset < DOOR_FORWARD_MAX then
+    LeftForwardOffset := LeftForwardOffset + DOOR_STEP
+  else if LeftDoorOffset < DOOR_SIDE_MAX then
+    LeftDoorOffset := LeftDoorOffset + DOOR_STEP;
+end
+else
+begin
+  if LeftDoorOffset > 0 then
+    LeftDoorOffset := LeftDoorOffset - DOOR_STEP
+  else if LeftForwardOffset > 0 then
+    LeftForwardOffset := LeftForwardOffset - DOOR_STEP;
+end;
+
+// правые двери
 if RightDoorsOpen then
 begin
-  if RightDoorOffset < 0.55 then
-    RightDoorOffset := RightDoorOffset + 0.05;
+  if DoorForwardOffset < DOOR_FORWARD_MAX then
+    DoorForwardOffset := DoorForwardOffset + DOOR_STEP
+  else if RightDoorOffset < DOOR_SIDE_MAX then
+    RightDoorOffset := RightDoorOffset + DOOR_STEP;
 end
 else
 begin
   if RightDoorOffset > 0 then
-    RightDoorOffset := RightDoorOffset - 0.05;
+    RightDoorOffset := RightDoorOffset - DOOR_STEP
+  else if DoorForwardOffset > 0 then
+    DoorForwardOffset := DoorForwardOffset - DOOR_STEP;
 end;
 
   // =========================
@@ -743,47 +773,39 @@ end;
     shakeAng := Sin(shakeTime * (6.4 + w * 1.5) + w * 13.0) * shakeIntensity * 15.0;
 
     // =========================
-    // ДВЕРИ (ИСПРАВЛЕННЫЙ БЛОК)
+    // ДВЕРИ
     // =========================
     for i := 0 to High(DoorModelIDs) do
-begin
-  if DoorModelIDs[i] = 0 then Continue;
+    begin
+      if DoorModelIDs[i] = 0 then Continue;
 
-  BeginObj3D;
+      BeginObj3D;
+      Position3D(localX, localY, relZ);
+      RotateZ(wagonAngZ);
 
-  Position3D(localX, localY, relZ);
-  RotateZ(wagonAngZ);
+      baseX := DoorPos[i].x;
+      baseY := DoorPos[i].y;
+      baseZ := DoorPos[i].z;
 
-  baseX := DoorPos[i].x;
-  baseY := DoorPos[i].y;
-  baseZ := DoorPos[i].z;
+      if i < 4 then
+      begin
+        baseX := baseX + LeftForwardOffset;
+        baseY := baseY + DOOR_Y_DIR[i] * LeftDoorOffset;
+      end
+      else
+      begin
+        baseX := baseX - DoorForwardOffset;
+        baseY := baseY + DOOR_Y_DIR[i] * RightDoorOffset;
+      end;
 
-  baseX := baseX + DoorForwardOffset;
+      Position3D(baseX, baseY, baseZ);
 
-  offsetY := 0;
+      if DoorTextureID <> 0 then
+        SetTexture(DoorTextureID);
 
-  if i < 4 then
-  begin
-    if RightDoorsOpen then
-      offsetY := -RightDoorOffset;
-  end
-  else
-  begin
-    if RightDoorsOpen then
-      offsetY := RightDoorOffset;
-  end;
-
-  baseY := baseY + offsetY;
-
-  Position3D(baseX, baseY, baseZ);
-
-  if DoorTextureID <> 0 then
-    SetTexture(DoorTextureID);
-
-  DrawModel(DoorModelIDs[i], 0, False);
-
-  EndObj3D;
-end;
+      DrawModel(DoorModelIDs[i], 0, False);
+      EndObj3D;
+    end;
 
     // модели вагона
     for i := 0 to High(WagonModelIDs) do
@@ -1141,20 +1163,24 @@ end;
 
 procedure DrawRA3;
 var
-  tNow: Boolean;
+  tNow, yNow: Boolean;
 begin
   if not IsRA3Active then Exit;
 
   InitRA3;
   UpdateHover;
 
-  // --- обработка кнопки T (нормальный toggle) ---
+  // T = открыть левые, Shift+T = закрыть левые
   tNow := IsKeyDown(Ord('T'));
-
   if tNow and not LastTState then
-    RightDoorsOpen := not RightDoorsOpen;
-
+    LeftDoorsOpen := not IsKeyDown(VK_SHIFT);
   LastTState := tNow;
+
+  // Y = открыть правые, Shift+Y = закрыть правые
+  yNow := IsKeyDown(Ord('Y'));
+  if yNow and not LastYState then
+    RightDoorsOpen := not IsKeyDown(VK_SHIFT);
+  LastYState := yNow;
 
   // --- отрисовка ---
   DrawCabRA3;
