@@ -10,7 +10,7 @@ procedure ApplyRA3BlockTransform(x, y, z, AngZ: Single);
 implementation
 
 uses
-  OpenGL, Windows, SysUtils, Variables, EngineUtils, DrawFunc3D, Advanced3D, Textures, KlubData, CheatMenu;
+  OpenGL, Windows, SysUtils, Variables, EngineUtils, DrawFunc3D, Advanced3D, Textures, KlubData, CheatMenu, RA3Physics;
 
 
 const
@@ -77,7 +77,7 @@ var
   CabTextureIDs: array[0..7] of Integer;
 
   ControllerMemValue: Integer = 0;
-  ControllerAngle: Single = 0;
+
   TargetAngle: Single = 0;
   InputTimer: Cardinal = 0;
   MemTimer: Cardinal = 0;
@@ -93,11 +93,7 @@ var
   HoverMode: Boolean = False;
   PatchActive: Boolean = False;
 
-  DraggingController: Boolean = False;
-  LastLButtonState: Boolean = False;
-  DragStartX: Single = 0;
   DragStartValue: Integer = 0;
-  DragStartAngle: Single = 0;
 
   LastTState: Boolean = False;
   LastYState: Boolean = False;
@@ -105,6 +101,35 @@ var
   LeftDoorOffset: Single = 0;
   LeftForwardOffset: Single = 0;
   DoorForwardOffset: Single = 0;
+
+  BrakeControllerPos: Integer = 0;    // 0=отпуск, 1=перекрыша, 2=торможение
+  BrakeControllerAngle: Single = 0.0;
+  BrakeTargetAngle: Single = 0.0;
+  LastBrakeIncKey: Boolean = False;
+  LastBrakeDecKey: Boolean = False;
+  DraggingBrake: Boolean = False;
+  DragBrakeStartX: Single = 0;
+  DragBrakeStartPos: Integer = 0;
+  LastBrakeLButtonState: Boolean = False;
+
+  LastBoosterToggle: Boolean = False;
+
+  ControllerAngle: Single = 0.0;
+
+  LastA, LastD: Boolean;
+  LastLButtonState: Boolean;
+
+  DraggingController: Boolean;
+  DragStartX: Single;
+  DragStartAngle: Single;
+
+  InputCooldown: Cardinal = 0;
+
+RB_Offset: Single = 0;
+RBS_Offset: Single = 0;
+
+RB_Target: Single = 0;
+RBS_Target: Single = 0;
 
 const
   // Нижний якорь контроллера (у основания)
@@ -139,6 +164,14 @@ const
   WAGON_WS_Y_3: Single = -6.17666;
   WAGON_WS_Y_4: Single = -8.32665;
 
+  RB_X = 1.17063;
+  RB_Y = 10.4761;
+  RB_Z = 2.62716;
+
+  RBS_X = 1.36343;
+  RBS_Y = 9.82186;
+  RBS_Z = 2.61900;
+
 var
   DoorModelIDs: array of Integer;
   DoorPos: array of record
@@ -147,6 +180,15 @@ var
   DoorTextureID: Integer = 0;
   RightDoorsOpen: Boolean = False;
   RightDoorOffset: Single = 0;
+
+HoveredRB: Boolean = False;
+HoveredRBS: Boolean = False;
+
+RBPressed: Boolean = False;
+RBSPressed: Boolean = False;
+
+LastButtonsLMB: Boolean = False;
+
 const
   DOOR_FORWARD_MAX: Single = 0.12; // выдвиг по X наружу перед разъездом
   DOOR_SIDE_MAX: Single = 0.55;    // разъезд по Y
@@ -199,6 +241,70 @@ begin
   Result := (dx*dx + dy*dy) < (radius * radius);
 end;
 
+procedure UpdateButtonsHoverAndClick;
+var
+  v: TVertex;
+  p: TPoint;
+  dx, dy: Integer;
+  lb: Boolean;
+  r2: Integer;
+begin
+  lb := IsKeyDownEx(VK_LBUTTON);
+
+  HoveredRB := False;
+  HoveredRBS := False;
+
+  r2 := 40 * 40;
+
+  // =========================
+  // RB
+  // =========================
+  v.X := RB_X;
+  v.Y := RB_Y;
+  v.Z := RB_Z;
+  p := Get2DPos(v);
+
+  dx := p.X - Round(MoveXcoord);
+  dy := p.Y - Round(MoveYcoord);
+
+  if (dx*dx + dy*dy) < r2 then
+  begin
+    HoveredRB := True;
+
+    if lb then
+      RB_Target := -0.004
+    else
+      RB_Target := 0;
+  end
+  else
+    RB_Target := 0;
+
+  // =========================
+  // RBS
+  // =========================
+  v.X := RBS_X;
+  v.Y := RBS_Y;
+  v.Z := RBS_Z;
+  p := Get2DPos(v);
+
+  dx := p.X - Round(MoveXcoord);
+  dy := p.Y - Round(MoveYcoord);
+
+  if (dx*dx + dy*dy) < r2 then
+  begin
+    HoveredRBS := True;
+
+    if lb then
+      RBS_Target := -0.006
+    else
+      RBS_Target := 0;
+  end
+  else
+    RBS_Target := 0;
+end;
+
+
+
 procedure UpdateHover;
 var
   v: TVertex;
@@ -235,7 +341,7 @@ begin
 
   // Патч держим пока: 1) наведён, ИЛИ 2) идёт драг контроллера.
   // Снимаем когда оба условия сняты (курсор ушёл И ЛКМ отпущена).
-  wantPatch := HoverMode and (HoveredController or DraggingController);
+  wantPatch := HoverMode and (HoveredController or DraggingController or HoveredBrake or DraggingBrake);
   if wantPatch and not PatchActive then
   begin
     ApplyMenuPatch;
@@ -949,116 +1055,194 @@ begin
   Result := (GetAsyncKeyState(Key) and $8000) <> 0;
 end;
 
+
+var
+  lastX: Single;
+  MouseDeltaAccum: Single;
+  MouseAccum: Single;
+
 procedure UpdateControllerAndDraw;
 var
-  NowTick: Cardinal;
-  Addr: Cardinal;
   lbNow: Boolean;
+  incA, incD: Boolean;
   deltaPx: Single;
-  steps, newValue: Integer;
-  mouseHandled: Boolean;
 begin
   if ControllerModelID = 0 then Exit;
 
-  NowTick := GetTickCount;
   lbNow := IsKeyDownEx(VK_LBUTTON);
-  mouseHandled := False;
 
-  // Старт драга: курсор на контроллере и только что нажали ЛКМ
+  // =========================
+  // DRAG START/STOP
+  // =========================
   if HoveredController and lbNow and not LastLButtonState then
   begin
     DraggingController := True;
     DragStartX := MoveXcoord;
-    DragStartValue := ControllerMemValue;
-    DragStartAngle := ControllerAngle;
   end;
 
-  // Отпустили ЛКМ — конец драга
   if DraggingController and not lbNow then
     DraggingController := False;
 
   LastLButtonState := lbNow;
 
-  if DraggingController then
+  // =========================
+  // KEYBOARD
+  // =========================
+  incA := IsKeyDown(Ord('A'));
+  incD := IsKeyDown(Ord('D'));
+
+  if incD and not LastD and IsKeyDown(VK_CONTROL) then
+    ControllerAngle := 0
+  else
   begin
-    deltaPx := MoveXcoord - DragStartX;
-
-    TargetAngle := DragStartAngle + deltaPx * DRAG_ANGLE_PER_PX;
-    if TargetAngle > 45 then TargetAngle := 45
-    else if TargetAngle < -45 then TargetAngle := -45;
-
-    steps := Trunc(deltaPx / DRAG_PX_PER_STEP);
-    newValue := DragStartValue + steps;
-    if newValue < 0 then newValue := 0
-    else if newValue > 5 then newValue := 5;
-    ControllerMemValue := newValue;
-
-    mouseHandled := True;
-  end;
-
-  if (not mouseHandled) and ((NowTick - InputTimer) > 500) then
-  begin
-    InputTimer := NowTick;
-
-    if IsKeyDown(Ord('A')) then
-    begin
-      TargetAngle := 45;
-      if ControllerMemValue < 5 then
-        Inc(ControllerMemValue);
-    end
-    else if IsKeyDown(Ord('D')) then
-    begin
-      TargetAngle := -45;
-      if ControllerMemValue > 0 then
-        Dec(ControllerMemValue)
+    if incA and not LastA then
+      if Abs(ControllerAngle) < 0.5 then
+        ControllerAngle := ControllerAngle + 15
       else
-        ControllerMemValue := 255;
-    end
-    else
-    begin
-      TargetAngle := 0;
-    end;
+        ControllerAngle := ControllerAngle + 3;
+
+    if incD and not LastD then
+      if Abs(ControllerAngle) < 0.5 then
+        ControllerAngle := ControllerAngle - 15
+      else
+        ControllerAngle := ControllerAngle - 3;
   end;
 
-  ControllerAngle := ControllerAngle + (TargetAngle - ControllerAngle) * 0.15;
+  LastA := incA;
+  LastD := incD;
 
-  if (NowTick - MemTimer) > 150 then
+  // =========================
+  // MOUSE (ПРОСТО И СТАБИЛЬНО)
+  // =========================
+if DraggingController then
+begin
+  deltaPx := MoveXcoord - DragStartX;
+  DragStartX := MoveXcoord;
+
+  MouseAccum := MouseAccum + deltaPx;
+
+  // вправо
+  while MouseAccum >= DRAG_PX_PER_STEP do
   begin
-    MemTimer := NowTick;
+    if Abs(ControllerAngle) < 0.5 then
+      ControllerAngle := ControllerAngle + 15
+    else
+      ControllerAngle := ControllerAngle + 3;
 
-    if ControllerMemValue <> LastWriteValue then
-    begin
-      Addr := $400000 + $08DD5B05;
-      PByte(Addr)^ := Byte(ControllerMemValue);
-      LastWriteValue := ControllerMemValue;
-    end;
+    MouseAccum := MouseAccum - DRAG_PX_PER_STEP;
   end;
 
+  // влево
+  while MouseAccum <= -DRAG_PX_PER_STEP do
+  begin
+    if Abs(ControllerAngle) < 0.5 then
+      ControllerAngle := ControllerAngle - 15
+    else
+      ControllerAngle := ControllerAngle - 3;
+
+    MouseAccum := MouseAccum + DRAG_PX_PER_STEP;
+  end;
+end;
+
+  // =========================
+  // LIMITS
+  // =========================
+  if ControllerAngle > 59 then ControllerAngle := 59;
+  if ControllerAngle < -59 then ControllerAngle := -59;
+
+  // =========================
+  // DRAW
+  // =========================
   BeginObj3D;
 
-  Position3D(CONTROLLER_POS_X, CONTROLLER_POS_Y, CONTROLLER_POS_Z);
-  RotateX(ControllerAngle);
+    Position3D(CONTROLLER_POS_X, CONTROLLER_POS_Y, CONTROLLER_POS_Z);
+    RotateX(ControllerAngle);
 
-  if ControllerTextureID <> 0 then
-    SetTexture(ControllerTextureID);
+    if ControllerTextureID <> 0 then
+      SetTexture(ControllerTextureID);
 
-  if HoveredController then
-    glColor4f(1.0, 1.0, 0.0, 1.0)
-  else
-    glColor4f(1.0, 1.0, 1.0, 1.0);
+    if HoveredController then
+      glColor4f(1,1,0,1)
+    else
+      glColor4f(1,1,1,1);
 
-  DrawModel(ControllerModelID, 0, False);
+    DrawModel(ControllerModelID, 0, False);
 
   EndObj3D;
 end;
 
 
 
+
 procedure DrawControllerBraking;
+const
+  VK_OEM_SEMICOLON = $BA;
+  VK_OEM_QUOTE     = $DE;
+var
+  incKey, decKey, lbNow: Boolean;
+  deltaPx: Single;
+  newPos: Integer;
+  v1, v2: TVertex;
+  p1, p2: TPoint;
 begin
   if ControllerBrakingModelID = 0 then Exit;
+
+  lbNow := IsKeyDownEx(VK_LBUTTON);
+
+  // начало drag
+  if HoveredBrake and lbNow and not LastBrakeLButtonState then
+  begin
+    DraggingBrake := True;
+    DragBrakeStartX := MoveXcoord;
+    DragBrakeStartPos := BrakeControllerPos;
+  end;
+
+  // конец drag
+  if DraggingBrake and not lbNow then
+    DraggingBrake := False;
+
+  LastBrakeLButtonState := lbNow;
+
+  if DraggingBrake then
+  begin
+    deltaPx := DragBrakeStartX - MoveXcoord;
+
+    // Для тормозного "увеличение" направлено в +Y (т.к. используется RotateX(-angle))
+    v1.X := BRAKE_POS_X;
+    v1.Y := BRAKE_POS_Y;
+    v1.Z := BRAKE_POS_Z + 0.2;
+    v2.X := BRAKE_POS_X;
+    v2.Y := BRAKE_POS_Y + 0.1;
+    v2.Z := BRAKE_POS_Z + 0.2;
+    p1 := Get2DPos(v1);
+    p2 := Get2DPos(v2);
+    if p2.X < p1.X then
+      deltaPx := -deltaPx;
+
+    newPos := DragBrakeStartPos + Trunc(deltaPx / DRAG_PX_PER_STEP);
+    if newPos < 0 then newPos := 0
+    else if newPos > 2 then newPos := 2;
+    BrakeControllerPos := newPos;
+  end
+  else
+  begin
+    // клавиши: ; = отпуск, ' = торможение
+    incKey := IsKeyDown(VK_OEM_QUOTE);
+    decKey := IsKeyDown(VK_OEM_SEMICOLON);
+    if incKey and not LastBrakeIncKey then
+      if BrakeControllerPos < 2 then Inc(BrakeControllerPos);
+    if decKey and not LastBrakeDecKey then
+      if BrakeControllerPos > 0 then Dec(BrakeControllerPos);
+    LastBrakeIncKey := incKey;
+    LastBrakeDecKey := decKey;
+  end;
+
+  BrakeTargetAngle := BrakeControllerPos * 30.0;
+  BrakeControllerAngle := BrakeControllerAngle + (BrakeTargetAngle - BrakeControllerAngle) * 0.15;
+
   BeginObj3D;
   Position3D(BRAKE_POS_X, BRAKE_POS_Y, BRAKE_POS_Z);
+  RotateX(-BrakeControllerAngle);
   if ControllerTextureID <> 0 then
     SetTexture(ControllerTextureID);
   if HoveredBrake then
@@ -1070,21 +1254,53 @@ begin
 end;
 
 procedure DrawButtons;
-var
-  zRB, zRBS: Single;
 begin
-  zRB := 2.62716;
-  if IsKeyDown(Ord('Z')) then
-    zRB := zRB - 0.005;
+  // =========================
+  // ПРУЖИНА (важно!)
+  // =========================
+  RB_Offset := RB_Offset + (RB_Target - RB_Offset) * 0.25;
+  RBS_Offset := RBS_Offset + (RBS_Target - RBS_Offset) * 0.25;
 
-  zRBS := 3.65138;
-  if IsKeyDown(Ord('M')) then
-    zRBS := zRBS - 0.008;
+  // =========================
+  // RB
+  // =========================
+  if HoveredRB then
+    glColor4f(1, 1, 0, 1)
+  else
+    glColor4f(1, 1, 1, 1);
 
-  DrawSimpleModel(ButtonRBModelID,   1.17063, 10.4761, zRB,     ControllerTextureID);
-  DrawSimpleModel(ButtonRBPModelID, -1.18603, 10.4965, 2.62716, ControllerTextureID);
-  DrawSimpleModel(ButtonRBSModelID,  1.36343, 9.82186, zRBS,    ControllerTextureID);
+  DrawSimpleModel(
+    ButtonRBModelID,
+    RB_X, RB_Y,
+    RB_Z + RB_Offset,
+    ControllerTextureID
+  );
+
+  // =========================
+  // RBP (без логики — как у тебя было)
+  // =========================
+  DrawSimpleModel(
+    ButtonRBPModelID,
+    -1.18603, 10.4965, 2.62716,
+    ControllerTextureID
+  );
+
+  // =========================
+  // RBS
+  // =========================
+  if HoveredRBS then
+    glColor4f(1, 1, 0, 1)
+  else
+    glColor4f(1, 1, 1, 1);
+
+  DrawSimpleModel(
+    ButtonRBSModelID,
+    RBS_X, RBS_Y,
+    RBS_Z + RBS_Offset,
+    ControllerTextureID
+  );
 end;
+
 
 procedure DrawALSIndicator;
 const
@@ -1105,7 +1321,7 @@ begin
     if not GetAlsEnState then Exit;
     visibleCount := GetAlsEnVisibleSignalCount;
     if visibleCount <= 0 then Exit;
-    if visibleCount >= 4 then
+    if visibleCount >= 5 then
       modelID := IndicatorG4ModelID
     else
       case visibleCount of
@@ -1121,6 +1337,7 @@ begin
       2: modelID := IndicatorR_M_ModelID;   // Red
       3: modelID := IndicatorRY_M_ModelID;  // КЖ
       4: modelID := IndicatorY_M_ModelID;   // Yellow
+      5: modelID := IndicatorG4ModelID;
     else
       Exit;
     end;
@@ -1129,26 +1346,27 @@ begin
   DrawSimpleModel(modelID, IND_X, IND_Y, IND_Z, ALSTextureID);
 end;
 
-procedure DrawArrow(ModelID: Integer; x, y, z, rx, ry, rz: Single);
+procedure DrawArrow(ModelID: Integer; x, y, z, angle: Single);
 begin
   if ModelID = 0 then Exit;
+
   BeginObj3D;
-  Position3D(x, y, z);
-  RotateX(rx);
-  RotateY(ry);
-  RotateZ(rz);
-  if ControllerTextureID <> 0 then
+
+    // 1. ставим модель
+    Position3D(x, y, z);
     SetTexture(ControllerTextureID);
-  DrawModel(ModelID, 0, False);
+    DrawModel(ArrowPMModelID, 0, False);
+
   EndObj3D;
 end;
 
 procedure DrawArrows;
+var
+  angle: Single;
 begin
-  DrawArrow(ArrowPMModelID,  1.16464, 10.6383, 2.75221,  0.481073, -0.141711,  0);
-  DrawArrow(ArrowTC1ModelID, 1.06527, 10.669,  2.75172,  0, 0, 0);
-  DrawArrow(ArrowTC2ModelID, 1.06527, 10.679,  2.75172,  0.492883, -0.092628, -0.170907);
-  DrawArrow(ArrowTMModelID,  1.16464, 10.6383, 2.75221,  0.481069, -0.141727, -0.084749);
+  angle := 0; // временно
+
+  DrawArrow(ArrowPMModelID, 1.16464, 10.6383, 2.75221, angle);
 end;
 
 procedure InitRA3;
@@ -1159,16 +1377,36 @@ begin
   InitWagonRA3;
   InitDynamicRA3;
   WriteRA3CameraInit;
+  // Физика НЕ автозапускается — включать через F9
 end;
 
 procedure DrawRA3;
 var
-  tNow, yNow: Boolean;
+  tNow, yNow, pNow, oNow: Boolean;
 begin
   if not IsRA3Active then Exit;
 
   InitRA3;
   UpdateHover;
+
+  // Передаём наш float-контроллер в физику РА-3 ТОЛЬКО если он сдвинут
+  // с нейтрали через A/D/мышь. Иначе физика читает игровой байт-контроллер
+  // (когда игрок крутит обычные клавиши игры через её родной ввод).
+  // -59..+59° мапим в -5..+5.
+  if IsRA3BoosterActive and (Abs(ControllerAngle) > 0.5) then
+    SetVirtualController(ControllerAngle / 11.8)
+  else
+    ClearVirtualController;
+
+  StepRA3Physics;
+
+  // Alt+Z = главный тумблер РА-3 бустера: одна кнопка включает физику +
+  // запись в loc36 + дефолты (TractionScale=1.0, SpeedLimit=100). Повторное
+  // нажатие выключает всё.
+  pNow := IsKeyDown(Ord('Z')) and IsKeyDown(VK_MENU);
+  if pNow and not LastBoosterToggle then
+    ToggleRA3Booster;
+  LastBoosterToggle := pNow;
 
   // T = открыть левые, Shift+T = закрыть левые
   tNow := IsKeyDown(Ord('T'));
@@ -1190,6 +1428,7 @@ begin
   DrawWagonRA3;
   UpdateControllerAndDraw;
   DrawControllerBraking;
+  UpdateButtonsHoverAndClick;
   DrawButtons;
   DrawALSIndicator;
   DrawArrows;

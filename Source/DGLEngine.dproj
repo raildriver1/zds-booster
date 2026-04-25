@@ -51,6 +51,7 @@
       <MainSource>MainSource</MainSource>
     </DelphiCompile>
     <DCCReference Include="Modules\Advanced3D.pas" />
+    <DCCReference Include="Modules\Bloom.pas" />
     <DCCReference Include="Modules\Console.pas" />
     <DCCReference Include="Modules\DMD_MultyMesh.pas" />
     <DCCReference Include="Modules\DPC_Packages.pas" />
@@ -58,12 +59,15 @@
     <DCCReference Include="Modules\DrawFunc3D.pas" />
     <DCCReference Include="Modules\EngineCore.pas" />
     <DCCReference Include="Modules\EngineUtils.pas" />
+    <DCCReference Include="Modules\FXAA.pas" />
     <DCCReference Include="Modules\Headers\DirectX.pas" />
     <DCCReference Include="Modules\Headers\OpenGL.pas" />
     <DCCReference Include="Modules\Headers\Vfw.pas" />
     <DCCReference Include="Modules\IniFile.pas" />
     <DCCReference Include="Modules\KlubData.pas" />
     <DCCReference Include="Modules\Net.pas" />
+    <DCCReference Include="Modules\RA3.pas" />
+    <DCCReference Include="Modules\RA3Physics.pas" />
     <DCCReference Include="Modules\Sound.pas" />
     <DCCReference Include="Modules\Textures.pas" />
     <DCCReference Include="Modules\TFrustumClass.pas" />
