@@ -50,6 +50,7 @@
     <DelphiCompile Include="DGLEngine.dpr">
       <MainSource>MainSource</MainSource>
     </DelphiCompile>
+    <DCCReference Include="Modules\Addresses.pas" />
     <DCCReference Include="Modules\Advanced3D.pas" />
     <DCCReference Include="Modules\Bloom.pas" />
     <DCCReference Include="Modules\Console.pas" />

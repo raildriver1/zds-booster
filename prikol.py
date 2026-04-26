@@ -20,6 +20,16 @@ import time
 import sys
 import os
 
+from addresses import (
+    ADDR_KONTROLLER,
+    ADDR_LOCS_BASE_PTR,
+    ADDR_REVERS_BASE_PTR,
+    ADDR_SPEED_BASE_PTR,
+    OFF_LOCS_36,
+    OFF_REVERS,
+    OFF_SPEED_KPH,
+)
+
 # ============================================================================
 # Настройки
 # ============================================================================
@@ -28,15 +38,7 @@ LOG_FILE       = os.path.join(os.path.dirname(os.path.abspath(__file__)), "priko
 TICK_HZ        = 10
 LOG_ALL_TICKS  = False   # True = писать каждый тик, False = только при изменениях
 
-# Адреса (смещения от base Launcher.exe)
-ADDR_KONTROLLER     = 0x08DD5B05  # byte
-ADDR_LOCS_BASE_PTR  = 0x0034AEA0  # [.] + B4 = LOCSECTIONS[36] (float)
-ADDR_REVERS_BASE_PTR= 0x0034B28C  # [.] + 1C = revers (byte/int)
-ADDR_SPEED_BASE_PTR = 0x0034B41C  # [.] + 3C = speed_kph (float)
-
-OFF_LOCS_36   = 0xB4
-OFF_REVERS    = 0x1C
-OFF_SPEED_KPH = 0x3C
+# Адреса вынесены в addresses.py (см. import выше).
 
 # ============================================================================
 # Windows API

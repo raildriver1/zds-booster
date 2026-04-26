@@ -40,3 +40,12 @@ __recovery/
 
 # Castalia statistics file (since XE7 Castalia is distributed with Delphi)
 *.stat
+
+# Runtime / debug logs
+*.log
+
+# OS / editor artifacts
+desktop.ini
+Thumbs.db
+.DS_Store
+*.bak
