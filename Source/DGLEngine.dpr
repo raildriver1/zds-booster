@@ -22,6 +22,7 @@
 library DGLEngine;
 
 uses
+  Addresses in 'Modules\Addresses.pas',
   EngineUtils in 'Modules\EngineUtils.pas',
   OpenGL in 'Modules\Headers\OpenGL.pas',
   IniFile in 'Modules\IniFile.pas',
