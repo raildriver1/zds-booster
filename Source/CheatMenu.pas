@@ -2,7 +2,7 @@
 
 interface
 uses
-  Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils, KlubData, ShellAPI, Math;
+  Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils, KlubData, ShellAPI, Math, OpenGL, Advanced3D;
 
 type
   TSlider = record
@@ -99,6 +99,24 @@ type
     RA3Hover: Boolean;
   end;
 
+  // Источник значения для кастомного 3D-текста — соответствует функциям из KlubData.
+  TKlubSource = (
+    ksSpeed, ksDistance, ksCurrentDate, ksCurrentTime, ksLimitSpeed,
+    ksPressureTM, ksPressureUR, ksPressureTC, ksTrackNumber, ksCoords,
+    ksAccel, ksTrafficLightsSeq, ksLimitSpeedValue, ksSpeedValue2,
+    ksCurrentStation, ksChannel, ksTrackWithDir, ksTargetType
+  );
+
+  // Один пользовательский 3D-текст в кабине РА-3.
+  // Локальные координаты кабины (как в DrawTextSimple/DrawAllInfoFields).
+  TCustomText3D = record
+    Source: TKlubSource;
+    X, Y, Z: Single;
+    RX, RY, RZ: Single; // углы в градусах
+    Scale: Single;
+    Visible: Boolean;
+  end;
+
 procedure InitCheatMenu; stdcall;
 procedure DrawCheatMenu; stdcall;
 procedure HandleMenuClick(X, Y: Integer); stdcall;
@@ -108,6 +126,22 @@ procedure ToggleMenu; stdcall;
 procedure ApplyMenuPatch;
 procedure RemoveMenuPatch;
 function IsRA3HoverEnabled: Boolean;
+
+// Кастомные 3D-тексты в кабине РА-3 (Меню разработчика → Custom Texts).
+// Вызывать из RA3.DrawRA3 — рендерит все видимые элементы из CustomTexts.
+procedure DrawCustomTextsRA3;
+
+// Гизмо «как в Блендере» для редактирования выбранного текста — стрелки
+// (Translate), кольца (Rotate) или кубики (Scale). Рисуется при наличии
+// выбранного элемента (даже без F12-меню). Зовётся из RA3.DrawRA3 после
+// DrawCustomTextsRA3.
+procedure DrawGizmoRA3;
+// Per-frame стейт-машина (hover/click/drag/release) — зовётся из RA3.DrawRA3
+// до DrawGizmoRA3. Сам управляет ApplyMenuPatch/RemoveMenuPatch.
+procedure UpdateGizmoFrameRA3;
+// True если мышь над хэндлом гизмо или идёт drag — РА-3 использует это для
+// удержания патча.
+function IsGizmoActive: Boolean;
 
 function GetFreecamBasespeed: Single; stdcall;
 function GetFreecamFastspeed: Single; stdcall;
@@ -597,6 +631,687 @@ begin
   end;
 end;
 
+// ===========================================================================
+//  CUSTOM 3D TEXTS (Меню разработчика → Custom Texts)
+// ===========================================================================
+
+const
+  KLUB_SOURCE_COUNT = 18;
+  CUSTOM_TEXT_DEFAULT_SCALE = 0.007;
+
+var
+  CustomTexts: array of TCustomText3D;
+  CustomTextSelectedIdx: Integer = -1;
+
+  // Слайдеры редактора — общие, переиспользуются для текущего выбранного текста.
+  CustomXSlider, CustomYSlider, CustomZSlider: TSlider;
+  CustomRXSlider, CustomRYSlider, CustomRZSlider: TSlider;
+  CustomScaleSlider: TSlider;
+
+type
+  TGizmoMode = (gmTranslate, gmRotate, gmScale);
+
+const
+  GIZMO_AXIS_NONE      = -1;
+  GIZMO_AXIS_X         = 0;
+  GIZMO_AXIS_Y         = 1;
+  GIZMO_AXIS_Z         = 2;
+  GIZMO_PICK_RADIUS    = 22;     // px — порог попадания мышью в хэндл
+  GIZMO_ARROW_LEN      = 0.06;   // длина стрелки в локальных координатах кабины
+  GIZMO_ROTATE_RADIUS  = 0.05;   // радиус кругов
+  GIZMO_BOX_TRANSLATE  = 0.012;  // размер кубика на конце для translate
+  GIZMO_BOX_SCALE      = 0.020;  // больше для scale, чтоб отличать визуально
+  GIZMO_RING_SAMPLES   = 32;     // точек на кольце (для пика ротации)
+
+var
+  GizmoMode: TGizmoMode = gmTranslate;
+  GizmoActiveAxis: Integer = GIZMO_AXIS_NONE;   // 0/1/2 во время drag, иначе -1
+  HoveredGizmoAxis: Integer = GIZMO_AXIS_NONE;  // 0/1/2 если мышь над хэндлом
+  GizmoDragging: Boolean = False;
+  GizmoLastLMB: Boolean = False;                // для rising-edge детекта клика
+  GizmoPatchActive: Boolean = False;            // мы ли держим ApplyMenuPatch
+  GizmoDragMouseStartX, GizmoDragMouseStartY: Integer;
+  // На начало драга: для translate — стартовые X/Y/Z, для rotate — стартовые RX/RY/RZ.
+  GizmoDragValueStart: array[0..2] of Single;
+  GizmoDragScaleStart: Single;
+  // Для rotate: angular tracking в стиле Блендера — мышь крутится вокруг центра гизмо.
+  GizmoRotPrevAngle: Single;   // последний просэмплированный угол atan2 от центра (рад)
+  GizmoRotAccum: Single;       // сумма приращений с unwrap'ом (рад) от начала драга
+  // Кэш экранных позиций — заполняется в DrawGizmoRA3, читается в PickGizmoAxis.
+  GizmoOriginScreen: TPoint;
+  GizmoTipScreen: array[0..2] of TPoint;        // концы осей translate/scale
+  GizmoRingScreen: array[0..2, 0..GIZMO_RING_SAMPLES - 1] of TPoint; // 3 кольца × 32 точки
+  GizmoCacheValid: Boolean = False;
+
+// Forward — определения ниже в этом же файле; гизмо-обработчики используют их раньше.
+procedure SaveConfig; forward;
+function PointInAnyMenuWindow(X, Y: Integer): Boolean; forward;
+
+function KlubSourceName(S: TKlubSource): string;
+begin
+  case S of
+    ksSpeed:             Result := 'Speed';
+    ksDistance:          Result := 'Distance';
+    ksCurrentDate:       Result := 'Date';
+    ksCurrentTime:       Result := 'Time';
+    ksLimitSpeed:        Result := 'Limit Speed';
+    ksPressureTM:        Result := 'Pressure TM';
+    ksPressureUR:        Result := 'Pressure UR';
+    ksPressureTC:        Result := 'Pressure TC';
+    ksTrackNumber:       Result := 'Track #';
+    ksCoords:            Result := 'Coords';
+    ksAccel:             Result := 'Accel';
+    ksTrafficLightsSeq:  Result := 'Lights Seq';
+    ksLimitSpeedValue:   Result := 'Limit (int)';
+    ksSpeedValue2:       Result := 'Speed (f)';
+    ksCurrentStation:    Result := 'Station';
+    ksChannel:           Result := 'Channel';
+    ksTrackWithDir:      Result := 'Track Dir';
+    ksTargetType:        Result := 'Target Type';
+  else
+    Result := '?';
+  end;
+end;
+
+// Безопасное чтение значения KlubData — все исключения проглатываем.
+function GetKlubSourceValue(S: TKlubSource): string;
+begin
+  try
+    case S of
+      ksSpeed:             Result := GetSpeed;
+      ksDistance:          Result := GetDistance;
+      ksCurrentDate:       Result := GetCurrentDate;
+      ksCurrentTime:       Result := GetCurrentTime;
+      ksLimitSpeed:        Result := GetLimitSpeed;
+      ksPressureTM:        Result := GetPressureTM;
+      ksPressureUR:        Result := GetPressureUR;
+      ksPressureTC:        Result := GetPressureTC;
+      ksTrackNumber:       Result := GetTrackNumber;
+      ksCoords:            Result := GetCoordinatesFormatted;
+      ksAccel:             Result := GetAcceleration;
+      ksTrafficLightsSeq:  Result := GetTrafficLightsSequence;
+      ksLimitSpeedValue:   Result := IntToStr(GetLimitSpeedValue);
+      ksSpeedValue2:       Result := Format('%.2f', [GetSpeedValue2]);
+      ksCurrentStation:    Result := GetCurrentStation;
+      ksChannel:           Result := GetChannel;
+      ksTrackWithDir:      Result := GetTrackWithDirection;
+      ksTargetType:        Result := GetTargetType;
+    else
+      Result := '';
+    end;
+  except
+    Result := '';
+  end;
+end;
+
+// Сброс range/значений редакторных слайдеров.
+procedure InitCustomTextSliders;
+  procedure InitS(var S: TSlider; Min, Max, Val: Single);
+  begin
+    S.Value := Val;
+    S.MinValue := Min;
+    S.MaxValue := Max;
+    S.HoverProgress := 0.0;
+    S.IsDragging := False;
+  end;
+begin
+  InitS(CustomXSlider,    -1.0,   1.0,  0.0);
+  InitS(CustomYSlider,    -1.0,   1.0,  0.0);
+  InitS(CustomZSlider,    -0.5,   1.0,  0.2);
+  InitS(CustomRXSlider, -180.0, 180.0, -90.0); // дефолт как в DrawTextSimple
+  InitS(CustomRYSlider, -180.0, 180.0,  0.0);
+  InitS(CustomRZSlider, -180.0, 180.0,  0.0);
+  InitS(CustomScaleSlider, 0.001, 0.05, CUSTOM_TEXT_DEFAULT_SCALE);
+end;
+
+procedure SyncSlidersFromSelected;
+begin
+  if (CustomTextSelectedIdx < 0) or (CustomTextSelectedIdx >= Length(CustomTexts)) then Exit;
+  with CustomTexts[CustomTextSelectedIdx] do
+  begin
+    CustomXSlider.Value     := X;
+    CustomYSlider.Value     := Y;
+    CustomZSlider.Value     := Z;
+    CustomRXSlider.Value    := RX;
+    CustomRYSlider.Value    := RY;
+    CustomRZSlider.Value    := RZ;
+    CustomScaleSlider.Value := Scale;
+  end;
+end;
+
+procedure WriteSlidersToSelected;
+begin
+  if (CustomTextSelectedIdx < 0) or (CustomTextSelectedIdx >= Length(CustomTexts)) then Exit;
+  with CustomTexts[CustomTextSelectedIdx] do
+  begin
+    X     := CustomXSlider.Value;
+    Y     := CustomYSlider.Value;
+    Z     := CustomZSlider.Value;
+    RX    := CustomRXSlider.Value;
+    RY    := CustomRYSlider.Value;
+    RZ    := CustomRZSlider.Value;
+    Scale := CustomScaleSlider.Value;
+  end;
+end;
+
+// True если хоть один слайдер из редакторных сейчас перетаскивается.
+function AnyCustomSliderDragging: Boolean;
+begin
+  Result := CustomXSlider.IsDragging or CustomYSlider.IsDragging or CustomZSlider.IsDragging or
+            CustomRXSlider.IsDragging or CustomRYSlider.IsDragging or CustomRZSlider.IsDragging or
+            CustomScaleSlider.IsDragging;
+end;
+
+procedure AddCustomText;
+var
+  N: Integer;
+  T: TCustomText3D;
+begin
+  N := Length(CustomTexts);
+  T.Source := ksSpeed;
+  T.X := 0.0;
+  T.Y := 0.0;
+  T.Z := 0.2;
+  T.RX := -90.0; // как в DrawTextSimple — текст лежит на «полу» кабины
+  T.RY := 0.0;
+  T.RZ := 0.0;
+  T.Scale := CUSTOM_TEXT_DEFAULT_SCALE;
+  T.Visible := True;
+  SetLength(CustomTexts, N + 1);
+  CustomTexts[N] := T;
+  CustomTextSelectedIdx := N;
+  SyncSlidersFromSelected;
+end;
+
+procedure DeleteSelectedCustomText;
+var
+  i: Integer;
+begin
+  if (CustomTextSelectedIdx < 0) or (CustomTextSelectedIdx >= Length(CustomTexts)) then Exit;
+  for i := CustomTextSelectedIdx to Length(CustomTexts) - 2 do
+    CustomTexts[i] := CustomTexts[i + 1];
+  SetLength(CustomTexts, Length(CustomTexts) - 1);
+  if Length(CustomTexts) = 0 then
+    CustomTextSelectedIdx := -1
+  else if CustomTextSelectedIdx >= Length(CustomTexts) then
+    CustomTextSelectedIdx := Length(CustomTexts) - 1;
+  if CustomTextSelectedIdx >= 0 then
+    SyncSlidersFromSelected;
+end;
+
+procedure CycleSelectedSource(Delta: Integer);
+var
+  V: Integer;
+begin
+  if (CustomTextSelectedIdx < 0) or (CustomTextSelectedIdx >= Length(CustomTexts)) then Exit;
+  V := Integer(CustomTexts[CustomTextSelectedIdx].Source) + Delta;
+  // wrap-around
+  while V < 0 do Inc(V, KLUB_SOURCE_COUNT);
+  V := V mod KLUB_SOURCE_COUNT;
+  CustomTexts[CustomTextSelectedIdx].Source := TKlubSource(V);
+end;
+
+// Write3D живёт в DGLEngine.dll (см. DGLEngine.dpr exports). DrawFunc3D держит
+// собственную приватную обёртку DrawText3D, поэтому подключаем Write3D напрямую.
+procedure Write3DExt(FontID: Integer; Text: PChar); stdcall; external 'DGLEngine.dll' name 'Write3D';
+
+// Рендер всех видимых пользовательских текстов в локальной системе координат
+// кабины РА-3. Вызывается из RA3.DrawRA3 каждый кадр.
+procedure DrawCustomTextsRA3;
+var
+  i: Integer;
+  S: string;
+  Buf: PChar;
+begin
+  if Length(CustomTexts) = 0 then Exit;
+  for i := 0 to Length(CustomTexts) - 1 do
+  begin
+    if not CustomTexts[i].Visible then Continue;
+    S := GetKlubSourceValue(CustomTexts[i].Source);
+    if S = '' then Continue;
+    BeginObj3D;
+    glDisable(GL_LIGHTING);
+    Position3D(CustomTexts[i].X, CustomTexts[i].Y, CustomTexts[i].Z);
+    RotateX(CustomTexts[i].RX);
+    RotateY(CustomTexts[i].RY);
+    RotateZ(CustomTexts[i].RZ);
+    Scale3D(CustomTexts[i].Scale);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    Buf := PChar(S);
+    Write3DExt(0, Buf);
+    glEnable(GL_LIGHTING);
+    EndObj3D;
+  end;
+end;
+
+// ===========================================================================
+//  3D-ГИЗМО (Translate / Rotate / Scale)
+// ===========================================================================
+
+function GizmoAxisColor(AxisIdx: Integer): Integer;
+begin
+  if AxisIdx = GizmoActiveAxis then
+    Result := $00FFFF // жёлтый — активная ось
+  else
+    case AxisIdx of
+      GIZMO_AXIS_X: Result := $0000FF; // красный (COLORREF: low byte = R)
+      GIZMO_AXIS_Y: Result := $00FF00; // зелёный
+      GIZMO_AXIS_Z: Result := $FF0000; // синий
+    else
+      Result := $FFFFFF;
+    end;
+end;
+
+procedure DrawGizmoRA3;
+var
+  T: TCustomText3D;
+  V: TVertex;
+  i: Integer;
+  Theta, R, BoxSize: Single;
+  RingV: array[0..GIZMO_RING_SAMPLES - 1] of TVertex;
+begin
+  // ВАЖНО: гизмо рисуется всегда, когда есть выбранный текст — даже без F12-меню,
+  // чтобы можно было редактировать «как РА-3 контроллер».
+  if (CustomTextSelectedIdx < 0) or (CustomTextSelectedIdx >= Length(CustomTexts)) then
+  begin
+    GizmoCacheValid := False;
+    Exit;
+  end;
+  T := CustomTexts[CustomTextSelectedIdx];
+
+  // === ВСЁ В ОДНОМ BeginObj3D: матрица не «гуляет» между объектами. ===
+  BeginObj3D;
+  glDisable(GL_LIGHTING);
+  glDisable(GL_DEPTH_TEST);
+  Position3D(T.X, T.Y, T.Z);
+  SetTexture(0);
+
+  // -----------------------------------------------------------------------
+  // СНАЧАЛА — кэшируем все экранные позиции (Get2DPos нельзя звать внутри
+  // glBegin/glEnd — это UB в OpenGL, gluProject возвращает мусор).
+  // -----------------------------------------------------------------------
+  V.X := 0; V.Y := 0; V.Z := 0;
+  GizmoOriginScreen := Get2DPos(V);
+
+  if (GizmoMode = gmTranslate) or (GizmoMode = gmScale) then
+  begin
+    V.X := GIZMO_ARROW_LEN; V.Y := 0; V.Z := 0;
+    GizmoTipScreen[GIZMO_AXIS_X] := Get2DPos(V);
+    V.X := 0; V.Y := GIZMO_ARROW_LEN; V.Z := 0;
+    GizmoTipScreen[GIZMO_AXIS_Y] := Get2DPos(V);
+    V.X := 0; V.Y := 0; V.Z := GIZMO_ARROW_LEN;
+    GizmoTipScreen[GIZMO_AXIS_Z] := Get2DPos(V);
+  end
+  else // gmRotate
+  begin
+    R := GIZMO_ROTATE_RADIUS;
+    // Кольцо X (плоскость YZ)
+    for i := 0 to GIZMO_RING_SAMPLES - 1 do
+    begin
+      Theta := i * 2 * PI / GIZMO_RING_SAMPLES;
+      V.X := 0; V.Y := R * Cos(Theta); V.Z := R * Sin(Theta);
+      GizmoRingScreen[GIZMO_AXIS_X, i] := Get2DPos(V);
+    end;
+    // Кольцо Y (плоскость XZ)
+    for i := 0 to GIZMO_RING_SAMPLES - 1 do
+    begin
+      Theta := i * 2 * PI / GIZMO_RING_SAMPLES;
+      V.X := R * Cos(Theta); V.Y := 0; V.Z := R * Sin(Theta);
+      GizmoRingScreen[GIZMO_AXIS_Y, i] := Get2DPos(V);
+    end;
+    // Кольцо Z (плоскость XY)
+    for i := 0 to GIZMO_RING_SAMPLES - 1 do
+    begin
+      Theta := i * 2 * PI / GIZMO_RING_SAMPLES;
+      V.X := R * Cos(Theta); V.Y := R * Sin(Theta); V.Z := 0;
+      GizmoRingScreen[GIZMO_AXIS_Z, i] := Get2DPos(V);
+    end;
+  end;
+
+  // -----------------------------------------------------------------------
+  // ТЕПЕРЬ — рендерим всё без вызовов Get2DPos.
+  // -----------------------------------------------------------------------
+  if (GizmoMode = gmTranslate) or (GizmoMode = gmScale) then
+  begin
+    // Линии-оси
+    Color3D(GizmoAxisColor(GIZMO_AXIS_X), 255, False, 0.0);
+    DrawLine(0, 0, 0, GIZMO_ARROW_LEN, 0, 0, 3.0, True);
+    Color3D(GizmoAxisColor(GIZMO_AXIS_Y), 255, False, 0.0);
+    DrawLine(0, 0, 0, 0, GIZMO_ARROW_LEN, 0, 3.0, True);
+    Color3D(GizmoAxisColor(GIZMO_AXIS_Z), 255, False, 0.0);
+    DrawLine(0, 0, 0, 0, 0, GIZMO_ARROW_LEN, 3.0, True);
+
+    // Кубики на концах. glPushMatrix/glPopMatrix вокруг каждого, чтобы
+    // glTranslatef'ы НЕ суммировались (DrawCube сам делает push/scale/pop).
+    if GizmoMode = gmTranslate then BoxSize := GIZMO_BOX_TRANSLATE
+    else BoxSize := GIZMO_BOX_SCALE;
+
+    Color3D(GizmoAxisColor(GIZMO_AXIS_X), 255, False, 0.0);
+    glPushMatrix;
+      glTranslatef(GIZMO_ARROW_LEN, 0, 0);
+      DrawCube(BoxSize, BoxSize, BoxSize);
+    glPopMatrix;
+
+    Color3D(GizmoAxisColor(GIZMO_AXIS_Y), 255, False, 0.0);
+    glPushMatrix;
+      glTranslatef(0, GIZMO_ARROW_LEN, 0);
+      DrawCube(BoxSize, BoxSize, BoxSize);
+    glPopMatrix;
+
+    Color3D(GizmoAxisColor(GIZMO_AXIS_Z), 255, False, 0.0);
+    glPushMatrix;
+      glTranslatef(0, 0, GIZMO_ARROW_LEN);
+      DrawCube(BoxSize, BoxSize, BoxSize);
+    glPopMatrix;
+  end
+  else // gmRotate
+  begin
+    R := GIZMO_ROTATE_RADIUS;
+    glLineWidth(2.0);
+
+    // Кольцо X (YZ)
+    for i := 0 to GIZMO_RING_SAMPLES - 1 do
+    begin
+      Theta := i * 2 * PI / GIZMO_RING_SAMPLES;
+      RingV[i].X := 0; RingV[i].Y := R * Cos(Theta); RingV[i].Z := R * Sin(Theta);
+    end;
+    Color3D(GizmoAxisColor(GIZMO_AXIS_X), 255, False, 0.0);
+    glBegin(GL_LINE_LOOP);
+      for i := 0 to GIZMO_RING_SAMPLES - 1 do
+        glVertex3f(RingV[i].X, RingV[i].Y, RingV[i].Z);
+    glEnd;
+
+    // Кольцо Y (XZ)
+    for i := 0 to GIZMO_RING_SAMPLES - 1 do
+    begin
+      Theta := i * 2 * PI / GIZMO_RING_SAMPLES;
+      RingV[i].X := R * Cos(Theta); RingV[i].Y := 0; RingV[i].Z := R * Sin(Theta);
+    end;
+    Color3D(GizmoAxisColor(GIZMO_AXIS_Y), 255, False, 0.0);
+    glBegin(GL_LINE_LOOP);
+      for i := 0 to GIZMO_RING_SAMPLES - 1 do
+        glVertex3f(RingV[i].X, RingV[i].Y, RingV[i].Z);
+    glEnd;
+
+    // Кольцо Z (XY)
+    for i := 0 to GIZMO_RING_SAMPLES - 1 do
+    begin
+      Theta := i * 2 * PI / GIZMO_RING_SAMPLES;
+      RingV[i].X := R * Cos(Theta); RingV[i].Y := R * Sin(Theta); RingV[i].Z := 0;
+    end;
+    Color3D(GizmoAxisColor(GIZMO_AXIS_Z), 255, False, 0.0);
+    glBegin(GL_LINE_LOOP);
+      for i := 0 to GIZMO_RING_SAMPLES - 1 do
+        glVertex3f(RingV[i].X, RingV[i].Y, RingV[i].Z);
+    glEnd;
+
+    glLineWidth(1.0);
+  end;
+
+  glEnable(GL_DEPTH_TEST);
+  glEnable(GL_LIGHTING);
+  EndObj3D;
+
+  GizmoCacheValid := True;
+end;
+
+// Квадрат расстояния от точки до отрезка в 2D — для широкого пика по оси.
+function DistPointToSegmentSq(PX, PY, AX, AY, BX, BY: Integer): Integer;
+var
+  ABX, ABY, APX, APY: Integer;
+  LenSq, Num: Integer;
+  CX, CY: Integer;
+begin
+  ABX := BX - AX;
+  ABY := BY - AY;
+  APX := PX - AX;
+  APY := PY - AY;
+  LenSq := ABX * ABX + ABY * ABY;
+  if LenSq = 0 then
+  begin
+    Result := APX * APX + APY * APY;
+    Exit;
+  end;
+  Num := APX * ABX + APY * ABY;
+  if Num <= 0 then
+  begin
+    Result := APX * APX + APY * APY;
+    Exit;
+  end;
+  if Num >= LenSq then
+  begin
+    Result := (PX - BX) * (PX - BX) + (PY - BY) * (PY - BY);
+    Exit;
+  end;
+  CX := AX + (ABX * Num) div LenSq;
+  CY := AY + (ABY * Num) div LenSq;
+  Result := (PX - CX) * (PX - CX) + (PY - CY) * (PY - CY);
+end;
+
+function PointDistSq(const P: TPoint; X, Y: Integer): Integer;
+begin
+  Result := Sqr(P.X - X) + Sqr(P.Y - Y);
+end;
+
+// Какую ось гизмо мышь сейчас «накрывает». Translate/Scale — пик по линии origin→tip.
+// Rotate — пик по ближайшей точке кольца (32 семпла на каждое).
+function PickGizmoAxis(MX, MY: Integer): Integer;
+var
+  i, j, d, bestD, best: Integer;
+begin
+  Result := GIZMO_AXIS_NONE;
+  if not GizmoCacheValid then Exit;
+
+  best := GIZMO_AXIS_NONE;
+  bestD := GIZMO_PICK_RADIUS * GIZMO_PICK_RADIUS;
+
+  if (GizmoMode = gmTranslate) or (GizmoMode = gmScale) then
+  begin
+    for i := 0 to 2 do
+    begin
+      d := DistPointToSegmentSq(MX, MY,
+        GizmoOriginScreen.X, GizmoOriginScreen.Y,
+        GizmoTipScreen[i].X, GizmoTipScreen[i].Y);
+      if d < bestD then
+      begin
+        bestD := d;
+        best := i;
+      end;
+    end;
+  end
+  else // gmRotate
+  begin
+    for i := 0 to 2 do
+      for j := 0 to GIZMO_RING_SAMPLES - 1 do
+      begin
+        d := PointDistSq(GizmoRingScreen[i, j], MX, MY);
+        if d < bestD then
+        begin
+          bestD := d;
+          best := i;
+        end;
+      end;
+  end;
+  Result := best;
+end;
+
+procedure GizmoStartDrag(MX, MY, AxisIdx: Integer);
+var
+  Idx: Integer;
+begin
+  Idx := CustomTextSelectedIdx;
+  if (Idx < 0) or (Idx >= Length(CustomTexts)) then Exit;
+
+  GizmoDragging := True;
+  GizmoActiveAxis := AxisIdx;
+  GizmoDragMouseStartX := MX;
+  GizmoDragMouseStartY := MY;
+  if GizmoMode = gmTranslate then
+  begin
+    GizmoDragValueStart[0] := CustomTexts[Idx].X;
+    GizmoDragValueStart[1] := CustomTexts[Idx].Y;
+    GizmoDragValueStart[2] := CustomTexts[Idx].Z;
+  end
+  else if GizmoMode = gmRotate then
+  begin
+    GizmoDragValueStart[0] := CustomTexts[Idx].RX;
+    GizmoDragValueStart[1] := CustomTexts[Idx].RY;
+    GizmoDragValueStart[2] := CustomTexts[Idx].RZ;
+    // Инициализация angular tracking: запоминаем угол от центра гизмо до курсора.
+    GizmoRotPrevAngle := ArcTan2(MY - GizmoOriginScreen.Y, MX - GizmoOriginScreen.X);
+    GizmoRotAccum := 0.0;
+  end
+  else
+    GizmoDragScaleStart := CustomTexts[Idx].Scale;
+end;
+
+procedure GizmoApplyDrag(MX, MY: Integer);
+var
+  Idx: Integer;
+  AxisVecX, AxisVecY, AxisLenSq, DotI, DX, DY: Integer;
+  AxisLen, PixelsAlongAxis, WorldDelta, AngleDelta, ScaleFactor: Single;
+begin
+  Idx := CustomTextSelectedIdx;
+  if (GizmoActiveAxis = GIZMO_AXIS_NONE) or (Idx < 0) or (Idx >= Length(CustomTexts)) then Exit;
+  if not GizmoCacheValid then Exit;
+
+  DX := MX - GizmoDragMouseStartX;
+  DY := MY - GizmoDragMouseStartY;
+
+  case GizmoMode of
+    gmTranslate:
+    begin
+      AxisVecX := GizmoTipScreen[GizmoActiveAxis].X - GizmoOriginScreen.X;
+      AxisVecY := GizmoTipScreen[GizmoActiveAxis].Y - GizmoOriginScreen.Y;
+      AxisLenSq := AxisVecX * AxisVecX + AxisVecY * AxisVecY;
+      if AxisLenSq < 4 then Exit;
+      AxisLen := Sqrt(AxisLenSq);
+      DotI := DX * AxisVecX + DY * AxisVecY;
+      PixelsAlongAxis := DotI / AxisLen;
+      WorldDelta := (PixelsAlongAxis / AxisLen) * GIZMO_ARROW_LEN;
+      case GizmoActiveAxis of
+        GIZMO_AXIS_X: CustomTexts[Idx].X := GizmoDragValueStart[0] + WorldDelta;
+        GIZMO_AXIS_Y: CustomTexts[Idx].Y := GizmoDragValueStart[1] + WorldDelta;
+        GIZMO_AXIS_Z: CustomTexts[Idx].Z := GizmoDragValueStart[2] + WorldDelta;
+      end;
+    end;
+    gmRotate:
+    begin
+      // Угол курсора от центра гизмо (в экранных пикселях). Каждый тик берём
+      // приращение прошлого угла, делаем unwrap (через ±π), и аккумулируем.
+      // Так драг следует за круговым движением мыши — как в Блендере.
+      AngleDelta := ArcTan2(MY - GizmoOriginScreen.Y, MX - GizmoOriginScreen.X) - GizmoRotPrevAngle;
+      if AngleDelta >  PI then AngleDelta := AngleDelta - 2 * PI;
+      if AngleDelta < -PI then AngleDelta := AngleDelta + 2 * PI;
+      GizmoRotAccum := GizmoRotAccum + AngleDelta;
+      GizmoRotPrevAngle := ArcTan2(MY - GizmoOriginScreen.Y, MX - GizmoOriginScreen.X);
+      // Преобразуем накопленный угол в градусы — наши RX/RY/RZ в градусах.
+      AngleDelta := GizmoRotAccum * 180.0 / PI;
+      case GizmoActiveAxis of
+        GIZMO_AXIS_X: CustomTexts[Idx].RX := GizmoDragValueStart[0] + AngleDelta;
+        GIZMO_AXIS_Y: CustomTexts[Idx].RY := GizmoDragValueStart[1] + AngleDelta;
+        GIZMO_AXIS_Z: CustomTexts[Idx].RZ := GizmoDragValueStart[2] + AngleDelta;
+      end;
+    end;
+    gmScale:
+    begin
+      ScaleFactor := 1.0 + DX * 0.005;
+      if ScaleFactor < 0.05 then ScaleFactor := 0.05;
+      CustomTexts[Idx].Scale := GizmoDragScaleStart * ScaleFactor;
+      if CustomTexts[Idx].Scale < 0.0005 then CustomTexts[Idx].Scale := 0.0005;
+    end;
+  end;
+  SyncSlidersFromSelected;
+end;
+
+// Per-frame state machine — копия паттерна РА-3 контроллера. Вызывается из RA3.DrawRA3
+// каждый кадр; читает мышь напрямую (MoveXcoord/MoveYcoord + GetAsyncKeyState),
+// поэтому работает БЕЗ открытого F12-меню. Сама зовёт ApplyMenuPatch/RemoveMenuPatch
+// при hover/drag — точно как UpdateHover для контроллера.
+procedure UpdateGizmoFrameRA3;
+var
+  MX, MY: Integer;
+  LMB: Boolean;
+begin
+  // Нет выбранного текста — погасить всё.
+  if (CustomTextSelectedIdx < 0) or (CustomTextSelectedIdx >= Length(CustomTexts)) then
+  begin
+    HoveredGizmoAxis := GIZMO_AXIS_NONE;
+    if GizmoDragging then
+    begin
+      GizmoDragging := False;
+      GizmoActiveAxis := GIZMO_AXIS_NONE;
+    end;
+    if GizmoPatchActive then
+    begin
+      RemoveMenuPatch;
+      GizmoPatchActive := False;
+    end;
+    GizmoLastLMB := False;
+    Exit;
+  end;
+
+  if not GizmoCacheValid then
+  begin
+    HoveredGizmoAxis := GIZMO_AXIS_NONE;
+    Exit;
+  end;
+
+  MX := Round(MoveXcoord);
+  MY := Round(MoveYcoord);
+  HoveredGizmoAxis := PickGizmoAxis(MX, MY);
+  LMB := (GetAsyncKeyState(VK_LBUTTON) and $8000) <> 0;
+
+  // Rising edge → старт drag'а (если не над окном меню).
+  if (not GizmoDragging) and LMB and (not GizmoLastLMB) and (HoveredGizmoAxis <> GIZMO_AXIS_NONE) then
+  begin
+    if MenuVisible and PointInAnyMenuWindow(MX, MY) then
+    begin
+      // Клик попал в окно меню — пускай его обработает менюшный код.
+    end
+    else
+    begin
+      GizmoStartDrag(MX, MY, HoveredGizmoAxis);
+    end;
+  end;
+
+  // Продолжение drag'а — каждый тик пересчитываем + сохраняем (фиксит дрифт от
+  // LoadConfigThrottled, который иначе восстанавливал бы старые значения).
+  if GizmoDragging and LMB then
+  begin
+    GizmoApplyDrag(MX, MY);
+    SaveConfig;
+  end;
+
+  // Falling edge → конец drag'а.
+  if GizmoDragging and (not LMB) then
+  begin
+    GizmoDragging := False;
+    GizmoActiveAxis := GIZMO_AXIS_NONE;
+    SaveConfig;
+  end;
+
+  // Патч игрового меню: накладывается, пока hover ИЛИ drag активны.
+  if (GizmoDragging or (HoveredGizmoAxis <> GIZMO_AXIS_NONE)) and (not GizmoPatchActive) then
+  begin
+    ApplyMenuPatch;
+    GizmoPatchActive := True;
+  end
+  else if (not GizmoDragging) and (HoveredGizmoAxis = GIZMO_AXIS_NONE) and GizmoPatchActive then
+  begin
+    RemoveMenuPatch;
+    GizmoPatchActive := False;
+  end;
+
+  GizmoLastLMB := LMB;
+end;
+
+function IsGizmoActive: Boolean;
+begin
+  Result := GizmoDragging or (HoveredGizmoAxis <> GIZMO_AXIS_NONE);
+end;
+
 // Функция записи float значения в память
 procedure WriteFloatToMemory(Address: Cardinal; Value: Single);
 var
@@ -976,9 +1691,35 @@ var
   ColonPos: Integer;
   OldFreecamState: Boolean;
   LangValue: Integer;
+  CTCount, CTIdx, SrcVal: Integer;
+  CTPrefix: string;
+
+  // Возвращает True, если Key начинается с 'ctN_' и помещает индекс N в CTIdx,
+  // а суффикс (без префикса 'ctN_') — в Out.
+  function MatchCT(const K: string; out Idx: Integer; out Suffix: string): Boolean;
+  var
+    P, J: Integer;
+    NumS: string;
+  begin
+    Result := False;
+    if Length(K) < 4 then Exit;
+    if (K[1] <> 'c') or (K[2] <> 't') then Exit;
+    NumS := '';
+    J := 3;
+    while (J <= Length(K)) and (K[J] >= '0') and (K[J] <= '9') do
+    begin
+      NumS := NumS + K[J];
+      Inc(J);
+    end;
+    if (NumS = '') or (J > Length(K)) or (K[J] <> '_') then Exit;
+    Idx := StrToIntDef(NumS, -1);
+    if Idx < 0 then Exit;
+    Suffix := Copy(K, J + 1, Length(K));
+    Result := True;
+  end;
 begin
   if not FileExists('zdbooster.cfg') then Exit;
-  
+
   OldFreecamState := Settings.Freecam;
   
   try
@@ -1033,9 +1774,63 @@ begin
 
         // Глобальный слайдер яркости
         if Key = 'brightness' then Settings.BrightnessSlider.Value := ParseFloat(Value, 0.0);
+
+        // Режим гизмо
+        if Key = 'gizmo_mode' then
+        begin
+          SrcVal := StrToIntDef(Value, 0);
+          if (SrcVal >= 0) and (SrcVal <= Integer(High(TGizmoMode))) then
+            GizmoMode := TGizmoMode(SrcVal);
+        end;
+
+        // --- Кастомные 3D-тексты ---
+        // Сначала размер массива:
+        if Key = 'custom_text_count' then
+        begin
+          CTCount := StrToIntDef(Value, 0);
+          if CTCount < 0 then CTCount := 0;
+          if CTCount > 256 then CTCount := 256; // sanity-cap
+          SetLength(CustomTexts, CTCount);
+          // Заполняем дефолтами на случай неполного конфига:
+          for CTIdx := 0 to CTCount - 1 do
+          begin
+            CustomTexts[CTIdx].Source  := ksSpeed;
+            CustomTexts[CTIdx].X       := 0.0;
+            CustomTexts[CTIdx].Y       := 0.0;
+            CustomTexts[CTIdx].Z       := 0.2;
+            CustomTexts[CTIdx].RX      := -90.0;
+            CustomTexts[CTIdx].RY      := 0.0;
+            CustomTexts[CTIdx].RZ      := 0.0;
+            CustomTexts[CTIdx].Scale   := CUSTOM_TEXT_DEFAULT_SCALE;
+            CustomTexts[CTIdx].Visible := True;
+          end;
+          if CustomTextSelectedIdx >= CTCount then
+            CustomTextSelectedIdx := CTCount - 1;
+        end
+        else if MatchCT(Key, CTIdx, CTPrefix) and (CTIdx < Length(CustomTexts)) then
+        begin
+          if CTPrefix = 'source' then
+          begin
+            SrcVal := StrToIntDef(Value, 0);
+            if (SrcVal >= 0) and (SrcVal < KLUB_SOURCE_COUNT) then
+              CustomTexts[CTIdx].Source := TKlubSource(SrcVal);
+          end
+          else if CTPrefix = 'x'       then CustomTexts[CTIdx].X       := ParseFloat(Value, 0.0)
+          else if CTPrefix = 'y'       then CustomTexts[CTIdx].Y       := ParseFloat(Value, 0.0)
+          else if CTPrefix = 'z'       then CustomTexts[CTIdx].Z       := ParseFloat(Value, 0.2)
+          else if CTPrefix = 'rx'      then CustomTexts[CTIdx].RX      := ParseFloat(Value, -90.0)
+          else if CTPrefix = 'ry'      then CustomTexts[CTIdx].RY      := ParseFloat(Value, 0.0)
+          else if CTPrefix = 'rz'      then CustomTexts[CTIdx].RZ      := ParseFloat(Value, 0.0)
+          else if CTPrefix = 'scale'   then CustomTexts[CTIdx].Scale   := ParseFloat(Value, CUSTOM_TEXT_DEFAULT_SCALE)
+          else if CTPrefix = 'visible' then CustomTexts[CTIdx].Visible := (Value = '1');
+        end;
       end;
     end;
     CloseFile(F);
+
+    // Если что-то выбрано, синхронизируем слайдеры (значения изменились на диске).
+    if (CustomTextSelectedIdx >= 0) and (CustomTextSelectedIdx < Length(CustomTexts)) then
+      SyncSlidersFromSelected;
 
     MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
     MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
@@ -1075,6 +1870,7 @@ end;
 procedure SaveConfig;
 var
   F: TextFile;
+  I_SAVE: Integer;
 begin
   try
     AssignFile(F, 'zdbooster.cfg');
@@ -1109,6 +1905,27 @@ begin
     
     // Глобальный слайдер яркости
     WriteLn(F, 'brightness: ' + FormatValue(Settings.BrightnessSlider.Value));
+
+    // Режим гизмо
+    WriteLn(F, 'gizmo_mode: ' + IntToStr(Integer(GizmoMode)));
+
+    // Кастомные 3D-тексты в кабине РА-3
+    WriteLn(F, 'custom_text_count: ' + IntToStr(Length(CustomTexts)));
+    for I_SAVE := 0 to Length(CustomTexts) - 1 do
+    begin
+      WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_source: ' + IntToStr(Integer(CustomTexts[I_SAVE].Source)));
+      WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_x: ' + FormatValue(CustomTexts[I_SAVE].X));
+      WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_y: ' + FormatValue(CustomTexts[I_SAVE].Y));
+      WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_z: ' + FormatValue(CustomTexts[I_SAVE].Z));
+      WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_rx: ' + FormatValue(CustomTexts[I_SAVE].RX));
+      WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_ry: ' + FormatValue(CustomTexts[I_SAVE].RY));
+      WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_rz: ' + FormatValue(CustomTexts[I_SAVE].RZ));
+      WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_scale: ' + FormatValue(CustomTexts[I_SAVE].Scale));
+      if CustomTexts[I_SAVE].Visible then
+        WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_visible: 1')
+      else
+        WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_visible: 0');
+    end;
 
     CloseFile(F);
   except
@@ -1525,6 +2342,20 @@ begin
     end;
     if MaxVisibleDistanceSection.AnimProgress < 0 then MaxVisibleDistanceSection.AnimProgress := 0;
     if MaxVisibleDistanceSection.AnimProgress > 1 then MaxVisibleDistanceSection.AnimProgress := 1;
+
+    // Developer секция
+    if DeveloperSection.Expanded then
+    begin
+      if DeveloperSection.AnimProgress < 1.0 then
+        DeveloperSection.AnimProgress := DeveloperSection.AnimProgress + 5.0 * DeltaTime;
+    end
+    else
+    begin
+      if DeveloperSection.AnimProgress > 0.0 then
+        DeveloperSection.AnimProgress := DeveloperSection.AnimProgress - 5.0 * DeltaTime;
+    end;
+    if DeveloperSection.AnimProgress < 0 then DeveloperSection.AnimProgress := 0;
+    if DeveloperSection.AnimProgress > 1 then DeveloperSection.AnimProgress := 1;
   end;
 end;
 
@@ -1580,6 +2411,11 @@ begin
   Settings.CameraSensitivitySlider.MinValue := 1.0;
   Settings.CameraSensitivitySlider.MaxValue := 9.0;
   Settings.CameraSensitivitySlider.HoverProgress := 0.0;
+
+  // Слайдеры редактора кастомных 3D-текстов
+  InitCustomTextSliders;
+  SetLength(CustomTexts, 0);
+  CustomTextSelectedIdx := -1;
 
   // Адреса для угла обзора
   ViewAngleNopAddr1 := $723909;
@@ -1928,14 +2764,55 @@ begin
   DrawModernText(X + Round(90 * WinScale), Y, Value, COLOR_ACCENT, Alpha, 0.65 * WinScale);
 end;
 
+// === Высота Developer-секции ===
+// Секция содержит:
+//   - 12 строк живых данных KlubData (Speed/Limit/...)
+//   - заголовок "Custom Texts" + кнопка [+ Add]
+//   - список кастомных текстов (по строке на каждый, с кнопкой удаления)
+//   - редактор выбранного текста (источник, Visible, 7 слайдеров)
+const
+  DEV_LIVE_ROWS       = 12;
+  DEV_LIVE_ROW_H      = 18;
+  DEV_TOPPAD          = 12;
+  DEV_BOTTOMPAD       = 12;
+  DEV_HDR_H              = 28;  // "Custom Texts" + Add
+  DEV_LIST_ROW_H         = 22;
+  DEV_EDITOR_HEADER_H    = 30;  // строка выбора источника <Source>
+  DEV_EDITOR_GIZMO_MODE_H = 30; // кнопки режима T/R/S
+  DEV_EDITOR_VIS_H       = 26;  // чекбокс Visible
+  DEV_EDITOR_SLIDER_H    = 36;  // высота одного слайдера
+  DEV_EDITOR_SLIDERS     = 7;
+  DEV_EDITOR_DEL_H       = 28;  // кнопка Delete
+  DEV_GAP                = 8;
+  DEV_GIZMO_BTN_W        = 28;  // ширина кнопки режима
+
+function GetDeveloperContentHeight: Integer;
+var
+  H: Integer;
+begin
+  H := DEV_TOPPAD + DEV_LIVE_ROWS * DEV_LIVE_ROW_H + DEV_GAP;
+  H := H + DEV_HDR_H;
+  H := H + Length(CustomTexts) * DEV_LIST_ROW_H;
+  if (CustomTextSelectedIdx >= 0) and (CustomTextSelectedIdx < Length(CustomTexts)) then
+    H := H + DEV_GAP + DEV_EDITOR_HEADER_H + DEV_EDITOR_GIZMO_MODE_H + DEV_EDITOR_VIS_H +
+         DEV_EDITOR_SLIDERS * DEV_EDITOR_SLIDER_H + DEV_EDITOR_DEL_H;
+  H := H + DEV_BOTTOMPAD;
+  Result := H;
+end;
+
 procedure DrawDeveloperValues(X, Y: Integer; Alpha: Integer; WinScale: Single; SectionHeight: Integer);
 var
   RowH, CurY, MaxY: Integer;
+  i, RowY: Integer;
+  SrcName, ValStr: string;
+  IsSel: Boolean;
+  AddBtnX, AddBtnY: Integer;
 begin
-  RowH := Round(18 * WinScale);
+  RowH := Round(DEV_LIVE_ROW_H * WinScale);
   CurY := Y;
-  MaxY := Y + SectionHeight - Round(20 * WinScale);
+  MaxY := Y + SectionHeight - Round(8 * WinScale);
 
+  // --- Живые данные KlubData ---
   if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Speed:',    SK_Speed + ' km/h', Alpha, WinScale);    Inc(CurY, RowH); end;
   if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Limit:',    SK_Limit + ' km/h', Alpha, WinScale);    Inc(CurY, RowH); end;
   if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Target:',   SK_Target + ' km/h', Alpha, WinScale);   Inc(CurY, RowH); end;
@@ -1948,6 +2825,115 @@ begin
   if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Accel:',    SK_Accel, Alpha, WinScale);              Inc(CurY, RowH); end;
   if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Coords:',   SK_Coord, Alpha, WinScale);              Inc(CurY, RowH); end;
   if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Signal:',   SK_Signal, Alpha, WinScale);             Inc(CurY, RowH); end;
+
+  Inc(CurY, Round(DEV_GAP * WinScale));
+
+  // --- Заголовок Custom Texts + кнопка [+ Add] ---
+  if CurY > MaxY then Exit;
+  DrawModernText(X, CurY + Round(6 * WinScale), 'Custom Texts (' + IntToStr(Length(CustomTexts)) + ')',
+    COLOR_ON_SURFACE, Alpha, 0.7);
+  AddBtnX := X + Round(160 * WinScale);
+  AddBtnY := CurY;
+  DrawStyledRect(AddBtnX, AddBtnY, Round(36 * WinScale), Round(22 * WinScale),
+    COLOR_PRIMARY, Alpha, True, COLOR_PRIMARY_VARIANT);
+  DrawModernText(AddBtnX + Round(11 * WinScale), AddBtnY + Round(4 * WinScale),
+    '+ Add', COLOR_ON_PRIMARY, Alpha, 0.65);
+  Inc(CurY, Round(DEV_HDR_H * WinScale));
+
+  // --- Список текстов ---
+  for i := 0 to Length(CustomTexts) - 1 do
+  begin
+    if CurY > MaxY then Break;
+    RowY := CurY;
+    IsSel := (i = CustomTextSelectedIdx);
+    if IsSel then
+      DrawStyledRect(X - Round(4 * WinScale), RowY, Round(196 * WinScale),
+        Round(20 * WinScale), COLOR_PRIMARY_VARIANT, Alpha div 2, True, 0);
+    if CustomTexts[i].Visible then
+      DrawModernText(X, RowY + Round(2 * WinScale), '*', COLOR_ACCENT, Alpha, 0.7)
+    else
+      DrawModernText(X, RowY + Round(2 * WinScale), '-', COLOR_BORDER_LIGHT, Alpha, 0.7);
+    DrawModernText(X + Round(14 * WinScale), RowY + Round(2 * WinScale),
+      IntToStr(i + 1) + '. ' + KlubSourceName(CustomTexts[i].Source),
+      COLOR_ON_SURFACE, Alpha, 0.65);
+    Inc(CurY, Round(DEV_LIST_ROW_H * WinScale));
+  end;
+
+  // --- Редактор выбранного текста ---
+  if (CustomTextSelectedIdx < 0) or (CustomTextSelectedIdx >= Length(CustomTexts)) then Exit;
+  if CurY > MaxY then Exit;
+  Inc(CurY, Round(DEV_GAP * WinScale));
+
+  // Строка выбора источника:  [<]   Source: NAME   [>]
+  SrcName := KlubSourceName(CustomTexts[CustomTextSelectedIdx].Source);
+  ValStr  := GetKlubSourceValue(CustomTexts[CustomTextSelectedIdx].Source);
+  // Кнопка <
+  DrawStyledRect(X, CurY, Round(22 * WinScale), Round(22 * WinScale),
+    COLOR_SURFACE_VARIANT, Alpha, True, COLOR_BORDER_LIGHT);
+  DrawModernText(X + Round(8 * WinScale), CurY + Round(4 * WinScale), '<', COLOR_ON_SURFACE, Alpha, 0.7);
+  // Имя + текущее значение
+  DrawModernText(X + Round(28 * WinScale), CurY + Round(4 * WinScale),
+    SrcName + ' = ' + ValStr, COLOR_ACCENT, Alpha, 0.65);
+  // Кнопка >
+  DrawStyledRect(X + Round(168 * WinScale), CurY, Round(22 * WinScale), Round(22 * WinScale),
+    COLOR_SURFACE_VARIANT, Alpha, True, COLOR_BORDER_LIGHT);
+  DrawModernText(X + Round(176 * WinScale), CurY + Round(4 * WinScale), '>', COLOR_ON_SURFACE, Alpha, 0.7);
+  Inc(CurY, Round(DEV_EDITOR_HEADER_H * WinScale));
+
+  // Кнопки режима гизмо: [T] [R] [S]
+  // Активный — primary, неактивные — surface variant.
+  if GizmoMode = gmTranslate then
+    DrawStyledRect(X, CurY, Round(DEV_GIZMO_BTN_W * WinScale), Round(22 * WinScale), COLOR_PRIMARY, Alpha, True, COLOR_PRIMARY)
+  else
+    DrawStyledRect(X, CurY, Round(DEV_GIZMO_BTN_W * WinScale), Round(22 * WinScale), COLOR_SURFACE_VARIANT, Alpha, True, COLOR_BORDER_LIGHT);
+  DrawModernText(X + Round(10 * WinScale), CurY + Round(4 * WinScale), 'T', COLOR_ON_PRIMARY, Alpha, 0.7);
+
+  if GizmoMode = gmRotate then
+    DrawStyledRect(X + Round((DEV_GIZMO_BTN_W + 4) * WinScale), CurY, Round(DEV_GIZMO_BTN_W * WinScale), Round(22 * WinScale), COLOR_PRIMARY, Alpha, True, COLOR_PRIMARY)
+  else
+    DrawStyledRect(X + Round((DEV_GIZMO_BTN_W + 4) * WinScale), CurY, Round(DEV_GIZMO_BTN_W * WinScale), Round(22 * WinScale), COLOR_SURFACE_VARIANT, Alpha, True, COLOR_BORDER_LIGHT);
+  DrawModernText(X + Round((DEV_GIZMO_BTN_W + 14) * WinScale), CurY + Round(4 * WinScale), 'R', COLOR_ON_PRIMARY, Alpha, 0.7);
+
+  if GizmoMode = gmScale then
+    DrawStyledRect(X + Round((2 * (DEV_GIZMO_BTN_W + 4)) * WinScale), CurY, Round(DEV_GIZMO_BTN_W * WinScale), Round(22 * WinScale), COLOR_PRIMARY, Alpha, True, COLOR_PRIMARY)
+  else
+    DrawStyledRect(X + Round((2 * (DEV_GIZMO_BTN_W + 4)) * WinScale), CurY, Round(DEV_GIZMO_BTN_W * WinScale), Round(22 * WinScale), COLOR_SURFACE_VARIANT, Alpha, True, COLOR_BORDER_LIGHT);
+  DrawModernText(X + Round((2 * (DEV_GIZMO_BTN_W + 4) + 10) * WinScale), CurY + Round(4 * WinScale), 'S', COLOR_ON_PRIMARY, Alpha, 0.7);
+
+  // Подпись справа от кнопок: текущий режим словом
+  case GizmoMode of
+    gmTranslate: DrawModernText(X + Round(((3 * (DEV_GIZMO_BTN_W + 4)) + 6) * WinScale), CurY + Round(4 * WinScale), 'Move',     COLOR_ACCENT, Alpha, 0.6);
+    gmRotate:    DrawModernText(X + Round(((3 * (DEV_GIZMO_BTN_W + 4)) + 6) * WinScale), CurY + Round(4 * WinScale), 'Rotate',   COLOR_ACCENT, Alpha, 0.6);
+    gmScale:     DrawModernText(X + Round(((3 * (DEV_GIZMO_BTN_W + 4)) + 6) * WinScale), CurY + Round(4 * WinScale), 'Scale',    COLOR_ACCENT, Alpha, 0.6);
+  end;
+  Inc(CurY, Round(DEV_EDITOR_GIZMO_MODE_H * WinScale));
+
+  // Чекбокс Visible
+  DrawModernCheckbox(X, CurY, 'Visible', CustomTexts[CustomTextSelectedIdx].Visible, Alpha);
+  Inc(CurY, Round(DEV_EDITOR_VIS_H * WinScale));
+
+  // 7 слайдеров. У каждого слайдера занимаем DEV_EDITOR_SLIDER_H высоты.
+  // DrawModernSlider пишет заголовок выше Y (Y - 22), так что добавляю отступ.
+  DrawModernSlider(X, CurY + Round(20 * WinScale), CustomXSlider,    'X',  Alpha, WinScale);
+  Inc(CurY, Round(DEV_EDITOR_SLIDER_H * WinScale));
+  DrawModernSlider(X, CurY + Round(20 * WinScale), CustomYSlider,    'Y',  Alpha, WinScale);
+  Inc(CurY, Round(DEV_EDITOR_SLIDER_H * WinScale));
+  DrawModernSlider(X, CurY + Round(20 * WinScale), CustomZSlider,    'Z',  Alpha, WinScale);
+  Inc(CurY, Round(DEV_EDITOR_SLIDER_H * WinScale));
+  DrawModernSlider(X, CurY + Round(20 * WinScale), CustomRXSlider,   'RX', Alpha, WinScale);
+  Inc(CurY, Round(DEV_EDITOR_SLIDER_H * WinScale));
+  DrawModernSlider(X, CurY + Round(20 * WinScale), CustomRYSlider,   'RY', Alpha, WinScale);
+  Inc(CurY, Round(DEV_EDITOR_SLIDER_H * WinScale));
+  DrawModernSlider(X, CurY + Round(20 * WinScale), CustomRZSlider,   'RZ', Alpha, WinScale);
+  Inc(CurY, Round(DEV_EDITOR_SLIDER_H * WinScale));
+  DrawModernSlider(X, CurY + Round(20 * WinScale), CustomScaleSlider, 'Scale', Alpha, WinScale);
+  Inc(CurY, Round(DEV_EDITOR_SLIDER_H * WinScale));
+
+  // Кнопка Delete
+  DrawStyledRect(X, CurY, Round(80 * WinScale), Round(22 * WinScale),
+    COLOR_WARNING, Alpha, True, COLOR_WARNING);
+  DrawModernText(X + Round(20 * WinScale), CurY + Round(4 * WinScale),
+    'Delete', COLOR_ON_PRIMARY, Alpha, 0.65);
 end;
 
 procedure DrawTransformWindow(var Win: TWindow; WindowType: Integer);
@@ -2009,9 +2995,10 @@ begin
     begin
       // ClubFixes toggle + Developer toggle
       TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN + ITEM_HEIGHT + MARGIN;
-      // Expanded section
+      // Expanded section — высота зависит от количества кастомных текстов и
+      // выбранного редактора (см. GetDeveloperContentHeight).
       if Settings.DeveloperSection.AnimProgress > 0.01 then
-        TotalHeight := TotalHeight + Round(230 * Settings.DeveloperSection.AnimProgress) + MARGIN;
+        TotalHeight := TotalHeight + Round(GetDeveloperContentHeight * Settings.DeveloperSection.AnimProgress) + MARGIN;
     end;
     
     3: // MENU окно
@@ -2183,7 +3170,7 @@ begin
 
       if Settings.DeveloperSection.AnimProgress > 0.01 then
       begin
-        SectionHeight := Round(230 * Settings.DeveloperSection.AnimProgress * Win.Scale);
+        SectionHeight := Round(GetDeveloperContentHeight * Settings.DeveloperSection.AnimProgress * Win.Scale);
 
         // Фон секции
         DrawStyledRect(ScaledX + Round((MARGIN + 12) * Win.Scale), ContentY, Round(240 * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
@@ -2435,6 +3422,140 @@ begin
     HandleSliderDrag(X, Settings.ViewAngleSlider, RenderWindow.X + MARGIN + 24);
   if Settings.CameraSensitivitySlider.IsDragging then
     HandleSliderDrag(X, Settings.CameraSensitivitySlider, RenderWindow.X + MARGIN + 24);
+
+  // Слайдеры редактора кастомных текстов — после изменения пишем в выбранный текст.
+  if CustomXSlider.IsDragging then
+    HandleSliderDrag(X, CustomXSlider, LocomotiveWindow.X + MARGIN + 24);
+  if CustomYSlider.IsDragging then
+    HandleSliderDrag(X, CustomYSlider, LocomotiveWindow.X + MARGIN + 24);
+  if CustomZSlider.IsDragging then
+    HandleSliderDrag(X, CustomZSlider, LocomotiveWindow.X + MARGIN + 24);
+  if CustomRXSlider.IsDragging then
+    HandleSliderDrag(X, CustomRXSlider, LocomotiveWindow.X + MARGIN + 24);
+  if CustomRYSlider.IsDragging then
+    HandleSliderDrag(X, CustomRYSlider, LocomotiveWindow.X + MARGIN + 24);
+  if CustomRZSlider.IsDragging then
+    HandleSliderDrag(X, CustomRZSlider, LocomotiveWindow.X + MARGIN + 24);
+  if CustomScaleSlider.IsDragging then
+    HandleSliderDrag(X, CustomScaleSlider, LocomotiveWindow.X + MARGIN + 24);
+  if AnyCustomSliderDragging then
+    WriteSlidersToSelected;
+  // Гизмо живёт в UpdateGizmoFrameRA3 (per-frame), здесь ничего не делаем.
+end;
+
+// Клики внутри Developer-секции (когда она раскрыта).
+// SectionStartY — Y начала фона секции (он же ContentY в LOCOMOTIVE-блоке после
+// прохождения трёх toggle'ов).
+procedure HandleDeveloperSectionClick(X, Y, SectionStartY: Integer);
+var
+  ContentX, CurY: Integer;
+  i: Integer;
+begin
+  ContentX := LocomotiveWindow.X + MARGIN + 24;
+  CurY := SectionStartY + DEV_TOPPAD;
+  Inc(CurY, DEV_LIVE_ROWS * DEV_LIVE_ROW_H);
+  Inc(CurY, DEV_GAP);
+
+  // [+ Add] — добавить новый текст
+  if InRect(X, Y, ContentX + 160, CurY, 36, 22) then
+  begin
+    AddCustomText;
+    SaveConfig;
+    Exit;
+  end;
+  Inc(CurY, DEV_HDR_H);
+
+  // Список — клик по строке выбирает её для редактирования
+  for i := 0 to Length(CustomTexts) - 1 do
+  begin
+    if InRect(X, Y, ContentX - 4, CurY, 196, 20) then
+    begin
+      CustomTextSelectedIdx := i;
+      SyncSlidersFromSelected;
+      Exit;
+    end;
+    Inc(CurY, DEV_LIST_ROW_H);
+  end;
+
+  // Редактор — только если что-то выбрано
+  if (CustomTextSelectedIdx < 0) or (CustomTextSelectedIdx >= Length(CustomTexts)) then Exit;
+  Inc(CurY, DEV_GAP);
+
+  // [<] — предыдущий источник
+  if InRect(X, Y, ContentX, CurY, 22, 22) then
+  begin
+    CycleSelectedSource(-1);
+    SaveConfig;
+    Exit;
+  end;
+  // [>] — следующий источник
+  if InRect(X, Y, ContentX + 168, CurY, 22, 22) then
+  begin
+    CycleSelectedSource(+1);
+    SaveConfig;
+    Exit;
+  end;
+  Inc(CurY, DEV_EDITOR_HEADER_H);
+
+  // Кнопки режима гизмо: T / R / S
+  if InRect(X, Y, ContentX, CurY, DEV_GIZMO_BTN_W, 22) then
+  begin GizmoMode := gmTranslate; SaveConfig; Exit; end;
+  if InRect(X, Y, ContentX + DEV_GIZMO_BTN_W + 4, CurY, DEV_GIZMO_BTN_W, 22) then
+  begin GizmoMode := gmRotate; SaveConfig; Exit; end;
+  if InRect(X, Y, ContentX + 2 * (DEV_GIZMO_BTN_W + 4), CurY, DEV_GIZMO_BTN_W, 22) then
+  begin GizmoMode := gmScale; SaveConfig; Exit; end;
+  Inc(CurY, DEV_EDITOR_GIZMO_MODE_H);
+
+  // Visible checkbox
+  if InRect(X, Y, ContentX, CurY, 120, CHECKBOX_SIZE + 4) then
+  begin
+    CustomTexts[CustomTextSelectedIdx].Visible := not CustomTexts[CustomTextSelectedIdx].Visible;
+    SaveConfig;
+    Exit;
+  end;
+  Inc(CurY, DEV_EDITOR_VIS_H);
+
+  // 7 слайдеров. Клик в любую часть слота инициирует drag.
+  if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
+  begin CustomXSlider.IsDragging := True; Exit; end;
+  Inc(CurY, DEV_EDITOR_SLIDER_H);
+  if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
+  begin CustomYSlider.IsDragging := True; Exit; end;
+  Inc(CurY, DEV_EDITOR_SLIDER_H);
+  if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
+  begin CustomZSlider.IsDragging := True; Exit; end;
+  Inc(CurY, DEV_EDITOR_SLIDER_H);
+  if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
+  begin CustomRXSlider.IsDragging := True; Exit; end;
+  Inc(CurY, DEV_EDITOR_SLIDER_H);
+  if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
+  begin CustomRYSlider.IsDragging := True; Exit; end;
+  Inc(CurY, DEV_EDITOR_SLIDER_H);
+  if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
+  begin CustomRZSlider.IsDragging := True; Exit; end;
+  Inc(CurY, DEV_EDITOR_SLIDER_H);
+  if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
+  begin CustomScaleSlider.IsDragging := True; Exit; end;
+  Inc(CurY, DEV_EDITOR_SLIDER_H);
+
+  // Delete
+  if InRect(X, Y, ContentX, CurY, 80, 22) then
+  begin
+    DeleteSelectedCustomText;
+    SaveConfig;
+    Exit;
+  end;
+end;
+
+// True если клик попал внутрь любого из четырёх окон меню — тогда гизмо
+// игнорируем, чтобы не воровать клики у UI.
+function PointInAnyMenuWindow(X, Y: Integer): Boolean;
+begin
+  Result :=
+    InRect(X, Y, RenderWindow.X,     RenderWindow.Y,     RenderWindow.Width,     RenderWindow.Height) or
+    InRect(X, Y, WorldWindow.X,      WorldWindow.Y,      WorldWindow.Width,      WorldWindow.Height) or
+    InRect(X, Y, LocomotiveWindow.X, LocomotiveWindow.Y, LocomotiveWindow.Width, LocomotiveWindow.Height) or
+    InRect(X, Y, MenuWindow.X,       MenuWindow.Y,       MenuWindow.Width,       MenuWindow.Height);
 end;
 
 procedure HandleMenuClick(X, Y: Integer); stdcall;
@@ -2444,8 +3565,12 @@ var
   SectionHeight: Integer;
 begin
   if not MenuVisible then Exit;
-  
+
   if (RenderWindow.Alpha < 0.1) and (WorldWindow.Alpha < 0.1) and (LocomotiveWindow.Alpha < 0.1) and (MenuWindow.Alpha < 0.1) then Exit;
+
+  // 3D-гизмо обрабатывается в UpdateGizmoFrameRA3 (per-frame), так что здесь
+  // ничего не делаем — клик вне окон меню провалится в обычное игровое поведение
+  // (или будет перехвачен per-frame state-machine).
   
   // MENU WINDOW
   if MenuWindow.Alpha > 0.1 then
@@ -2757,7 +3882,7 @@ begin
   if LocomotiveWindow.Alpha > 0.1 then
   begin
     ContentY := LocomotiveWindow.Y + HEADER_HEIGHT + MARGIN;
-    
+
     // Заголовок для драггинга
     if InRect(X, Y, LocomotiveWindow.X, LocomotiveWindow.Y, LocomotiveWindow.Width, HEADER_HEIGHT) then
     begin
@@ -2766,7 +3891,7 @@ begin
       LocomotiveWindow.DragOffsetY := Y - LocomotiveWindow.Y;
       Exit;
     end;
-    
+
     // Исправления КЛУБ
     if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
     begin
@@ -2787,6 +3912,29 @@ begin
       SaveConfig;
       Exit;
     end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
+    // Меню разработчика — кнопка expand
+    if InRect(X, Y, LocomotiveWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
+    begin
+      Settings.DeveloperSection.Expanded := not Settings.DeveloperSection.Expanded;
+      Exit;
+    end;
+
+    // Меню разработчика — toggle самого режима
+    if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.DeveloperMenu := not Settings.DeveloperMenu;
+      if Settings.DeveloperMenu then
+        Settings.DeveloperSection.Expanded := True;
+      SaveConfig;
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
+    // === Кликабельные зоны внутри Developer-секции ===
+    if Settings.DeveloperMenu and (Settings.DeveloperSection.AnimProgress > 0.5) then
+      HandleDeveloperSectionClick(X, Y, ContentY);
   end;
 end;
 
@@ -2838,6 +3986,21 @@ begin
   Settings.MaxVisibleDistanceSlider.IsDragging := False;
   Settings.ViewAngleSlider.IsDragging := False;
   Settings.CameraSensitivitySlider.IsDragging := False;
+
+  // Слайдеры редактора кастомных текстов
+  if AnyCustomSliderDragging then
+  begin
+    WriteSlidersToSelected;
+    SaveConfig;
+  end;
+  CustomXSlider.IsDragging := False;
+  CustomYSlider.IsDragging := False;
+  CustomZSlider.IsDragging := False;
+  CustomRXSlider.IsDragging := False;
+  CustomRYSlider.IsDragging := False;
+  CustomRZSlider.IsDragging := False;
+  CustomScaleSlider.IsDragging := False;
+  // Гизмо обрабатывает MouseUp сам в UpdateGizmoFrameRA3.
 
   // Применяем все настройки при отпускании мыши
   if Settings.MaxVisibleDistance then

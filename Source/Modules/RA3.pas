@@ -341,7 +341,10 @@ begin
 
   // Патч держим пока: 1) наведён, ИЛИ 2) идёт драг контроллера.
   // Снимаем когда оба условия сняты (курсор ушёл И ЛКМ отпущена).
-  wantPatch := HoverMode and (HoveredController or DraggingController or HoveredBrake or DraggingBrake);
+  // Кроме того, если активен гизмо кастомных текстов — он сам уже зовёт
+  // ApplyMenuPatch (UpdateGizmoFrameRA3 живёт по тому же паттерну), так что
+  // не мешаем ему: HoverMode-ветка просто не должна снимать патч в этом случае.
+  wantPatch := (HoverMode and (HoveredController or DraggingController or HoveredBrake or DraggingBrake)) or IsGizmoActive;
   if wantPatch and not PatchActive then
   begin
     ApplyMenuPatch;
@@ -1432,6 +1435,16 @@ begin
   DrawButtons;
   DrawALSIndicator;
   DrawArrows;
+  // Пользовательские 3D-тексты из «Меню разработчика → Custom Texts».
+  // Локальная система координат кабины — рисуются после всех штатных моделей.
+  DrawCustomTextsRA3;
+  // Per-frame стейт-машина гизмо (hover/click/drag/release) — работает БЕЗ
+  // открытого F12-меню, читает мышь напрямую (как UpdateControllerAndDraw).
+  // Использует кэш экранных позиций ИЗ ПРОШЛОГО кадра (заполнен в DrawGizmoRA3),
+  // поэтому must быть вызвана ПЕРЕД новым рендером гизмо.
+  UpdateGizmoFrameRA3;
+  // Гизмо (Translate/Rotate/Scale) для редактирования выбранного текста.
+  DrawGizmoRA3;
 end;
 
 procedure ApplyRA3BlockTransform(x, y, z, AngZ: Single);
