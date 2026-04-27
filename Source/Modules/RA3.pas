@@ -7,6 +7,13 @@ procedure InitRA3;
 procedure DrawRA3;
 procedure ApplyRA3BlockTransform(x, y, z, AngZ: Single);
 
+// RRS-state контроллера машиниста (mode_pos + trac_level/brake_level).
+// Возвращает handle_pos = (mode_pos*10 + trac_level - brake_level) / 100,
+// диапазон [-1.1 .. +1.0]. Тождественно RRS getHandlePosition().
+// Используется физикой РА-3 чтобы получить точный float-уровень тяги/тормоза
+// без потерь точности через byte (0..5/251..255).
+function GetRRSHandlePos: Single;
+
 implementation
 
 uses
@@ -116,7 +123,7 @@ var
 
   ControllerAngle: Single = 0.0;
 
-  LastA, LastD: Boolean;
+  LastNState: Boolean = False;
   LastLButtonState: Boolean;
 
   DraggingController: Boolean;
@@ -1078,25 +1085,29 @@ const
 // Преобразование угла визуального тягового контроллера (-59°..+59°) в байт
 // штатного контроллера ZDsim (0..5 для тяги, 251..255 для тормоза).
 //
-// В UpdateControllerAndDraw шаг через нейтраль = 15°, дальше = 3°. Поэтому:
-//   0°    → 0 (нейтраль)
-//   +15°  → 1 (тяга 1)         -15°  → 255 (тормоз -1)
-//   +18°  → 2 (тяга 2)         -18°  → 254 (тормоз -2)
-//   +21°  → 3 (тяга 3)         -21°  → 253 (тормоз -3)
-//   +24°  → 4 (тяга 4)         -24°  → 252 (тормоз -4)
-//   +27°+ → 5 (тяга 5)         -27°- → 251 (тормоз -5)
+// Полный диапазон ±59° теперь равномерно покрывает 5 позиций ZDsim:
+//   мёртвая зона ±4°       = byte 0 (нейтраль)
+//   ±4..16°                = byte 1 / 255  (центр 10°)
+//   ±16..28°               = byte 2 / 254  (центр 22°)
+//   ±28..40°               = byte 3 / 253  (центр 34°)
+//   ±40..52°               = byte 4 / 252  (центр 46°)
+//   ±52..59°               = byte 5 / 251  (центр 58°)
+//
+// Шаги в UpdateControllerAndDraw уменьшены в 3 раза (5° / 1°) — но мёртвая зона
+// тоже уменьшена с 7.5° до 4°, поэтому первый прыжок 5° гарантированно даёт
+// byte=1 (выход из нейтрали в первую позицию).
 function ControllerAngleToByte(angle: Single): Byte;
 var
   pos: Integer;
 begin
-  // Мёртвая зона ±7.5° = нейтраль (полу-шаг от 15°).
-  if Abs(angle) < 7.5 then
+  // Мёртвая зона ±4° (нейтраль).
+  if Abs(angle) < 4.0 then
   begin
     Result := 0;
     Exit;
   end;
-  // |angle|=15° → poз=1, |angle|=27° → поз=5
-  pos := 1 + Round((Abs(angle) - 15.0) / 3.0);
+  // |angle|=10° → pos=1, |angle|=58° → pos=5
+  pos := 1 + Round((Abs(angle) - 4.0) / 12.0);
   if pos < 1 then pos := 1;
   if pos > 5 then pos := 5;
   if angle > 0 then Result := pos
@@ -1105,12 +1116,13 @@ end;
 
 // Обратное преобразование: byte → угол. Используется при синхронизации
 // нашего visual angle с тем что игра сама поставила в память.
+// Возвращает центр соответствующего диапазона.
 function ControllerByteToAngle(b: Byte): Single;
 begin
   case b of
     0:        Result := 0.0;
-    1..5:     Result := 15.0 + (b - 1) * 3.0;             // 1→15, 5→27
-    251..255: Result := -(15.0 + (255 - b) * 3.0);        // 255→-15, 251→-27
+    1..5:     Result := 10.0 + (b - 1) * 12.0;        // 1→10, 5→58
+    251..255: Result := -(10.0 + (255 - b) * 12.0);   // 255→-10, 251→-58
   else
     Result := 0.0;
   end;
@@ -1135,21 +1147,152 @@ begin
   end;
 end;
 
+// ============================================================================
+// КОНТРОЛЛЕР РА-3 — портирован 1:1 из RRS v4.0.5 trac-controller.{cpp,h}
+// (автор Дмитрий Притыкин, https://gitlab.com/maisvendoo/ra3).
+//
+// Это state-машина, не "угол прыжками". Состояния mode_pos:
+//   0  — выбег (нейтраль)
+//   1  — тяга,  trac_level  растёт от 0 до RRS_TRAC_MAX
+//  -1  — тормоз, brake_level растёт от 0 до RRS_BRAKE_MAX
+//  -2  — экстренное торможение
+//
+// Алгоритм клавиш A/D ровно как в trac-controller.cpp::stepKeysControl:
+//   • Ctrl+D = моментальный сброс в выбег (приоритетная проверка, не
+//     конфликтует с обычным D потому что идёт ПЕРВОЙ).
+//   • mode_pos=0:    rising-edge A/D переводят в режим, ставят флаг traction
+//                    /brake = false (блокировка непрерывного управления до
+//                    отпускания клавиши и повторного нажатия).
+//   • mode_pos=1:    A с traction=true → +1 шаг trac_level каждые
+//                    HANDLE_MOTION_TIME сек (с Shift × HANDLE_HIGH_SPEED_COEFF).
+//                    D → -1 шаг trac_level (или возврат в выбег при 0).
+//   • mode_pos=-1:   D с brake=true → +1 brake_level. A → -1 brake_level
+//                    (или возврат в выбег при 0). brake_level=90 + новое
+//                    нажатие D → переход в экстренное (-2).
+//   • mode_pos=-2:   A → возврат в -1 с brake_level=90.
+//
+// Параметры из cfg/vehicles/ra3-head/trac-controller.xml: "0.1 8 10 10 8.0e-2"
+//   handle_motion_time      = 0.1 сек (1 шаг level)
+//   handle_high_speed_coeff = 8       (множитель при Shift)
+//   trac_min                = 10      (% — минимум при включении тяги)
+//   brake_min               = 10
+//
+// Визуальный угол ControllerAngle вычисляется как
+//   handle_pos = (mode_pos*10 + trac_level - brake_level) / 100  ∈ [-1.1, +1]
+//   ControllerAngle = handle_pos * 59°                            ∈ [-65, +59]°
+// и передаётся в физику через SetVirtualController(handle_pos * 5).
+// ============================================================================
+const
+  HANDLE_MOTION_TIME      : Single = 0.1;     // сек на 1 шаг level
+  HANDLE_HIGH_SPEED_COEFF : Integer = 8;      // Shift × 8
+  RRS_TRAC_MIN            : Integer = 10;     // %
+  RRS_BRAKE_MIN           : Integer = 10;
+  RRS_TRAC_MAX            : Integer = 90;     // 100 - trac_min
+  RRS_BRAKE_MAX           : Integer = 90;     // 100 - brake_min
+
+var
+  // RRS state-машина (соответствует trac-controller.h:60-77)
+  RRS_mode_pos          : Integer = 0;       // 0 / 1 / -1 / -2
+  RRS_mode_pos_old      : Integer = 0;
+  RRS_trac_level        : Integer = 0;       // 0..90
+  RRS_brake_level       : Integer = 0;       // 0..90
+  RRS_traction          : Boolean = False;   // разрешение непрерывного управления в тяге
+  RRS_brake             : Boolean = False;   // разрешение непрерывного управления в тормозе
+  RRS_old_a_key         : Boolean = False;
+  RRS_old_d_key         : Boolean = False;
+  RRS_handle_motion_speed: Integer = 0;      // ±1, ±8
+  RRS_motion_timer_acc  : Single  = 0.0;     // аккумулятор для шага через HANDLE_MOTION_TIME
+
+  CtrlLastUpdateTick    : Cardinal = 0;
+
+// Публичный геттер handle_pos из RRS state-машины (см. interface).
+// Это то самое, что RRS возвращает из TracController::getHandlePosition().
+function GetRRSHandlePos: Single;
+begin
+  Result := (RRS_mode_pos * 10 + RRS_trac_level - RRS_brake_level) / 100.0;
+end;
+
+// Шаг уровня — вызывается каждые HANDLE_MOTION_TIME сек.
+// Соответствует RRS slotTracLevelProcess + slotBrakeLevelProcess:
+//   trac_level  += handle_motion_speed * mode_pos
+//   brake_level += handle_motion_speed * mode_pos
+procedure StepRRSLevels;
+begin
+  if RRS_mode_pos = 1 then
+  begin
+    RRS_trac_level := RRS_trac_level + RRS_handle_motion_speed * RRS_mode_pos;
+    if RRS_trac_level < 0 then RRS_trac_level := 0;
+    if RRS_trac_level > RRS_TRAC_MAX then RRS_trac_level := RRS_TRAC_MAX;
+  end
+  else if RRS_mode_pos = -1 then
+  begin
+    RRS_brake_level := RRS_brake_level + RRS_handle_motion_speed * RRS_mode_pos;
+    if RRS_brake_level < 0 then RRS_brake_level := 0;
+    if RRS_brake_level > RRS_BRAKE_MAX then RRS_brake_level := RRS_BRAKE_MAX;
+  end;
+end;
+
+// Когда native input ZDsim изменил byte (через штатные клавиши игры) —
+// синхронизируем нашу RRS-машину с этим byte.
+procedure SyncFromZDsimByte(b: Byte);
+begin
+  case b of
+    0:
+      begin
+        RRS_mode_pos := 0;
+        RRS_trac_level := 0;
+        RRS_brake_level := 0;
+        RRS_traction := False;
+        RRS_brake := False;
+      end;
+    1..5:
+      begin
+        RRS_mode_pos := 1;
+        RRS_brake_level := 0;
+        // byte 1=начало, byte 5=макс → trac_level от 0 до RRS_TRAC_MAX
+        RRS_trac_level := Round((b - 1) * RRS_TRAC_MAX / 4.0);
+        RRS_traction := True;
+      end;
+    251..255:
+      begin
+        RRS_mode_pos := -1;
+        RRS_trac_level := 0;
+        RRS_brake_level := Round((255 - b) * RRS_BRAKE_MAX / 4.0);
+        RRS_brake := True;
+      end;
+  end;
+end;
+
 procedure UpdateControllerAndDraw;
 var
   lbNow: Boolean;
-  incA, incD: Boolean;
+  aKey, dKey, shiftKey, ctrlKey: Boolean;
   deltaPx: Single;
   curMemByte, newByte: Byte;
+  now: Cardinal;
+  dtSec: Single;
+  handle_pos_norm: Single;
 begin
   if ControllerModelID = 0 then Exit;
 
-  // ── СИНХРОНИЗАЦИЯ С ZDsim BYTE-КОНТРОЛЛЕРОМ ──────────────────────────
-  // Если игра (native input через свои клавиши) изменила byte с нашей
-  // последней записи, обновляем визуальный угол под новое значение.
+  now := GetTickCount;
+  if CtrlLastUpdateTick = 0 then
+    dtSec := 0.016
+  else
+    dtSec := (now - CtrlLastUpdateTick) / 1000.0;
+  if dtSec > 0.1 then dtSec := 0.1;
+  CtrlLastUpdateTick := now;
+
+  // ── НАШ КОНТРОЛЛЕР — ЕДИНОЛИЧНЫЙ ХОЗЯИН BYTE ─────────────────────────
+  // Мы НЕ синхронизируем RRS-машину из byte. ZDsim native input при не-
+  // нейтральном реверсе пишет в этот byte ПОЛНЫМИ позициями (1,2,3...) ―
+  // если мы будем подтягивать наше mode_pos+trac_level из его байта, то
+  // RRS-плавный набор по 0.1°/100мс превратится в скачкú по 22% уровня.
+  // Поэтому: читаем byte, ничего не делаем, далее наш state перезаписывает
+  // byte в конце функции (это и есть единственный путь обновления byte).
   curMemByte := ReadByteSafe(ADDR_KONTROLLER_BYTE, 0);
-  if curMemByte <> LastWrittenCtrlByte then
-    ControllerAngle := ControllerByteToAngle(curMemByte);
+  // (resync отключён — оставляем переменную для совместимости диагностики)
+  if curMemByte = $FF then ;  // подавление warning об unused
 
   lbNow := IsKeyDownEx(VK_LBUTTON);
 
@@ -1168,74 +1311,219 @@ begin
   LastLButtonState := lbNow;
 
   // =========================
-  // KEYBOARD
+  // KEYBOARD — RRS trac-controller.cpp::stepKeysControl 1:1
   // =========================
-  incA := IsKeyDown(Ord('A'));
-  incD := IsKeyDown(Ord('D'));
+  aKey     := IsKeyDown(Ord('A'));
+  dKey     := IsKeyDown(Ord('D'));
+  shiftKey := IsKeyDown(VK_SHIFT);
+  ctrlKey  := IsKeyDown(VK_CONTROL);
 
-  if incD and not LastD and IsKeyDown(VK_CONTROL) then
-    ControllerAngle := 0
-  else
+  // По умолчанию мотор не двигается (если ничего не нажато)
+  RRS_handle_motion_speed := 0;
+
+  // ── Ctrl+D = моментальный сброс в выбег (RRS:71) ─────────────────────
+  // Эта проверка ИДЁТ ПЕРВОЙ — и потому Ctrl+D не конфликтует с обычным
+  // D. Когда зажат Ctrl, обычная ветка обработки D не выполняется.
+  if ctrlKey and dKey then
   begin
-    if incA and not LastA then
-      if Abs(ControllerAngle) < 0.5 then
-        ControllerAngle := ControllerAngle + 15
+    RRS_mode_pos := 0;
+    RRS_handle_motion_speed := 0;
+    RRS_brake := False; RRS_brake_level := 0;
+    RRS_traction := False; RRS_trac_level := 0;
+    RRS_old_a_key := True;  // блокируем непрерывное управление до отпускания
+    RRS_old_d_key := True;
+  end
+  else if RRS_mode_pos = -2 then
+  begin
+    // ── Экстренное торможение (RRS:81) ─────────────────────────────────
+    // Возврат в максимальный уровень торможения по нажатию A
+    if aKey then
+    begin
+      RRS_mode_pos := -1;
+      RRS_brake_level := 90;
+    end;
+  end
+  else if RRS_mode_pos = 0 then
+  begin
+    // ── Контроллер в выбеге (RRS:90) ───────────────────────────────────
+    RRS_trac_level := 0;
+    RRS_brake_level := 0;
+    if dKey and not RRS_old_d_key then
+    begin
+      RRS_mode_pos := -1;
+      RRS_brake := False;  // блокируем непрерывное до 2-го нажатия
+    end;
+    if aKey and not RRS_old_a_key then
+    begin
+      RRS_mode_pos := 1;
+      RRS_traction := False;
+    end;
+  end
+  else if RRS_mode_pos = -1 then
+  begin
+    // ── Контроллер в торможении (RRS:104) ──────────────────────────────
+    RRS_traction := False;
+    if aKey then
+    begin
+      // Возврат в выбег при brake_level=0
+      if RRS_brake_level = 0 then
+      begin
+        RRS_mode_pos := 0;
+        RRS_brake := False;
+        RRS_handle_motion_speed := 0;
+      end
       else
-        ControllerAngle := ControllerAngle + 3;
-
-    if incD and not LastD then
-      if Abs(ControllerAngle) < 0.5 then
-        ControllerAngle := ControllerAngle - 15
+      begin
+        if shiftKey then RRS_handle_motion_speed := HANDLE_HIGH_SPEED_COEFF
+        else RRS_handle_motion_speed := 1;
+      end;
+    end;
+    if dKey then
+    begin
+      if RRS_brake then
+      begin
+        if shiftKey then RRS_handle_motion_speed := -HANDLE_HIGH_SPEED_COEFF
+        else RRS_handle_motion_speed := -1;
+      end
       else
-        ControllerAngle := ControllerAngle - 3;
-  end;
-
-  LastA := incA;
-  LastD := incD;
-
-  // =========================
-  // MOUSE (ПРОСТО И СТАБИЛЬНО)
-  // =========================
-if DraggingController then
-begin
-  deltaPx := MoveXcoord - DragStartX;
-  DragStartX := MoveXcoord;
-
-  MouseAccum := MouseAccum + deltaPx;
-
-  // вправо
-  while MouseAccum >= DRAG_PX_PER_STEP do
-  begin
-    if Abs(ControllerAngle) < 0.5 then
-      ControllerAngle := ControllerAngle + 15
+        RRS_handle_motion_speed := 0;
+      // После максимального уровня торможения переход в экстренное
+      // (только новым нажатием клавиши)
+      if (RRS_brake_level = 90) and not RRS_old_d_key then
+        RRS_mode_pos := -2;
+    end
     else
-      ControllerAngle := ControllerAngle + 3;
-
-    MouseAccum := MouseAccum - DRAG_PX_PER_STEP;
-  end;
-
-  // влево
-  while MouseAccum <= -DRAG_PX_PER_STEP do
+      RRS_brake := True;  // разрешаем после отпускания клавиши
+  end
+  else if RRS_mode_pos = 1 then
   begin
-    if Abs(ControllerAngle) < 0.5 then
-      ControllerAngle := ControllerAngle - 15
+    // ── Контроллер в тяге (RRS:139) ────────────────────────────────────
+    RRS_brake := False;
+    if dKey then
+    begin
+      // Возврат в выбег при trac_level=0
+      if RRS_trac_level = 0 then
+      begin
+        RRS_mode_pos := 0;
+        RRS_traction := False;
+        RRS_handle_motion_speed := 0;
+      end
+      else
+      begin
+        if shiftKey then RRS_handle_motion_speed := -HANDLE_HIGH_SPEED_COEFF
+        else RRS_handle_motion_speed := -1;
+      end;
+    end;
+    if aKey then
+    begin
+      if RRS_traction then
+      begin
+        if shiftKey then RRS_handle_motion_speed := HANDLE_HIGH_SPEED_COEFF
+        else RRS_handle_motion_speed := 1;
+      end
+      else
+        RRS_handle_motion_speed := 0;
+    end
     else
-      ControllerAngle := ControllerAngle - 3;
-
-    MouseAccum := MouseAccum + DRAG_PX_PER_STEP;
+      RRS_traction := True;  // разрешаем после отпускания клавиши
   end;
-end;
+
+  RRS_old_a_key := aKey;
+  RRS_old_d_key := dKey;
+
+  // ── N = аварийный сброс в выбег (наша добавка для удобства) ──────────
+  if IsKeyDown(Ord('N')) and not LastNState then
+  begin
+    RRS_mode_pos := 0;
+    RRS_handle_motion_speed := 0;
+    RRS_brake := False; RRS_brake_level := 0;
+    RRS_traction := False; RRS_trac_level := 0;
+  end;
+  LastNState := IsKeyDown(Ord('N'));
+
+  // ── ТАЙМЕР: каждые HANDLE_MOTION_TIME сек → 1 шаг level ──────────────
+  // Эквивалент tracTimer/brakeTimer в RRS (timeout=0.1).
+  RRS_motion_timer_acc := RRS_motion_timer_acc + dtSec;
+  while RRS_motion_timer_acc >= HANDLE_MOTION_TIME do
+  begin
+    RRS_motion_timer_acc := RRS_motion_timer_acc - HANDLE_MOTION_TIME;
+    StepRRSLevels;
+  end;
+
+  RRS_mode_pos_old := RRS_mode_pos;
 
   // =========================
-  // LIMITS
+  // MOUSE DRAG — переведено на RRS-state
+  // 1 шаг drag (DRAG_PX_PER_STEP пикселей) = 1 единица level (или
+  // переход режима 0→1/-1).
   // =========================
-  if ControllerAngle > 59 then ControllerAngle := 59;
-  if ControllerAngle < -59 then ControllerAngle := -59;
+  if DraggingController then
+  begin
+    deltaPx := MoveXcoord - DragStartX;
+    DragStartX := MoveXcoord;
+    MouseAccum := MouseAccum + deltaPx;
 
-  // ── ЗАПИСЬ В ZDsim BYTE-КОНТРОЛЛЕР ────────────────────────────────────
-  // Преобразуем визуальный угол → byte (0..5 / 251..255) и пишем в память
-  // игры. Запоминаем что записали, чтобы в следующем кадре отличить наш
-  // байт от того что мог поставить native input игры.
+    // вправо (тяга)
+    while MouseAccum >= DRAG_PX_PER_STEP do
+    begin
+      if RRS_mode_pos = 0 then
+      begin
+        RRS_mode_pos := 1;
+        RRS_traction := True;
+      end
+      else if RRS_mode_pos = 1 then
+      begin
+        if RRS_trac_level < RRS_TRAC_MAX then
+          RRS_trac_level := RRS_trac_level + 1;
+      end
+      else if RRS_mode_pos = -1 then
+      begin
+        if RRS_brake_level > 0 then
+          RRS_brake_level := RRS_brake_level - 1
+        else
+          RRS_mode_pos := 0;
+      end
+      else if RRS_mode_pos = -2 then
+      begin
+        RRS_mode_pos := -1;
+        RRS_brake_level := 90;
+      end;
+      MouseAccum := MouseAccum - DRAG_PX_PER_STEP;
+    end;
+
+    // влево (тормоз)
+    while MouseAccum <= -DRAG_PX_PER_STEP do
+    begin
+      if RRS_mode_pos = 0 then
+      begin
+        RRS_mode_pos := -1;
+        RRS_brake := True;
+      end
+      else if RRS_mode_pos = -1 then
+      begin
+        if RRS_brake_level < RRS_BRAKE_MAX then
+          RRS_brake_level := RRS_brake_level + 1;
+      end
+      else if RRS_mode_pos = 1 then
+      begin
+        if RRS_trac_level > 0 then
+          RRS_trac_level := RRS_trac_level - 1
+        else
+          RRS_mode_pos := 0;
+      end;
+      MouseAccum := MouseAccum + DRAG_PX_PER_STEP;
+    end;
+  end;
+
+  // ── ВЫЧИСЛЕНИЕ УГЛА ИЗ handle_pos ────────────────────────────────────
+  // RRS handle_pos = (mode_pos*10 + trac_level - brake_level)/100  ∈ [-1.1, +1]
+  // Маппим в визуальные ±59° (для экстренного допускаем -65° зрительно).
+  handle_pos_norm := (RRS_mode_pos * 10 + RRS_trac_level - RRS_brake_level) / 100.0;
+  ControllerAngle := handle_pos_norm * 59.0;
+  if ControllerAngle > 59  then ControllerAngle := 59;
+  if ControllerAngle < -65 then ControllerAngle := -65;
+
+  // ── ЗАПИСЬ В ZDsim BYTE-КОНТРОЛЛЕР ───────────────────────────────────
   newByte := ControllerAngleToByte(ControllerAngle);
   WriteByteSafe(ADDR_KONTROLLER_BYTE, newByte);
   LastWrittenCtrlByte := newByte;
@@ -1511,36 +1799,62 @@ begin
   InitWagonRA3;
   InitDynamicRA3;
   WriteRA3CameraInit;
-  // Физика НЕ автозапускается — включать через F9
 end;
+
+// Флаг "предыдущее состояние IsRA3Active" — чтобы детектировать момент
+// ВХОДА в РА-3 (False → True). На этом моменте автоматически:
+//   1) Перезапускаем камеру (CAM_INIT_X/Y/Z) если опция MainCamera в кфг
+//   2) Включаем РА-3 booster (если ещё не активен)
+// Раньше это делалось вручную через Alt+Z — теперь автоматически.
+var
+  RA3_PrevActive: Boolean = False;
 
 procedure DrawRA3;
 var
-  tNow, yNow, pNow, oNow: Boolean;
+  tNow, yNow: Boolean;
+  isActive, justEntered: Boolean;
 begin
-  if not IsRA3Active then Exit;
+  isActive := IsRA3Active;
+  justEntered := isActive and not RA3_PrevActive;
+  RA3_PrevActive := isActive;
+
+  if not isActive then Exit;
+
+  // ── АВТОИНИЦИАЛИЗАЦИЯ ПРИ ВХОДЕ В РА-3 ───────────────────────────────
+  if justEntered then
+  begin
+    // 1) Перезапуск основной камеры — только если опция MainCamera в кфг
+    //    включена. Сбрасываем флаг RA3_CameraWritten, чтобы WriteRA3CameraInit
+    //    в InitRA3 (вызывается ниже) применила CAM_INIT_X/Y/Z заново.
+    if Config_MainCamera then
+      RA3_CameraWritten := False;
+
+    // 2) Автоматический запуск РА-3 бустера. ToggleRA3Booster включает физику,
+    //    запись в SilaTyagi и дефолтные настройки (TractionScale=0.008,
+    //    SpeedLimit=120 км/ч). Если уже был активен — не трогаем.
+    if not IsRA3BoosterActive then
+      ToggleRA3Booster;
+  end;
 
   InitRA3;
   UpdateHover;
 
-  // Передаём наш float-контроллер в физику РА-3 ТОЛЬКО если он сдвинут
-  // с нейтрали через A/D/мышь. Иначе физика читает игровой байт-контроллер
-  // (когда игрок крутит обычные клавиши игры через её родной ввод).
-  // -59..+59° мапим в -5..+5.
-  if IsRA3BoosterActive and (Abs(ControllerAngle) > 0.5) then
-    SetVirtualController(ControllerAngle / 11.8)
+  // ── ПЕРЕДАЧА RRS-STATE В ФИЗИКУ ─────────────────────────────────────
+  // Физика РА-3 получает значение НАПРЯМУЮ из RRS state-машины
+  // (mode_pos + trac_level/brake_level), минуя byte-контроллер ZDsim.
+  // GetRRSHandlePos = handle_pos ∈ [-1.1, +1.0] — тождество RRS
+  // TracController::getHandlePosition(). Умножаем на 5 чтобы попасть в
+  // [-5.5, +5.0] — формат VirtualCtrlValue в RA3Physics (там MapController
+  // делит обратно на 5 → trac_level/brake_level в [0..1]).
+  //
+  // Условие "только если ControllerAngle > 0.5" больше не нужно: при
+  // mode_pos=0 GetRRSHandlePos=0, что эквивалентно нейтрали в физике.
+  if IsRA3BoosterActive then
+    SetVirtualController(GetRRSHandlePos * 5.0)
   else
     ClearVirtualController;
 
   StepRA3Physics;
-
-  // Alt+Z = главный тумблер РА-3 бустера: одна кнопка включает физику +
-  // запись в loc36 + дефолты (TractionScale=1.0, SpeedLimit=100). Повторное
-  // нажатие выключает всё.
-  pNow := IsKeyDown(Ord('Z')) and IsKeyDown(VK_MENU);
-  if pNow and not LastBoosterToggle then
-    ToggleRA3Booster;
-  LastBoosterToggle := pNow;
 
   // T = открыть левые, Shift+T = закрыть левые
   tNow := IsKeyDown(Ord('T'));
