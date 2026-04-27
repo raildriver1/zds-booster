@@ -1,0 +1,32 @@
+New object
+display_tablo()
+numverts numfaces
+          4          2
+Mesh vertices:
+	0.719852 10.328681 3.717475
+	-0.719852 10.328680 3.717475
+	-0.719852 10.328679 3.916973
+	0.719852 10.328679 3.916973
+end vertices
+Mesh faces:
+	     1      2      3
+	     3      4      1
+end faces
+end mesh
+New Texture:
+numtverts numtvfaces
+          6          2
+Texture vertices:
+	0.000000 0.000000 0.000000
+	1.000000 0.000000 0.000000
+	1.000000 1.000000 0.000000
+	1.000000 1.000000 0.000000
+	0.000000 1.000000 0.000000
+	0.000000 0.000000 0.000000
+end texture vertices
+Texture faces:
+	     1      2      3
+	     4      5      6
+end texture faces
+end of texture
+end of file
