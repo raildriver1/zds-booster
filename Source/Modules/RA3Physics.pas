@@ -176,6 +176,20 @@ const
   WHEEL_RADIUS     : Double = 0.43;
   N_AXLES          : Double = 2.0;     // моторная секция РА3 — 2 оси с тягой
 
+  // ---- Модель сцепления / буксование (Кеслер–Шанкс, упрощ.) ----
+  // F_adh_max = ψ(v) · m_axle · g · n_axles  — максимум силы сцепления
+  // ψ(v) = ψ_0 / (1 + k_v · v)               — снижение с ростом скорости
+  //   ψ_0 = 0.30 — начальное (сухой рельс), Кулон/Кесслер
+  //   k_v = 0.011 (v в км/ч) — спад на скоростях
+  //   песок поднимает ψ_0 до 0.42 (бонус ×1.4)
+  // m_axle = 23500 кг — масса на 1 моторную ось РА-3 (2 оси × 47т / 2 = 23.5т)
+  // Если |F_rail_want| > F_adh_max → буксование, F_rail_real = F_adh_max
+  PSI_0_DRY        : Double = 0.30;
+  PSI_SAND_BOOST   : Double = 1.4;     // песок ×1.4
+  K_VEL            : Double = 0.011;   // спад ψ с v (км/ч)
+  M_AXLE           : Double = 23500.0; // кг на ось
+  GRAVITY          : Double = 9.81;
+
   // Нормализация для LOCSECTIONS[36].
   // loc36 — накопитель тяги, который игра использует в диапазоне 0..~10.
   // ВАЖНО: игра штатно использует loc36 в диапазоне 0..~8. Значения выше 10
@@ -210,6 +224,12 @@ var
   gt_mode: Boolean = False;        // false = ГДТ активен, true = ГДМ активен
   revers_soft: Double = 1.0;       // апериодическое сглаживание реверса
   revers_pos_ref: Integer = 1;
+
+  // ── Сцепление/буксование ────────────────────────────────────────────
+  IsWheelSlipping  : Boolean = False;  // true = превышен предел сцепления
+  IsSandActive     : Boolean = False;  // ручка/педаль песка
+  F_adh_max_cur    : Double  = 0;      // последний расчёт лимита, для лога
+  AutoSandTimer    : Double  = 0;      // секунд авто-песка после буксования
 
   M_in_cur: Double = 0;
   M_out_cur: Double = 0;
@@ -851,11 +871,17 @@ var
   speed_raw: Single;
   revers_raw, i: Integer;
   silat_before, silat_after: Double;
+  psi_eff, f_rail_abs: Double;        // буксование/сцепление
 begin
   // Читаем сырые значения ДО физики
   kontr_raw := ReadKontroller;
   speed_raw := ReadSpeedKPH;
   revers_raw := ReadReverser;
+
+  // Ручной песок — клавиша X удерживается. В реальном РА-3 это педаль
+  // подачи песка слева от ноги машиниста. GetAsyncKeyState возвращает
+  // <>0 если клавиша зажата прямо сейчас.
+  IsSandActive := GetAsyncKeyState(Ord('X')) <> 0;
 
   // До нашей записи — что лежит в SilaTyagi (для диагностики).
   silat_before := 0;
@@ -877,6 +903,37 @@ begin
   // но ручка реверса в "назад" — даём отрицательный знак для консистентности.
   if (Abs(M_out_cur) < 0.1) and (revers_pos_ref < 0) then
     F_rail_cur := -Abs(F_rail_cur);
+
+  // ── ЛИМИТ СЦЕПЛЕНИЯ (буксование при тяге, юз при тормозе) ─────────────
+  // Кесслер–Шанкс упрощённая: F_adh_max = ψ(v) · m_axle · g · n_axles
+  //   ψ(v) = ψ_0 / (1 + k_v · |v|),   ψ_0 = 0.30 (dry rail)
+  //   песок: ψ_0 → ψ_0 · 1.4
+  // Если |F_rail| > F_adh_max → буксование, реальная F clamping до лимита.
+  // speed_raw пишется выше в DoPhysicsTick через ReadSpeedKPH.
+  psi_eff := PSI_0_DRY / (1.0 + K_VEL * Abs(speed_raw));
+  if IsSandActive or (AutoSandTimer > 0.001) then
+    psi_eff := psi_eff * PSI_SAND_BOOST;
+  F_adh_max_cur := psi_eff * M_AXLE * GRAVITY * N_AXLES;
+
+  f_rail_abs := Abs(F_rail_cur);
+  if f_rail_abs > F_adh_max_cur then
+  begin
+    IsWheelSlipping := True;
+    // Авто-песок: при буксовании 0.5 сек песка автоматически
+    if AutoSandTimer < 0.5 then AutoSandTimer := 0.5;
+    // Clamp F к пределу сцепления, сохраняя знак
+    if F_rail_cur > 0 then F_rail_cur :=  F_adh_max_cur
+    else                   F_rail_cur := -F_adh_max_cur;
+  end
+  else
+    IsWheelSlipping := False;
+
+  // Уменьшаем таймер авто-песка
+  if AutoSandTimer > 0 then
+  begin
+    AutoSandTimer := AutoSandTimer - dt;
+    if AutoSandTimer < 0 then AutoSandTimer := 0;
+  end;
 
   // ── ВЫХОДНОЕ ЗНАЧЕНИЕ (КАЛИБРОВКА ПОД ZDsim) ─────────────────────────
   // Пишем в SilaTyagi (8-byte double) по адресу 0x09007CD8.
@@ -934,12 +991,15 @@ begin
       AddToLog(Format(
         'k=%3d v=%7.2f rev=%3d | rpm=%6.1f Mo=%9.1f F=%10.1f | ' +
         'silat before=%10.1f want=%10.1f after=%10.1f | ' +
-        'y_gt=%.3f y_gm=%.3f y_gb=%.3f gt_mode=%s write=%s',
+        'y_gt=%.3f y_gm=%.3f y_gb=%.3f gt_mode=%s write=%s | ' +
+        'F_adh=%9.1f slip=%s sand=%s',
         [kontr_raw, SafeFloat(speed_raw), revers_raw,
          SafeFloat(GetDieselRPM), SafeFloat(M_out_cur), SafeFloat(F_rail_cur),
          silat_before, F_to_write, silat_after,
          SafeFloat(y_gt), SafeFloat(y_gm), SafeFloat(y_gb),
-         B2S(gt_mode), B2S(WriteEnabled)]));
+         B2S(gt_mode), B2S(WriteEnabled),
+         SafeFloat(F_adh_max_cur), B2S(IsWheelSlipping),
+         B2S(IsSandActive or (AutoSandTimer > 0.001))]));
     except
       AddToLog('<<Format failed in main log line>>');
     end;

@@ -94,6 +94,25 @@ var
   WheelModelIDs: array[0..3] of Integer;
   TelegaTextureID: Integer = 0;
 
+  // Модели с НЕнулевыми пивотами — рисуются явно с указанием Position3D
+  // (в DrawLocoRA3 generic-цикл их пропускает, чтобы не дублировать в (0,0,0)).
+  KuzovVneshModelID:  Integer = 0;       // KUZOVVNESH.dmd  (Y=-1.198, Z=2.363)
+  KuzovVneshTextureID:Integer = 0;
+  PassDoorLLModelID:  Integer = 0;       // passdoor_ll     (X=-0.107, Z=-1.265)
+  PassDoorLRModelID:  Integer = 0;       // passdoor_lr
+  PassDoorRLModelID:  Integer = 0;       // passdoor_rl     (X=+0.107)
+  PassDoorRRModelID:  Integer = 0;       // passdoor_rr
+  PassDoorTextureID:  Integer = 0;
+
+  // Анимация локомотивных пасс. дверей — точно как у вагонов:
+  //   фаза 1: LocoLeft/RightDoorXOut выдвигает створку по X (от стенки)
+  //   фаза 2: LocoLeft/RightDoorSide раздвигает половинки по Y (с разными знаками)
+  // Работают синхронно с LeftDoorsOpen/RightDoorsOpen (общие с вагонами).
+  LocoLeftDoorXOut:    Single = 0;       // выдвиг створок левой стороны
+  LocoLeftDoorSide:    Single = 0;       // разъезд левых половинок (ll → -Y, lr → +Y)
+  LocoRightDoorXOut:   Single = 0;       // выдвиг створок правой стороны
+  LocoRightDoorSide:   Single = 0;       // разъезд правых половинок (rl → -Y, rr → +Y)
+
   HoveredController: Boolean = False;
   HoveredBrake: Boolean = False;
 
@@ -200,7 +219,17 @@ const
   DOOR_FORWARD_MAX: Single = 0.12; // выдвиг по X наружу перед разъездом
   DOOR_SIDE_MAX: Single = 0.55;    // разъезд по Y
   DOOR_STEP: Single = 0.04;
-  // направление каждой створки по Y при открытии (пары: 0-1, 2-3, 4-5, 6-7)
+
+  // Локомотивные двери — двухстворчатые сдвижные. Медленнее вагонных
+  // (DOOR_STEP=0.04 → LOCO_DOOR_STEP=0.012, ~3.3× медленнее).
+  // Геометрия меньше: створка по X выдвигается на 0.04, разъезжается
+  // на 0.40 каждой половиной.
+  LOCO_DOOR_X_MAX:    Single = 0.04;   // выдвиг створки по X
+  LOCO_DOOR_SIDE_MAX: Single = 0.40;   // разъезд каждой половины по Y
+  LOCO_DOOR_STEP:     Single = 0.012;  // шаг анимации (~3.3× медленнее вагонных)
+
+  // Направление каждой створки вагонной двери по Y при открытии
+  // (8 дверей вагона: пары 0-1, 2-3, 4-5, 6-7).
   DOOR_Y_DIR: array[0..7] of Integer = (-1, 1, 1, -1, -1, 1, -1, 1);
 
 function IsKeyDownEx(Key: Integer): Boolean;
@@ -457,22 +486,44 @@ begin
   if RA3_LocoInitialized then Exit;
   RA3_LocoInitialized := True;
 
-  basePath := 'C:\ZDSimulator55.008new\ra3\loco\';
+  // Переход с loco/ на newmodel/ — обновлённая 3D-модель РА-3 (3 колесные пары
+  // вместо 4, отдельных файлов телеги нет — она входит в main.dmd).
+  basePath := 'C:\ZDSimulator55.008new\ra3\newmodel\';
 
-WheelModelIDs[0] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_1.dmd', 0, False);
-WheelModelIDs[1] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_2.dmd', 0, False);
-WheelModelIDs[2] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_3.dmd', 0, False);
-WheelModelIDs[3] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_4.dmd', 0, False);
+  WheelModelIDs[0] := LoadModel('C:\ZDSimulator55.008new\ra3\newmodel\Material #15\wheelset_1.dmd', 0, False);
+  WheelModelIDs[1] := LoadModel('C:\ZDSimulator55.008new\ra3\newmodel\Material #15\wheelset_2.dmd', 0, False);
+  WheelModelIDs[2] := LoadModel('C:\ZDSimulator55.008new\ra3\newmodel\Material #15\wheelset_3.dmd', 0, False);
+  // wheelset_4 нет в newmodel — берём fallback из старого loco/ если есть
+  if FileExists('C:\ZDSimulator55.008new\ra3\newmodel\Material #15\wheelset_4.dmd') then
+    WheelModelIDs[3] := LoadModel('C:\ZDSimulator55.008new\ra3\newmodel\Material #15\wheelset_4.dmd', 0, False)
+  else if FileExists('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_4.dmd') then
+    WheelModelIDs[3] := LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\wheelset_4.dmd', 0, False)
+  else
+    WheelModelIDs[3] := 0;
 
-TelegaMotorID :=
-  LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\telega_motor.dmd', 0, False);
+  // В newmodel нет отдельных telega_motor/telega_nemotor — telega
+  // включена в main.dmd соответствующих Material-папок (рендерятся через
+  // общий проход по LocoModelIDs ниже).
+  TelegaMotorID   := 0;
+  TelegaNemotorID := 0;
 
-TelegaNemotorID :=
-  LoadModel('C:\ZDSimulator55.008new\ra3\loco\Material10.001\telega_nemotor.dmd', 0, False);
+  // Текстура для wheelsets (берётся та же что у Material #15 main.dmd).
+  texPath := 'C:\ZDSimulator55.008new\ra3\newmodel\Material #15\ra3_6_RGBA.bmp';
+  if FileExists(texPath) then
+    TelegaTextureID := LoadTextureFromFile(texPath, 0, -1);
 
-texPath := 'C:\ZDSimulator55.008new\ra3\loco\Material10.001\ra3_10_RGBA.bmp';
-if FileExists(texPath) then
-  TelegaTextureID := LoadTextureFromFile(texPath, 0, -1);
+  // ── KUZOVVNESH (внешний кузов, пивот Y=-1.198, Z=2.363) и пасс. двери ──
+  // Текстура у всех общая — Material #12.001\ra3_1_RGBA.bmp.
+  KuzovVneshModelID := LoadModel('C:\ZDSimulator55.008new\ra3\newmodel\Material #12.001\KUZOVVNESH.dmd', 0, False);
+  PassDoorLLModelID := LoadModel('C:\ZDSimulator55.008new\ra3\newmodel\Material #12.001\passdoor_ll.dmd', 0, False);
+  PassDoorLRModelID := LoadModel('C:\ZDSimulator55.008new\ra3\newmodel\Material #12.001\passdoor_lr.dmd', 0, False);
+  PassDoorRLModelID := LoadModel('C:\ZDSimulator55.008new\ra3\newmodel\Material #12.001\passdoor_rl.dmd', 0, False);
+  PassDoorRRModelID := LoadModel('C:\ZDSimulator55.008new\ra3\newmodel\Material #12.001\passdoor_rr.dmd', 0, False);
+  texPath := 'C:\ZDSimulator55.008new\ra3\newmodel\Material #12.001\ra3_1_RGBA.bmp';
+  if FileExists(texPath) then begin
+    KuzovVneshTextureID := LoadTextureFromFile(texPath, 0, -1);
+    PassDoorTextureID   := KuzovVneshTextureID;
+  end;
 
   SetLength(LocoModelIDs, 0);
   SetLength(LocoTextureIDs, 0);
@@ -514,7 +565,12 @@ if FileExists(texPath) then
         if FindFirst(matPath + '*.dmd', faAnyFile, sr2) = 0 then
         begin
 repeat
-  if Pos('wheelset', LowerCase(sr2.Name)) > 0 then
+  // Пропускаем модели которые уже загружены явно с привязкой к пивоту:
+  // wheelsets, KUZOVVNESH, passdoor_*. Они рисуются через DrawWheels /
+  // DrawKuzovVnesh / DrawPassDoors с правильными Position3D.
+  if (Pos('wheelset', LowerCase(sr2.Name)) > 0)
+     or (Pos('kuzovvnesh', LowerCase(sr2.Name)) > 0)
+     or (Pos('passdoor',  LowerCase(sr2.Name)) > 0) then
     Continue;
 
   SetLength(LocoModelIDs, Length(LocoModelIDs) + 1);
@@ -851,6 +907,9 @@ begin
     DoorForwardOffset := DoorForwardOffset - DOOR_STEP;
 end;
 
+// Анимация локомотивных дверей вынесена в StepLocoDoorsAnim
+// (вызывается из DrawLocoRA3 — независимо от вагонов).
+
   // =========================
   // ВАГОНЫ
   // =========================
@@ -1012,13 +1071,140 @@ begin
   end;
 end;
 
+// Шаг анимации локомотивных дверей. Логика 1-в-1 как у вагонной
+// (LeftForwardOffset/LeftDoorOffset / DoorForwardOffset/RightDoorOffset),
+// только переменные с префиксом Loco и шаг ~3.3× медленнее.
+//
+// Вызывается из DrawLocoRA3 каждый кадр, чтобы анимация не зависела
+// от того рисуются ли вагоны.
+procedure StepLocoDoorsAnim;
+begin
+  // ── ЛЕВАЯ СТОРОНА ──
+  if LeftDoorsOpen then
+  begin
+    if LocoLeftDoorXOut < LOCO_DOOR_X_MAX then
+      LocoLeftDoorXOut := LocoLeftDoorXOut + LOCO_DOOR_STEP
+    else if LocoLeftDoorSide < LOCO_DOOR_SIDE_MAX then
+      LocoLeftDoorSide := LocoLeftDoorSide + LOCO_DOOR_STEP;
+  end
+  else
+  begin
+    if LocoLeftDoorSide > 0 then
+      LocoLeftDoorSide := LocoLeftDoorSide - LOCO_DOOR_STEP
+    else if LocoLeftDoorXOut > 0 then
+      LocoLeftDoorXOut := LocoLeftDoorXOut - LOCO_DOOR_STEP;
+  end;
+
+  // ── ПРАВАЯ СТОРОНА ──
+  if RightDoorsOpen then
+  begin
+    if LocoRightDoorXOut < LOCO_DOOR_X_MAX then
+      LocoRightDoorXOut := LocoRightDoorXOut + LOCO_DOOR_STEP
+    else if LocoRightDoorSide < LOCO_DOOR_SIDE_MAX then
+      LocoRightDoorSide := LocoRightDoorSide + LOCO_DOOR_STEP;
+  end
+  else
+  begin
+    if LocoRightDoorSide > 0 then
+      LocoRightDoorSide := LocoRightDoorSide - LOCO_DOOR_STEP
+    else if LocoRightDoorXOut > 0 then
+      LocoRightDoorXOut := LocoRightDoorXOut - LOCO_DOOR_STEP;
+  end;
+end;
+
+// Внешний кузов (KUZOVVNESH) с встроенным пивотом из 3DS Max:
+//   X = 0.000004, Y = -1.19806, Z = 2.36327
+procedure DrawKuzovVnesh;
+begin
+  if KuzovVneshModelID = 0 then Exit;
+  BeginObj3D;
+    Position3D(0.000004, -1.19806, 2.36327);
+    if KuzovVneshTextureID <> 0 then SetTexture(KuzovVneshTextureID);
+    DrawModel(KuzovVneshModelID, 0, False);
+  EndObj3D;
+end;
+
+// Пассажирские двери (двухстворчатые сдвижные, анимация как у вагонов).
+//   passdoor_ll/lr — модельная "левая" сторона  (X = -0.107493)
+//   passdoor_rl/rr — модельная "правая" сторона (X = +0.107493)
+//
+// ВАЖНО: у вагонов LeftDoorsOpen открывает doors на X=+1.54 (физический +X),
+// а у локомотива модельная "ll/lr" — на X=-0.107 (физический -X). Чтобы
+// клавиша T (LeftDoorsOpen) открывала ту же физическую сторону что у вагонов,
+// СВАПАЕМ привязку:
+//   LeftDoorsOpen  (T) → passdoor_rl/rr (физический +X = wagon left)
+//   RightDoorsOpen (Y) → passdoor_ll/lr (физический -X = wagon right)
+//
+// Поэтому ll/lr используют LocoRightDoor*, а rl/rr используют LocoLeftDoor*.
+procedure DrawPassDoors;
+begin
+  if PassDoorTextureID <> 0 then SetTexture(PassDoorTextureID);
+
+  // ── passdoor_ll/lr (X=-0.107, физический -X = wagon "right") ──
+  // Анимируется через LocoRightDoor* (RightDoorsOpen / клавиша Y).
+  // ll → +Y (внутренний меш у ll смещён в -Y, поэтому при ОТКРЫТИИ
+  // нужно толкать пивот в +Y, чтобы створка ушла от центра).
+  // lr → -Y (симметрично).
+  if PassDoorLLModelID <> 0 then
+  begin
+    BeginObj3D;
+      Position3D(-0.107493 - LocoRightDoorXOut,
+                 -0.000001 + LocoRightDoorSide,
+                 -1.26512);
+      if PassDoorTextureID <> 0 then SetTexture(PassDoorTextureID);
+      DrawModel(PassDoorLLModelID, 0, False);
+    EndObj3D;
+  end;
+
+  if PassDoorLRModelID <> 0 then
+  begin
+    BeginObj3D;
+      Position3D(-0.107493 - LocoRightDoorXOut,
+                 -0.000001 - LocoRightDoorSide,
+                 -1.26512);
+      if PassDoorTextureID <> 0 then SetTexture(PassDoorTextureID);
+      DrawModel(PassDoorLRModelID, 0, False);
+    EndObj3D;
+  end;
+
+  // ── passdoor_rl/rr (X=+0.107, физический +X = wagon "left") ──
+  // Анимируется через LocoLeftDoor* (LeftDoorsOpen / клавиша T).
+  // У этой стороны меш половинок ориентирован противоположно ll/lr,
+  // поэтому знаки Y тоже противоположные (rl → -Y, rr → +Y при ОТКРЫТИИ).
+  if PassDoorRLModelID <> 0 then
+  begin
+    BeginObj3D;
+      Position3D(0.107493 + LocoLeftDoorXOut,
+                 -0.000001 - LocoLeftDoorSide,
+                 -1.26512);
+      if PassDoorTextureID <> 0 then SetTexture(PassDoorTextureID);
+      DrawModel(PassDoorRLModelID, 0, False);
+    EndObj3D;
+  end;
+
+  if PassDoorRRModelID <> 0 then
+  begin
+    BeginObj3D;
+      Position3D(0.107493 + LocoLeftDoorXOut,
+                 -0.000001 + LocoLeftDoorSide,
+                 -1.26512);
+      if PassDoorTextureID <> 0 then SetTexture(PassDoorTextureID);
+      DrawModel(PassDoorRRModelID, 0, False);
+    EndObj3D;
+  end;
+end;
+
 procedure DrawLocoRA3;
 var
   i: Integer;
 begin
+  // Шаг анимации локомотивных дверей (независимо от вагонов).
+  StepLocoDoorsAnim;
+
   // вращение от скорости
   WheelRotation := WheelRotation + StrToFloat(GetSpeed) * 0.05;
 
+  // Сначала всё что на (0,0,0) — main.dmd корпуса, дисплеи, прочее
   for i := 0 to High(LocoModelIDs) do
   begin
     if LocoModelIDs[i] = 0 then
@@ -1036,6 +1222,10 @@ begin
 
     EndObj3D;
   end;
+
+  // Затем модели с явными пивотами
+  DrawKuzovVnesh;
+  DrawPassDoors;
 end;
 
 procedure DrawCabRA3;
