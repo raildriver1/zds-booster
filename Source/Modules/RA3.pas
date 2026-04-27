@@ -1063,14 +1063,93 @@ var
   lastX: Single;
   MouseDeltaAccum: Single;
   MouseAccum: Single;
+  // Запоминаем последний записанный нами в память байт контроллера —
+  // если в памяти он стал другим, значит игра (native input) изменила его,
+  // и мы должны синхронизировать наш визуальный угол с ним.
+  LastWrittenCtrlByte: Byte = 0;
+  LastWrittenKranByte: Byte = 0;
+
+const
+  // Адреса памяти ZDsim 55.008 (синхронизация визуальных контроллеров кабины
+  // РА-3 со штатными переменными игры).
+  ADDR_KONTROLLER_BYTE: Cardinal = $091D5B05;  // byte 0..5 / 251..255 (тяга/тормоз)
+  ADDR_KRAN395_BYTE   : Cardinal = $090043A0;  // byte позиции крана 395
+
+// Преобразование угла визуального тягового контроллера (-59°..+59°) в байт
+// штатного контроллера ZDsim (0..5 для тяги, 251..255 для тормоза).
+//
+// В UpdateControllerAndDraw шаг через нейтраль = 15°, дальше = 3°. Поэтому:
+//   0°    → 0 (нейтраль)
+//   +15°  → 1 (тяга 1)         -15°  → 255 (тормоз -1)
+//   +18°  → 2 (тяга 2)         -18°  → 254 (тормоз -2)
+//   +21°  → 3 (тяга 3)         -21°  → 253 (тормоз -3)
+//   +24°  → 4 (тяга 4)         -24°  → 252 (тормоз -4)
+//   +27°+ → 5 (тяга 5)         -27°- → 251 (тормоз -5)
+function ControllerAngleToByte(angle: Single): Byte;
+var
+  pos: Integer;
+begin
+  // Мёртвая зона ±7.5° = нейтраль (полу-шаг от 15°).
+  if Abs(angle) < 7.5 then
+  begin
+    Result := 0;
+    Exit;
+  end;
+  // |angle|=15° → poз=1, |angle|=27° → поз=5
+  pos := 1 + Round((Abs(angle) - 15.0) / 3.0);
+  if pos < 1 then pos := 1;
+  if pos > 5 then pos := 5;
+  if angle > 0 then Result := pos
+  else Result := 256 - pos;  // -1=>255, -5=>251
+end;
+
+// Обратное преобразование: byte → угол. Используется при синхронизации
+// нашего visual angle с тем что игра сама поставила в память.
+function ControllerByteToAngle(b: Byte): Single;
+begin
+  case b of
+    0:        Result := 0.0;
+    1..5:     Result := 15.0 + (b - 1) * 3.0;             // 1→15, 5→27
+    251..255: Result := -(15.0 + (255 - b) * 3.0);        // 255→-15, 251→-27
+  else
+    Result := 0.0;
+  end;
+end;
+
+// Безопасное чтение байта по абсолютному адресу (try/except).
+function ReadByteSafe(addr: Cardinal; def: Byte): Byte;
+begin
+  try
+    Result := PByte(addr)^;
+  except
+    Result := def;
+  end;
+end;
+
+// Безопасная запись байта.
+procedure WriteByteSafe(addr: Cardinal; value: Byte);
+begin
+  try
+    PByte(addr)^ := value;
+  except
+  end;
+end;
 
 procedure UpdateControllerAndDraw;
 var
   lbNow: Boolean;
   incA, incD: Boolean;
   deltaPx: Single;
+  curMemByte, newByte: Byte;
 begin
   if ControllerModelID = 0 then Exit;
+
+  // ── СИНХРОНИЗАЦИЯ С ZDsim BYTE-КОНТРОЛЛЕРОМ ──────────────────────────
+  // Если игра (native input через свои клавиши) изменила byte с нашей
+  // последней записи, обновляем визуальный угол под новое значение.
+  curMemByte := ReadByteSafe(ADDR_KONTROLLER_BYTE, 0);
+  if curMemByte <> LastWrittenCtrlByte then
+    ControllerAngle := ControllerByteToAngle(curMemByte);
 
   lbNow := IsKeyDownEx(VK_LBUTTON);
 
@@ -1153,6 +1232,14 @@ end;
   if ControllerAngle > 59 then ControllerAngle := 59;
   if ControllerAngle < -59 then ControllerAngle := -59;
 
+  // ── ЗАПИСЬ В ZDsim BYTE-КОНТРОЛЛЕР ────────────────────────────────────
+  // Преобразуем визуальный угол → byte (0..5 / 251..255) и пишем в память
+  // игры. Запоминаем что записали, чтобы в следующем кадре отличить наш
+  // байт от того что мог поставить native input игры.
+  newByte := ControllerAngleToByte(ControllerAngle);
+  WriteByteSafe(ADDR_KONTROLLER_BYTE, newByte);
+  LastWrittenCtrlByte := newByte;
+
   // =========================
   // DRAW
   // =========================
@@ -1177,6 +1264,36 @@ end;
 
 
 
+// Маппинг 3-позиционного визуального тормозного крана → byte KRAN395.
+// Реальный кран машиниста 395 имеет 7 позиций (I..VI + V_A), но наша
+// упрощённая модель даёт только 3:
+//   Pos=0 (отпуск)     → byte 2 (II — поездное, тормоз отпущен)
+//   Pos=1 (перекрыша)  → byte 4 (IV — перекрыша с питанием)
+//   Pos=2 (торможение) → byte 5 (V — служебное торможение)
+function BrakePosToKran395Byte(pos: Integer): Byte;
+begin
+  case pos of
+    0: Result := 2;  // II — поездное
+    1: Result := 4;  // IV — перекрыша с питанием
+    2: Result := 5;  // V — служебное торможение
+  else
+    Result := 2;
+  end;
+end;
+
+// Обратное: byte KRAN395 → наша 3-позиционная модель.
+// Покрываем все возможные значения от ZDsim.
+function Kran395ByteToBrakePos(b: Byte): Integer;
+begin
+  case b of
+    1, 2:        Result := 0;  // I (зарядка), II (поездное) → отпуск
+    3, 4:        Result := 1;  // III, IV (перекрыша) → перекрыша
+    5, 6, 50:    Result := 2;  // V (служебное), VI (экстр.) → торможение
+  else
+    Result := 0;
+  end;
+end;
+
 procedure DrawControllerBraking;
 const
   VK_OEM_SEMICOLON = $BA;
@@ -1187,8 +1304,15 @@ var
   newPos: Integer;
   v1, v2: TVertex;
   p1, p2: TPoint;
+  curKranByte, newKranByte: Byte;
 begin
   if ControllerBrakingModelID = 0 then Exit;
+
+  // ── СИНХРОНИЗАЦИЯ С KRAN395 BYTE ─────────────────────────────────────
+  // Если игра/native input изменили крановый байт — обновляем визуал.
+  curKranByte := ReadByteSafe(ADDR_KRAN395_BYTE, 2);
+  if curKranByte <> LastWrittenKranByte then
+    BrakeControllerPos := Kran395ByteToBrakePos(curKranByte);
 
   lbNow := IsKeyDownEx(VK_LBUTTON);
 
@@ -1239,6 +1363,13 @@ begin
     LastBrakeIncKey := incKey;
     LastBrakeDecKey := decKey;
   end;
+
+  // ── ЗАПИСЬ В KRAN395 BYTE ─────────────────────────────────────────────
+  // Преобразуем 3-позиционный визуал → byte (2/4/5) и пишем в память игры.
+  // Запоминаем что записали для последующей детекции native изменений.
+  newKranByte := BrakePosToKran395Byte(BrakeControllerPos);
+  WriteByteSafe(ADDR_KRAN395_BYTE, newKranByte);
+  LastWrittenKranByte := newKranByte;
 
   BrakeTargetAngle := BrakeControllerPos * 30.0;
   BrakeControllerAngle := BrakeControllerAngle + (BrakeTargetAngle - BrakeControllerAngle) * 0.15;
@@ -1435,16 +1566,10 @@ begin
   DrawButtons;
   DrawALSIndicator;
   DrawArrows;
-  // Пользовательские 3D-тексты из «Меню разработчика → Custom Texts».
-  // Локальная система координат кабины — рисуются после всех штатных моделей.
-  DrawCustomTextsRA3;
-  // Per-frame стейт-машина гизмо (hover/click/drag/release) — работает БЕЗ
-  // открытого F12-меню, читает мышь напрямую (как UpdateControllerAndDraw).
-  // Использует кэш экранных позиций ИЗ ПРОШЛОГО кадра (заполнен в DrawGizmoRA3),
-  // поэтому must быть вызвана ПЕРЕД новым рендером гизмо.
-  UpdateGizmoFrameRA3;
-  // Гизмо (Translate/Rotate/Scale) для редактирования выбранного текста.
-  DrawGizmoRA3;
+  // Пользовательские 3D-тексты + гизмо. Используем общую процедуру с
+  // per-frame дедуплексом — её же зовут хуки для других локомотивов
+  // (HookKLUB / DrawKPD3 / DrawBLOCK), и за кадр случится только один рендер.
+  RenderCustomTextsAndGizmoForFrame;
 end;
 
 procedure ApplyRA3BlockTransform(x, y, z, AngZ: Single);

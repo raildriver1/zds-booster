@@ -2,7 +2,8 @@
 
 interface
 uses
-  Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils, KlubData, ShellAPI, Math, OpenGL, Advanced3D;
+  Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils,
+  KlubData, ShellAPI, Math, OpenGL, Advanced3D;
 
 type
   TSlider = record
@@ -115,6 +116,7 @@ type
     RX, RY, RZ: Single; // углы в градусах
     Scale: Single;
     Visible: Boolean;
+    Color: Cardinal;    // COLORREF, $FFFFFF = белый. Применяется в DrawCustomTextsRA3.
   end;
 
 procedure InitCheatMenu; stdcall;
@@ -143,6 +145,12 @@ procedure UpdateGizmoFrameRA3;
 // удержания патча.
 function IsGizmoActive: Boolean;
 
+// Универсальная точка входа: рендерит кастомные тексты + гизмо ОДИН РАЗ
+// за кадр в текущей cabin-local матрице. Безопасно вызывать из любого
+// hook'а DLL (HookKLUB, DrawKPD3, DrawBLOCK, DrawRA3) — внутренний
+// per-frame дедуплекс гарантирует один рендер в кадр.
+procedure RenderCustomTextsAndGizmoForFrame; stdcall;
+
 function GetFreecamBasespeed: Single; stdcall;
 function GetFreecamFastspeed: Single; stdcall;
 function GetFreecamTurnspeed: Single; stdcall;
@@ -150,6 +158,9 @@ function GetFreecamTurnspeed: Single; stdcall;
 procedure LoadConfig; stdcall;
 
 implementation
+
+uses
+  EngineCore; // только в implementation — иначе circular reference (EngineCore uses CheatMenu)
 
 var
   MenuVisible: Boolean = False;
@@ -656,32 +667,141 @@ const
   GIZMO_AXIS_X         = 0;
   GIZMO_AXIS_Y         = 1;
   GIZMO_AXIS_Z         = 2;
-  GIZMO_PICK_RADIUS    = 22;     // px — порог попадания мышью в хэндл
+  GIZMO_AXIS_VIEW      = 3;      // центральный «свободный» хэндл (drag в плоскости экрана)
+  GIZMO_PICK_RADIUS    = 22;     // px — порог попадания мышью в хэндл оси
+  GIZMO_PICK_CENTER_R  = 14;     // px — порог попадания в центральный хэндл
   GIZMO_ARROW_LEN      = 0.06;   // длина стрелки в локальных координатах кабины
   GIZMO_ROTATE_RADIUS  = 0.05;   // радиус кругов
   GIZMO_BOX_TRANSLATE  = 0.012;  // размер кубика на конце для translate
   GIZMO_BOX_SCALE      = 0.020;  // больше для scale, чтоб отличать визуально
+  GIZMO_BOX_CENTER     = 0.013;  // размер центрального кубика (free-move)
   GIZMO_RING_SAMPLES   = 32;     // точек на кольце (для пика ротации)
+  // Снап-шаги (зажми Shift во время drag)
+  GIZMO_SNAP_TRANSLATE = 0.005;  // 5 мм по локальной системе кабины
+  GIZMO_SNAP_ROTATE    = 5.0;    // 5° на щелчок
+  GIZMO_SNAP_SCALE     = 0.05;   // шаг 0.05× по масштабу
+  // Множитель чувствительности при зажатом Ctrl (precision-режим)
+  GIZMO_PRECISION_FACTOR = 0.2;
 
 var
   GizmoMode: TGizmoMode = gmTranslate;
-  GizmoActiveAxis: Integer = GIZMO_AXIS_NONE;   // 0/1/2 во время drag, иначе -1
-  HoveredGizmoAxis: Integer = GIZMO_AXIS_NONE;  // 0/1/2 если мышь над хэндлом
+  GizmoActiveAxis: Integer = GIZMO_AXIS_NONE;   // 0/1/2/3 во время drag, иначе -1
+  HoveredGizmoAxis: Integer = GIZMO_AXIS_NONE;  // 0/1/2/3 если мышь над хэндлом
   GizmoDragging: Boolean = False;
   GizmoLastLMB: Boolean = False;                // для rising-edge детекта клика
+  GizmoLastEsc: Boolean = False;                // для rising-edge детекта Esc
   GizmoPatchActive: Boolean = False;            // мы ли держим ApplyMenuPatch
   GizmoDragMouseStartX, GizmoDragMouseStartY: Integer;
   // На начало драга: для translate — стартовые X/Y/Z, для rotate — стартовые RX/RY/RZ.
   GizmoDragValueStart: array[0..2] of Single;
   GizmoDragScaleStart: Single;
+  // Полный снимок трансформа на начало drag — для отмены по Esc.
+  GizmoCancelX, GizmoCancelY, GizmoCancelZ: Single;
+  GizmoCancelRX, GizmoCancelRY, GizmoCancelRZ: Single;
+  GizmoCancelScale: Single;
   // Для rotate: angular tracking в стиле Блендера — мышь крутится вокруг центра гизмо.
   GizmoRotPrevAngle: Single;   // последний просэмплированный угол atan2 от центра (рад)
   GizmoRotAccum: Single;       // сумма приращений с unwrap'ом (рад) от начала драга
+  GizmoRotStartAngle: Single;  // угол курсора в момент начала драга — для рисовки арки
   // Кэш экранных позиций — заполняется в DrawGizmoRA3, читается в PickGizmoAxis.
   GizmoOriginScreen: TPoint;
   GizmoTipScreen: array[0..2] of TPoint;        // концы осей translate/scale
   GizmoRingScreen: array[0..2, 0..GIZMO_RING_SAMPLES - 1] of TPoint; // 3 кольца × 32 точки
   GizmoCacheValid: Boolean = False;
+
+// ===========================================================================
+//  DEV EDITOR (полноэкранный редактор кастомных текстов)
+// ===========================================================================
+// Включается тумблером в меню разработчика. Когда активен, 4 стандартных окна
+// прячутся и вместо них рисуется фуллскрин-редактор: список карточек, в каждой —
+// Source-combobox, X/Y/Z/RX/RY/RZ/Scale с +/− кнопками, color-swatch, Visible,
+// Delete. Поддержка hover/scroll/выделения. При выделении карточки гизмо
+// работает на её тексте — ровно как раньше.
+
+const
+  DE_PAD_X            = 20;     // отступ слева/справа от края экрана
+  DE_PAD_Y            = 12;
+  DE_HEADER_H         = 56;     // верхняя плашка с заголовком и кнопкой Back
+  DE_TOOLBAR_H        = 44;     // тулбар с Add Text + counter
+  DE_CARD_H           = 76;     // высота одной карточки (с местом под column-labels)
+  DE_CARD_GAP         = 6;
+  DE_SCROLLBAR_W      = 12;
+  DE_BTN_SMALL        = 22;     // -/+ кнопки (квадратные)
+  DE_VAL_W            = 78;     // ширина числового поля внутри ячейки
+  DE_CELL_GAP         = 6;      // промежуток между соседними ячейками
+  // Внутренняя ширина ячейки = btn + 2 + val + 2 + btn = 22+2+78+2+22 = 126
+  // С промежутком DE_CELL_GAP — общий шаг = 132 px
+  DE_CELL_W           = 132;    // полный шаг ячейки (включая gap)
+  DE_SOURCE_W         = 150;    // ширина Source-combobox
+  DE_IDX_W            = 38;     // ширина колонки #N
+  DE_SWATCH_W         = 44;
+  DE_VISIBLE_W        = 38;
+  DE_DELETE_W         = 38;
+  DE_COMBO_DROP_H     = 22;     // высота строки в выпадашке combobox
+  DE_PICKER_SIZE      = 28;     // сторона цветного квадратика в палитре
+  DE_PICKER_COLS      = 6;      // 6×3 = 18 цветов
+  DE_PICKER_ROWS      = 3;
+  DE_AUTO_REPEAT_DELAY = 350;   // мс до начала auto-repeat для +/-
+  DE_AUTO_REPEAT_RATE  = 50;    // мс между тиками
+
+  // Коды hot-spot'ов (button id внутри карточки), одно из ниже:
+  DE_HOT_NONE     = 0;
+  DE_HOT_SOURCE   = 1;
+  DE_HOT_X_MINUS  = 10; DE_HOT_X_PLUS  = 11;
+  DE_HOT_Y_MINUS  = 12; DE_HOT_Y_PLUS  = 13;
+  DE_HOT_Z_MINUS  = 14; DE_HOT_Z_PLUS  = 15;
+  DE_HOT_RX_MINUS = 20; DE_HOT_RX_PLUS = 21;
+  DE_HOT_RY_MINUS = 22; DE_HOT_RY_PLUS = 23;
+  DE_HOT_RZ_MINUS = 24; DE_HOT_RZ_PLUS = 25;
+  DE_HOT_S_MINUS  = 30; DE_HOT_S_PLUS  = 31;
+  DE_HOT_COLOR    = 40;
+  DE_HOT_VISIBLE  = 41;
+  DE_HOT_DELETE   = 42;
+  DE_HOT_BACK     = 100;
+  DE_HOT_ADD      = 101;
+  DE_HOT_MODE_T   = 110;  // Move / Translate
+  DE_HOT_MODE_R   = 111;  // Rotate
+  DE_HOT_MODE_S   = 112;  // Scale
+
+  // Шаги +/− (одиночный клик)
+  DE_STEP_POS    = 0.005;
+  DE_STEP_ANG    = 1.0;
+  DE_STEP_SCALE  = 0.001;
+
+var
+  DevEditorVisible: Boolean = False;
+  DevEditorScrollY: Integer = 0;             // px смещение прокрутки списка
+  DevEditorMaxScroll: Integer = 0;           // вычисляется в Draw, читается в HandleClick
+  DevEditorViewportTop: Integer = 0;         // вычисляется в Draw — y нач. области списка
+  DevEditorViewportBottom: Integer = 0;
+  DevEditorScrollbarDragging: Boolean = False;
+  DevEditorScrollbarDragOffsetY: Integer = 0;
+  // hover: индекс карточки и hot-spot ID внутри неё (0 = карточка целиком/пусто)
+  DevEditorHoveredCard: Integer = -1;
+  DevEditorHoveredHotspot: Integer = DE_HOT_NONE;
+  // Combobox state
+  DevEditorComboboxOpen: Boolean = False;
+  DevEditorComboboxCardIdx: Integer = -1;
+  // Color picker state
+  DevEditorColorPickerOpen: Boolean = False;
+  DevEditorColorPickerCardIdx: Integer = -1;
+  // Auto-repeat для +/- кнопок: какой hot-spot зажат, на какой карточке, и когда last-fire
+  DevEditorBtnHeldHotspot: Integer = DE_HOT_NONE;
+  DevEditorBtnHeldCardIdx: Integer = -1;
+  DevEditorBtnHeldStartTime: Cardinal = 0;
+  DevEditorBtnLastFireTime: Cardinal = 0;
+  // Палитра для color picker (18 цветов)
+  DevEditorPalette: array[0..17] of Cardinal = (
+    $FFFFFF, $C0C0C0, $808080, $404040, $0000FF, $00FF00,
+    $FF0000, $00FFFF, $FF00FF, $FFFF00, $0080FF, $00FF80,
+    $8000FF, $FF8000, $80FF80, $80FFFF, $FF80FF, $FF8080
+  );
+
+procedure DrawDevEditor; forward;
+procedure HandleDevEditorClick(MX, MY: Integer); forward;
+procedure HandleDevEditorMouseUp; forward;
+procedure UpdateDevEditorPerFrame; forward;
+function DevEditorPointInUI(MX, MY: Integer): Boolean; forward;
 
 // Forward — определения ниже в этом же файле; гизмо-обработчики используют их раньше.
 procedure SaveConfig; forward;
@@ -802,6 +922,254 @@ begin
             CustomScaleSlider.IsDragging;
 end;
 
+// =====================================================================
+//  Per-loco конфиги кастомных текстов
+//  Путь: data\<loc_name>\<loc_number>\raildriver\custom_texts.cfg
+// =====================================================================
+// Каждое сочетание (тип локомотива × LocNum) получает свой файл с массивом
+// CustomTexts. При смене локо/состава — прозрачно перезагружаем (раз в кадр
+// в DrawCheatMenu). При изменении CustomTexts (Add/Delete/гизмо/+/-) пишем
+// туда же — SaveConfig после сохранения zdbooster.cfg ещё пишет per-loco файл.
+// Глобальный zdbooster.cfg остаётся для обратной совместимости (он содержит
+// настройки бустера + тексты как fallback при первом запуске на этой кабине).
+
+var
+  // Кэш — чтобы детектить смену локомотива и перезагрузиться один раз.
+  LastLocoIdent: string = '';
+  // Throttling: GetLocNum читает settings.ini И пишет лог каждый раз — нельзя
+  // дёргать каждый кадр. Проверяем смену локо раз в LOCO_CHECK_INTERVAL мс.
+  LastLocoCheckTime: Cardinal = 0;
+const
+  LOCO_CHECK_INTERVAL = 2000; // 2 секунды между проверками смены локо
+
+// Резолв папки локомотива: учитываем РА3, у которого LocNum содержит "RA3"
+// и который не зашит в GetLocomotiveFolder (там case по числовому типу).
+// Все остальные кабины — берём папку через GetLocomotiveFolder(GetLocomotiveTypeFromMemory).
+function ResolveLocoFolder(const Num: string): string;
+var
+  LocType: Integer;
+begin
+  if Pos('RA3', UpperCase(Num)) > 0 then
+  begin
+    Result := 'ra3';
+    Exit;
+  end;
+  try
+    LocType := GetLocomotiveTypeFromMemory;
+    Result := GetLocomotiveFolder(LocType);
+  except
+    Result := '';
+  end;
+  if Result = '' then Result := 'unknown';
+end;
+
+// Нормализуем номер для использования как имя папки. Поддерживает РА3 (например
+// "RA3-068" → "RA3-068") — оставляем как есть, иначе используем как есть с
+// fallback "000" если пусто.
+function ResolveLocoNumber: string;
+begin
+  try
+    Result := GetLocNum;
+  except
+    Result := '';
+  end;
+  if Result = '' then Result := '000';
+end;
+
+function GetCurrentLocoIdent: string;
+var
+  Folder, Num: string;
+begin
+  try
+    Num := ResolveLocoNumber;
+    Folder := ResolveLocoFolder(Num);
+    Result := Folder + '|' + Num;
+  except
+    // Если что-то пошло не так — возвращаем пусто, тогда reload не сработает.
+    Result := '';
+  end;
+end;
+
+function GetCustomTextsConfigPath: string;
+var
+  Folder, Num: string;
+begin
+  // Формат пути: data\<loc_name>\<loc_number>\raildriver\custom_texts.cfg
+  //   <loc_name>   — папка локомотива (ra3, chs7, vl80t, ...). Для РА3 жёстко
+  //                  ставим 'ra3' — у неё нет числового LocomotiveType.
+  //   <loc_number> — номер из settings.ini (LocNum), нормализован до непустой строки.
+  //   custom_texts.cfg — фиксированное имя файла внутри per-loco/per-num папки.
+  try
+    Num := ResolveLocoNumber;
+    Folder := ResolveLocoFolder(Num);
+    Result := 'data\' + Folder + '\' + Num + '\raildriver\custom_texts.cfg';
+  except
+    Result := '';
+  end;
+end;
+
+// Создаёт директорию (со всеми родителями).
+function EnsureDirExists(const Path: string): Boolean;
+var
+  Dir: string;
+begin
+  Result := False;
+  Dir := ExtractFilePath(Path);
+  if Dir = '' then begin Result := True; Exit; end;
+  if DirectoryExists(Dir) then begin Result := True; Exit; end;
+  Result := ForceDirectories(Dir);
+end;
+
+// Сохраняем CustomTexts в per-loco файл. Формат тот же, что в SaveConfig
+// для совместимости логики парсинга.
+procedure SaveCustomTextsForCurrentLoco;
+var
+  Path: string;
+  F: TextFile;
+  i: Integer;
+begin
+  Path := GetCustomTextsConfigPath;
+  if Path = '' then Exit;
+  if not EnsureDirExists(Path) then Exit;
+  try
+    AssignFile(F, Path);
+    Rewrite(F);
+    try
+      WriteLn(F, '# ZDSimulator Booster — Custom texts for this loco/LocNum.');
+      WriteLn(F, '# Auto-generated. Edit via in-game F12 → Меню разработчика.');
+      WriteLn(F, 'custom_text_count: ' + IntToStr(Length(CustomTexts)));
+      for i := 0 to Length(CustomTexts) - 1 do
+      begin
+        WriteLn(F, 'ct' + IntToStr(i) + '_source: ' + IntToStr(Integer(CustomTexts[i].Source)));
+        WriteLn(F, 'ct' + IntToStr(i) + '_x: '      + FormatValue(CustomTexts[i].X));
+        WriteLn(F, 'ct' + IntToStr(i) + '_y: '      + FormatValue(CustomTexts[i].Y));
+        WriteLn(F, 'ct' + IntToStr(i) + '_z: '      + FormatValue(CustomTexts[i].Z));
+        WriteLn(F, 'ct' + IntToStr(i) + '_rx: '     + FormatValue(CustomTexts[i].RX));
+        WriteLn(F, 'ct' + IntToStr(i) + '_ry: '     + FormatValue(CustomTexts[i].RY));
+        WriteLn(F, 'ct' + IntToStr(i) + '_rz: '     + FormatValue(CustomTexts[i].RZ));
+        WriteLn(F, 'ct' + IntToStr(i) + '_scale: '  + FormatValue(CustomTexts[i].Scale));
+        WriteLn(F, 'ct' + IntToStr(i) + '_color: '  + IntToStr(Integer(CustomTexts[i].Color)));
+        if CustomTexts[i].Visible then
+          WriteLn(F, 'ct' + IntToStr(i) + '_visible: 1')
+        else
+          WriteLn(F, 'ct' + IntToStr(i) + '_visible: 0');
+      end;
+    finally
+      CloseFile(F);
+    end;
+  except
+    // Не валим программу из-за проблем с записью.
+  end;
+end;
+
+// Загружаем CustomTexts из per-loco файла. Если файла нет — оставляем как есть
+// (т.е. содержимое последнего LoadConfig'а / то что было в предыдущей кабине).
+// Возвращает True если файл был и загрузка прошла.
+function LoadCustomTextsForCurrentLoco: Boolean;
+var
+  Path, Line, Key, Value: string;
+  F: TextFile;
+  ColonPos, CTCount, CTIdx, SrcVal, USCorePos: Integer;
+  CTPrefix: string;
+begin
+  Result := False;
+  Path := GetCustomTextsConfigPath;
+  if Path = '' then Exit;
+  if not FileExists(Path) then Exit;
+  try
+    AssignFile(F, Path);
+    Reset(F);
+    try
+      // Очищаем текущие тексты перед загрузкой нового набора.
+      SetLength(CustomTexts, 0);
+      CustomTextSelectedIdx := -1;
+      while not Eof(F) do
+      begin
+        ReadLn(F, Line);
+        Line := Trim(Line);
+        if (Line = '') or (Line[1] = '#') or (Line[1] = ';') then Continue;
+        ColonPos := Pos(':', Line);
+        if ColonPos < 1 then Continue;
+        Key := LowerCase(Trim(Copy(Line, 1, ColonPos - 1)));
+        Value := Trim(Copy(Line, ColonPos + 1, Length(Line)));
+
+        if Key = 'custom_text_count' then
+        begin
+          CTCount := StrToIntDef(Value, 0);
+          if CTCount < 0 then CTCount := 0;
+          if CTCount > 256 then CTCount := 256;
+          SetLength(CustomTexts, CTCount);
+          for CTIdx := 0 to CTCount - 1 do
+          begin
+            CustomTexts[CTIdx].Source  := ksSpeed;
+            CustomTexts[CTIdx].X       := 0.0;
+            CustomTexts[CTIdx].Y       := 0.0;
+            CustomTexts[CTIdx].Z       := 0.2;
+            CustomTexts[CTIdx].RX      := -90.0;
+            CustomTexts[CTIdx].RY      := 0.0;
+            CustomTexts[CTIdx].RZ      := 0.0;
+            CustomTexts[CTIdx].Scale   := CUSTOM_TEXT_DEFAULT_SCALE;
+            CustomTexts[CTIdx].Visible := True;
+            CustomTexts[CTIdx].Color   := $FFFFFF;
+          end;
+        end
+        else if (Length(Key) > 2) and (Copy(Key, 1, 2) = 'ct') then
+        begin
+          USCorePos := Pos('_', Key);
+          if USCorePos < 4 then Continue;
+          CTIdx := StrToIntDef(Copy(Key, 3, USCorePos - 3), -1);
+          if (CTIdx < 0) or (CTIdx >= Length(CustomTexts)) then Continue;
+          CTPrefix := Copy(Key, USCorePos + 1, Length(Key));
+          if CTPrefix = 'source' then
+          begin
+            SrcVal := StrToIntDef(Value, 0);
+            if (SrcVal >= 0) and (SrcVal < KLUB_SOURCE_COUNT) then
+              CustomTexts[CTIdx].Source := TKlubSource(SrcVal);
+          end
+          else if CTPrefix = 'color'   then CustomTexts[CTIdx].Color   := Cardinal(StrToIntDef(Value, $FFFFFF))
+          else if CTPrefix = 'x'       then CustomTexts[CTIdx].X       := ParseFloat(Value, 0.0)
+          else if CTPrefix = 'y'       then CustomTexts[CTIdx].Y       := ParseFloat(Value, 0.0)
+          else if CTPrefix = 'z'       then CustomTexts[CTIdx].Z       := ParseFloat(Value, 0.2)
+          else if CTPrefix = 'rx'      then CustomTexts[CTIdx].RX      := ParseFloat(Value, -90.0)
+          else if CTPrefix = 'ry'      then CustomTexts[CTIdx].RY      := ParseFloat(Value, 0.0)
+          else if CTPrefix = 'rz'      then CustomTexts[CTIdx].RZ      := ParseFloat(Value, 0.0)
+          else if CTPrefix = 'scale'   then CustomTexts[CTIdx].Scale   := ParseFloat(Value, CUSTOM_TEXT_DEFAULT_SCALE)
+          else if CTPrefix = 'visible' then CustomTexts[CTIdx].Visible := (Value = '1');
+        end;
+      end;
+      Result := True;
+    finally
+      CloseFile(F);
+    end;
+  except
+    // Игнорим — оставим текущие тексты.
+  end;
+  if (CustomTextSelectedIdx >= Length(CustomTexts)) then
+    CustomTextSelectedIdx := -1;
+end;
+
+// Per-frame: проверяем, не сменился ли локомотив. Если да — загружаем
+// его конфиг с диска. Зовётся из DrawCheatMenu.
+// Throttle: GetLocNum дорогой (читает settings.ini + пишет лог) — поэтому
+// реально проверяем смену не чаще раза в LOCO_CHECK_INTERVAL мс.
+procedure CheckLocoChangeAndReloadTexts;
+var
+  Cur: string;
+  Now_: Cardinal;
+begin
+  Now_ := GetTickCount;
+  if (LastLocoCheckTime <> 0) and (Now_ - LastLocoCheckTime < LOCO_CHECK_INTERVAL) then
+    Exit;
+  LastLocoCheckTime := Now_;
+  Cur := GetCurrentLocoIdent;
+  if Cur = '' then Exit; // не смогли определить — пропускаем
+  if Cur = LastLocoIdent then Exit;
+  LastLocoIdent := Cur;
+  // Пытаемся загрузить per-loco файл. Если его нет — оставим то, что было,
+  // и при следующем сохранении создадим файл для этой кабины.
+  LoadCustomTextsForCurrentLoco;
+end;
+
 procedure AddCustomText;
 var
   N: Integer;
@@ -817,6 +1185,7 @@ begin
   T.RZ := 0.0;
   T.Scale := CUSTOM_TEXT_DEFAULT_SCALE;
   T.Visible := True;
+  T.Color := $FFFFFF; // белый по умолчанию
   SetLength(CustomTexts, N + 1);
   CustomTexts[N] := T;
   CustomTextSelectedIdx := N;
@@ -876,7 +1245,7 @@ begin
     RotateY(CustomTexts[i].RY);
     RotateZ(CustomTexts[i].RZ);
     Scale3D(CustomTexts[i].Scale);
-    Color3D($FFFFFF, 255, False, 0.0);
+    Color3D(Integer(CustomTexts[i].Color), 255, False, 0.0);
     SetTexture(0);
     Buf := PChar(S);
     Write3DExt(0, Buf);
@@ -885,22 +1254,269 @@ begin
   end;
 end;
 
+// =====================================================================
+//  Per-frame дедуплекс — флаг сбрасывается в DrawCheatMenu (раз в кадр).
+// =====================================================================
+var
+  CustomTextsRenderedThisFrame: Boolean = False;
+
+procedure RenderCustomTextsAndGizmoForFrame; stdcall;
+begin
+  if CustomTextsRenderedThisFrame then Exit;
+  CustomTextsRenderedThisFrame := True;
+  // Защита от любых проблем с матрицей/состоянием GL — не валим DLL.
+  try
+    DrawCustomTextsRA3;
+    UpdateGizmoFrameRA3;
+    DrawGizmoRA3;
+  except
+    // Игнорируем — рендер кабины должен продолжаться.
+  end;
+end;
+
 // ===========================================================================
 //  3D-ГИЗМО (Translate / Rotate / Scale)
 // ===========================================================================
 
+// Цвет хэндла гизмо: ярко-синий при активном drag'е (мышь зажата на оси),
+// осветлённый при hover, стандартный по оси иначе.
+// Серия свапов курсор-feedback'а: жёлтый↔синий, потом зел↔син, потом снова син↔зел.
+// Чистый итог = только первый свап: drag = синий, X = красный, Y = зелёный, Z = синий.
+// Статические цвета осей не трогаем.
+// COLORREF: low byte = R, mid = G, high = B.
 function GizmoAxisColor(AxisIdx: Integer): Integer;
+var
+  IsActive, IsHover: Boolean;
 begin
-  if AxisIdx = GizmoActiveAxis then
-    Result := $00FFFF // жёлтый — активная ось
-  else
+  IsActive := GizmoDragging and (AxisIdx = GizmoActiveAxis);
+  IsHover  := (not GizmoDragging) and (AxisIdx = HoveredGizmoAxis);
+  if IsActive then
+  begin
+    Result := $FF0000; // ярко-синий — активная ось при drag
+    Exit;
+  end;
+  if IsHover then
+  begin
+    // Осветлённые подсветки — feedback ДО клика.
     case AxisIdx of
-      GIZMO_AXIS_X: Result := $0000FF; // красный (COLORREF: low byte = R)
-      GIZMO_AXIS_Y: Result := $00FF00; // зелёный
-      GIZMO_AXIS_Z: Result := $FF0000; // синий
+      GIZMO_AXIS_X:    Result := $7F7FFF; // светлый красный
+      GIZMO_AXIS_Y:    Result := $7FFF7F; // светлый зелёный
+      GIZMO_AXIS_Z:    Result := $FFCF7F; // светлый синий
+      GIZMO_AXIS_VIEW: Result := $FFFFFF; // белый
     else
       Result := $FFFFFF;
     end;
+    Exit;
+  end;
+  case AxisIdx of
+    GIZMO_AXIS_X:    Result := $0000FF; // красный
+    GIZMO_AXIS_Y:    Result := $00FF00; // зелёный
+    GIZMO_AXIS_Z:    Result := $FF0000; // синий
+    GIZMO_AXIS_VIEW: Result := $A0A0A0; // серый — пассивный центр
+  else
+    Result := $FFFFFF;
+  end;
+end;
+
+// Чтение модификаторов — Shift = snap, Ctrl = precision (раз в 5 медленнее).
+function GizmoShiftHeld: Boolean;
+begin
+  Result := (GetAsyncKeyState(VK_SHIFT) and $8000) <> 0;
+end;
+
+function GizmoCtrlHeld: Boolean;
+begin
+  Result := (GetAsyncKeyState(VK_CONTROL) and $8000) <> 0;
+end;
+
+// Округление к ближайшему кратному Step. Step должен быть > 0.
+function GizmoSnap(V, Step: Single): Single;
+begin
+  if Step <= 0 then Result := V
+  else Result := Round(V / Step) * Step;
+end;
+
+// Безопасное форматирование Single для overlay: всегда DecimalSeparator='.',
+// округление до Decimals цифр, без Format()-специфичного парсинга.
+// На русской локали Format('%.3f', [0.5]) даёт '0,5' и в каких-то местах
+// дальше парсится через StrToFloat → EConvertError. Здесь мы всё контролируем.
+function FormatGizmoFloat(V: Single; Decimals: Integer): string;
+var
+  OldSep: Char;
+begin
+  OldSep := DecimalSeparator;
+  try
+    DecimalSeparator := '.';
+    // FloatToStrF не использует DecimalSeparator в Delphi 2007 в некоторых сборках,
+    // а Format(%f) — использует. На всякий случай и руками.
+    if Decimals < 0 then Decimals := 0;
+    if Decimals > 8 then Decimals := 8;
+    Result := FloatToStrF(V, ffFixed, 15, Decimals);
+    // Подстраховка — на случай если FloatToStrF всё-таки вписал запятую.
+    if Pos(',', Result) > 0 then
+      Result := StringReplace(Result, ',', '.', [rfReplaceAll]);
+  finally
+    DecimalSeparator := OldSep;
+  end;
+end;
+
+// "+0.123" / "-0.456" — подписанная версия для углов/смещений.
+function FormatGizmoFloatSigned(V: Single; Decimals: Integer): string;
+begin
+  if V >= 0 then
+    Result := '+' + FormatGizmoFloat(V, Decimals)
+  else
+    Result := FormatGizmoFloat(V, Decimals);
+end;
+
+// 2D-оверлей гизмо: значение во время drag + индикатор арки для rotate +
+// маленький значок текущего режима. Рисуется в отдельном Begin2D/End2D,
+// после того как 3D-часть гизмо уже отрисована. Безопасно вызывать всегда —
+// сам решает, что показывать. Полностью обёрнут в try/except, чтобы любой
+// сбой форматирования / OpenGL-операции не валил DLL.
+procedure DrawGizmoOverlay2D;
+var
+  Idx: Integer;
+  T: TCustomText3D;
+  S, DegSym: string;
+  TX, TY: Integer;
+  StartX, StartY, CurX, CurY: Integer;
+  Ang0, Ang1, ArcA, ArcB: Single;
+  ArcSegments, i: Integer;
+  ModeLetter: string;
+  ModeColor: Integer;
+  PadX, PadY: Integer;
+  Begin2DActive: Boolean;
+begin
+  if not GizmoCacheValid then Exit;
+  Idx := CustomTextSelectedIdx;
+  if (Idx < 0) or (Idx >= Length(CustomTexts)) then Exit;
+  T := CustomTexts[Idx];
+  // Знак градуса берём как одиночный байт CP1251 (B0). Если шрифт не умеет —
+  // в любом случае не упадёт.
+  DegSym := Chr(176);
+  Begin2DActive := False;
+
+  try
+    Begin2D;
+    Begin2DActive := True;
+
+    // 1) Лейбл режима у origin'а — постоянная подсказка, что сейчас активно.
+    case GizmoMode of
+      gmTranslate: begin ModeLetter := 'MOVE';   ModeColor := $00BFFF; end;
+      gmRotate:    begin ModeLetter := 'ROTATE'; ModeColor := $00FF80; end;
+      gmScale:     begin ModeLetter := 'SCALE';  ModeColor := $FF80FF; end;
+    else
+      ModeLetter := ''; ModeColor := $FFFFFF;
+    end;
+    if ModeLetter <> '' then
+    begin
+      TX := GizmoOriginScreen.X + 18;
+      TY := GizmoOriginScreen.Y - 26;
+      DrawText2D(0, TX + 1, TY + 1, ModeLetter, $000000, 100, 0.55);
+      DrawText2D(0, TX,     TY,     ModeLetter, ModeColor, 200, 0.55);
+    end;
+
+    // 2) Индикатор арки и стартовой/текущей радиальных линий — только во время rotate-drag.
+    if GizmoDragging and (GizmoMode = gmRotate) and
+       (GizmoActiveAxis >= 0) and (GizmoActiveAxis <= 2) then
+    begin
+      StartX := GizmoOriginScreen.X + Round(Cos(GizmoRotStartAngle) * 57.2);
+      StartY := GizmoOriginScreen.Y + Round(Sin(GizmoRotStartAngle) * 57.2);
+      Ang0 := GizmoRotStartAngle;
+      Ang1 := Ang0 + GizmoRotAccum;
+      CurX := GizmoOriginScreen.X + Round(Cos(Ang1) * 57.2);
+      CurY := GizmoOriginScreen.Y + Round(Sin(Ang1) * 57.2);
+
+      // Заливка арки — лучи, расходящиеся от origin'а; полупрозрачный синий.
+      ArcSegments := 48;
+      ArcA := Ang0;
+      ArcB := Ang1;
+      // Если оборотов больше одного — нормализуем визуально к одному обороту,
+      // иначе арка превратится в кашу. Сама величина угла останется честной в тексте.
+      if Abs(ArcB - ArcA) > 2 * PI then
+      begin
+        if ArcB > ArcA then ArcB := ArcA + 2 * PI - 0.001
+        else ArcB := ArcA - 2 * PI + 0.001;
+      end;
+      glDisable(GL_TEXTURE_2D);
+      glEnable(GL_BLEND);
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      glColor4ub($00, $00, $FF, 70); // синий (свап вернул из зелёного)
+      glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(GizmoOriginScreen.X + 0.0, GizmoOriginScreen.Y + 0.0);
+        for i := 0 to ArcSegments do
+        begin
+          Ang0 := ArcA + (ArcB - ArcA) * i / ArcSegments;
+          glVertex2f(
+            GizmoOriginScreen.X + Cos(Ang0) * 57.2,
+            GizmoOriginScreen.Y + Sin(Ang0) * 57.2);
+        end;
+      glEnd;
+      glColor4ub(255, 255, 255, 255);
+      glEnable(GL_TEXTURE_2D);
+
+      // Лучи: стартовый — белый, текущий — синий (свап вернул из зелёного).
+      DrawLine2D(GizmoOriginScreen.X, GizmoOriginScreen.Y, StartX, StartY, $FFFFFF, 180, 1.5, True);
+      DrawLine2D(GizmoOriginScreen.X, GizmoOriginScreen.Y, CurX,   CurY,   $FF0000, 230, 2.0, True);
+    end;
+
+    // 3) Численный readout во время drag — рядом с курсором мыши.
+    if GizmoDragging then
+    begin
+      S := '';
+      case GizmoMode of
+        gmTranslate:
+          case GizmoActiveAxis of
+            GIZMO_AXIS_X:    S := 'X: '   + FormatGizmoFloat(T.X, 4);
+            GIZMO_AXIS_Y:    S := 'Y: '   + FormatGizmoFloat(T.Y, 4);
+            GIZMO_AXIS_Z:    S := 'Z: '   + FormatGizmoFloat(T.Z, 4);
+            GIZMO_AXIS_VIEW: S := 'XYZ: ' + FormatGizmoFloat(T.X, 3) + ' / ' +
+                                            FormatGizmoFloat(T.Y, 3) + ' / ' +
+                                            FormatGizmoFloat(T.Z, 3);
+          end;
+        gmRotate:
+          // Свап Y↔Z: показываем тот угол, который реально меняется кольцом.
+          case GizmoActiveAxis of
+            GIZMO_AXIS_X: S := 'RX: ' + FormatGizmoFloatSigned(T.RX, 1) + DegSym;
+            GIZMO_AXIS_Y: S := 'RZ: ' + FormatGizmoFloatSigned(T.RZ, 1) + DegSym;
+            GIZMO_AXIS_Z: S := 'RY: ' + FormatGizmoFloatSigned(T.RY, 1) + DegSym;
+          end;
+        gmScale:
+          S := 'Scale: ' + FormatGizmoFloat(T.Scale, 3) + 'x';
+      end;
+      if GizmoShiftHeld then S := S + '   [snap]';
+      if GizmoCtrlHeld  then S := S + '   [precise]';
+
+      if S <> '' then
+      begin
+        TX := Round(MoveXcoord) + 18;
+        TY := Round(MoveYcoord) + 18;
+        // Полупрозрачный плашечный фон под текст для читаемости.
+        PadX := 6; PadY := 4;
+        DrawRectangle2D(TX - PadX, TY - PadY,
+          Length(S) * 8 + PadX * 2, 18 + PadY, $000000, 160, True);
+        DrawRectangle2D(TX - PadX, TY - PadY,
+          Length(S) * 8 + PadX * 2, 18 + PadY, $FFFFFF, 60, False);
+        DrawText2D(0, TX + 1, TY + 1, S, $000000, 200, 0.65);
+        DrawText2D(0, TX,     TY,     S, $FFFFFF, 255, 0.65);
+      end;
+    end
+    else if HoveredGizmoAxis <> GIZMO_AXIS_NONE then
+    begin
+      // Лёгкая подсказка при наведении (без drag).
+      TX := GizmoOriginScreen.X + 18;
+      TY := GizmoOriginScreen.Y + 6;
+      DrawText2D(0, TX + 1, TY + 1, 'Shift=snap  Ctrl=precise  Esc=cancel',
+        $000000, 90, 0.45);
+      DrawText2D(0, TX,     TY,     'Shift=snap  Ctrl=precise  Esc=cancel',
+        $C0C0C0, 180, 0.45);
+    end;
+  except
+    // Любой сбой в overlay — глотаем, чтобы не валить рендер кабины.
+    // Это чисто косметика, без неё гизмо всё равно работает.
+  end;
+  if Begin2DActive then End2D;
 end;
 
 procedure DrawGizmoRA3;
@@ -910,6 +1526,9 @@ var
   i: Integer;
   Theta, R, BoxSize: Single;
   RingV: array[0..GIZMO_RING_SAMPLES - 1] of TVertex;
+  CenterStr: string;
+  CenterLen: Integer;
+  HalfWWorld, HalfHWorld: Single;
 begin
   // ВАЖНО: гизмо рисуется всегда, когда есть выбранный текст — даже без F12-меню,
   // чтобы можно было редактировать «как РА-3 контроллер».
@@ -924,7 +1543,28 @@ begin
   BeginObj3D;
   glDisable(GL_LIGHTING);
   glDisable(GL_DEPTH_TEST);
+
+  // ---- Origin гизмо = визуальный центр текста ----
+  // Берём текущее значение источника (а не последний кадр), чтобы центр
+  // двигался при изменении длины строки. Эвристика на ширину/высоту глифа:
+  //   глиф ≈ 0.55 em wide, 0.7 em tall (em = font baseline-to-baseline ~1).
+  // После Scale3D в DrawCustomTextsRA3 это превращается в локальные единицы кабины.
+  // Здесь Scale3D не применяем (гизмо не должен дрейфовать в размере вместе
+  // с текстом), а сразу даём оффсет в world-units.
+  CenterStr := GetKlubSourceValue(T.Source);
+  CenterLen := Length(CenterStr);
+  if CenterLen < 1 then CenterLen := 1;
+  HalfWWorld := CenterLen * 0.55 * 0.5 * T.Scale; // half width в world-units
+  HalfHWorld := 0.35 * T.Scale;                   // half height (≈ cap-height/2)
+
+  // Матричный трюк: T(anchor) * R * T(local_offset) * R^-1.
+  // → origin сдвинут на R * (HalfW, HalfH, 0), а оси остаются мировыми XYZ.
+  // Это сохраняет совместимость с математикой drag (она в world-XYZ).
   Position3D(T.X, T.Y, T.Z);
+  RotateX(T.RX); RotateY(T.RY); RotateZ(T.RZ);
+  glTranslatef(HalfWWorld, HalfHWorld, 0);
+  RotateZ(-T.RZ); RotateY(-T.RY); RotateX(-T.RX);
+
   SetTexture(0);
 
   // -----------------------------------------------------------------------
@@ -974,40 +1614,64 @@ begin
   // -----------------------------------------------------------------------
   if (GizmoMode = gmTranslate) or (GizmoMode = gmScale) then
   begin
-    // Линии-оси
+    // Линии-оси (чуть толще оригинальных — лучше видно издалека).
     Color3D(GizmoAxisColor(GIZMO_AXIS_X), 255, False, 0.0);
-    DrawLine(0, 0, 0, GIZMO_ARROW_LEN, 0, 0, 3.0, True);
+    DrawLine(0, 0, 0, GIZMO_ARROW_LEN, 0, 0, 3.5, True);
     Color3D(GizmoAxisColor(GIZMO_AXIS_Y), 255, False, 0.0);
-    DrawLine(0, 0, 0, 0, GIZMO_ARROW_LEN, 0, 3.0, True);
+    DrawLine(0, 0, 0, 0, GIZMO_ARROW_LEN, 0, 3.5, True);
     Color3D(GizmoAxisColor(GIZMO_AXIS_Z), 255, False, 0.0);
-    DrawLine(0, 0, 0, 0, 0, GIZMO_ARROW_LEN, 3.0, True);
+    DrawLine(0, 0, 0, 0, 0, GIZMO_ARROW_LEN, 3.5, True);
 
     // Кубики на концах. glPushMatrix/glPopMatrix вокруг каждого, чтобы
     // glTranslatef'ы НЕ суммировались (DrawCube сам делает push/scale/pop).
     if GizmoMode = gmTranslate then BoxSize := GIZMO_BOX_TRANSLATE
     else BoxSize := GIZMO_BOX_SCALE;
 
+    // Активный/hover-кубик чуть больше — даём тактильный feedback.
     Color3D(GizmoAxisColor(GIZMO_AXIS_X), 255, False, 0.0);
     glPushMatrix;
       glTranslatef(GIZMO_ARROW_LEN, 0, 0);
-      DrawCube(BoxSize, BoxSize, BoxSize);
+      if (GizmoActiveAxis = GIZMO_AXIS_X) or (HoveredGizmoAxis = GIZMO_AXIS_X) then
+        DrawCube(BoxSize * 1.35, BoxSize * 1.35, BoxSize * 1.35)
+      else
+        DrawCube(BoxSize, BoxSize, BoxSize);
     glPopMatrix;
 
     Color3D(GizmoAxisColor(GIZMO_AXIS_Y), 255, False, 0.0);
     glPushMatrix;
       glTranslatef(0, GIZMO_ARROW_LEN, 0);
-      DrawCube(BoxSize, BoxSize, BoxSize);
+      if (GizmoActiveAxis = GIZMO_AXIS_Y) or (HoveredGizmoAxis = GIZMO_AXIS_Y) then
+        DrawCube(BoxSize * 1.35, BoxSize * 1.35, BoxSize * 1.35)
+      else
+        DrawCube(BoxSize, BoxSize, BoxSize);
     glPopMatrix;
 
     Color3D(GizmoAxisColor(GIZMO_AXIS_Z), 255, False, 0.0);
     glPushMatrix;
       glTranslatef(0, 0, GIZMO_ARROW_LEN);
-      DrawCube(BoxSize, BoxSize, BoxSize);
+      if (GizmoActiveAxis = GIZMO_AXIS_Z) or (HoveredGizmoAxis = GIZMO_AXIS_Z) then
+        DrawCube(BoxSize * 1.35, BoxSize * 1.35, BoxSize * 1.35)
+      else
+        DrawCube(BoxSize, BoxSize, BoxSize);
     glPopMatrix;
+
+    // Центральный «свободный» хэндл — только в режиме translate.
+    // В scale он избыточен (скейл уже uniform по всем осям).
+    if GizmoMode = gmTranslate then
+    begin
+      Color3D(GizmoAxisColor(GIZMO_AXIS_VIEW), 255, False, 0.0);
+      glPushMatrix;
+        if (GizmoActiveAxis = GIZMO_AXIS_VIEW) or (HoveredGizmoAxis = GIZMO_AXIS_VIEW) then
+          DrawCube(GIZMO_BOX_CENTER * 1.35, GIZMO_BOX_CENTER * 1.35, GIZMO_BOX_CENTER * 1.35)
+        else
+          DrawCube(GIZMO_BOX_CENTER, GIZMO_BOX_CENTER, GIZMO_BOX_CENTER);
+      glPopMatrix;
+    end;
   end
   else // gmRotate
   begin
     R := GIZMO_ROTATE_RADIUS;
+    // Активное/hover-кольцо толще — лучше видно, что выбрано.
     glLineWidth(2.0);
 
     // Кольцо X (YZ)
@@ -1017,6 +1681,10 @@ begin
       RingV[i].X := 0; RingV[i].Y := R * Cos(Theta); RingV[i].Z := R * Sin(Theta);
     end;
     Color3D(GizmoAxisColor(GIZMO_AXIS_X), 255, False, 0.0);
+    if (GizmoActiveAxis = GIZMO_AXIS_X) or (HoveredGizmoAxis = GIZMO_AXIS_X) then
+      glLineWidth(3.5)
+    else
+      glLineWidth(2.0);
     glBegin(GL_LINE_LOOP);
       for i := 0 to GIZMO_RING_SAMPLES - 1 do
         glVertex3f(RingV[i].X, RingV[i].Y, RingV[i].Z);
@@ -1029,6 +1697,10 @@ begin
       RingV[i].X := R * Cos(Theta); RingV[i].Y := 0; RingV[i].Z := R * Sin(Theta);
     end;
     Color3D(GizmoAxisColor(GIZMO_AXIS_Y), 255, False, 0.0);
+    if (GizmoActiveAxis = GIZMO_AXIS_Y) or (HoveredGizmoAxis = GIZMO_AXIS_Y) then
+      glLineWidth(3.5)
+    else
+      glLineWidth(2.0);
     glBegin(GL_LINE_LOOP);
       for i := 0 to GIZMO_RING_SAMPLES - 1 do
         glVertex3f(RingV[i].X, RingV[i].Y, RingV[i].Z);
@@ -1041,6 +1713,10 @@ begin
       RingV[i].X := R * Cos(Theta); RingV[i].Y := R * Sin(Theta); RingV[i].Z := 0;
     end;
     Color3D(GizmoAxisColor(GIZMO_AXIS_Z), 255, False, 0.0);
+    if (GizmoActiveAxis = GIZMO_AXIS_Z) or (HoveredGizmoAxis = GIZMO_AXIS_Z) then
+      glLineWidth(3.5)
+    else
+      glLineWidth(2.0);
     glBegin(GL_LINE_LOOP);
       for i := 0 to GIZMO_RING_SAMPLES - 1 do
         glVertex3f(RingV[i].X, RingV[i].Y, RingV[i].Z);
@@ -1054,6 +1730,10 @@ begin
   EndObj3D;
 
   GizmoCacheValid := True;
+
+  // 2D-оверлей: цифры/арка/подсказки. Безопасно вызывать после EndObj3D —
+  // Begin2D/End2D сами восстанавливают состояние GL.
+  DrawGizmoOverlay2D;
 end;
 
 // Квадрат расстояния от точки до отрезка в 2D — для широкого пика по оси.
@@ -1094,14 +1774,27 @@ begin
   Result := Sqr(P.X - X) + Sqr(P.Y - Y);
 end;
 
-// Какую ось гизмо мышь сейчас «накрывает». Translate/Scale — пик по линии origin→tip.
+// Какую ось гизмо мышь сейчас «накрывает». Приоритет: центральный хэндл
+// (только в translate) → оси/кольца. Translate/Scale — пик по линии origin→tip.
 // Rotate — пик по ближайшей точке кольца (32 семпла на каждое).
 function PickGizmoAxis(MX, MY: Integer): Integer;
 var
-  i, j, d, bestD, best: Integer;
+  i, j, d, bestD, best, dCenter: Integer;
 begin
   Result := GIZMO_AXIS_NONE;
   if not GizmoCacheValid then Exit;
+
+  // Центр имеет приоритет — он внутри пересечения всех осей и должен
+  // быть кликабельным даже если пиксель формально ближе к началу оси.
+  if GizmoMode = gmTranslate then
+  begin
+    dCenter := PointDistSq(GizmoOriginScreen, MX, MY);
+    if dCenter <= GIZMO_PICK_CENTER_R * GIZMO_PICK_CENTER_R then
+    begin
+      Result := GIZMO_AXIS_VIEW;
+      Exit;
+    end;
+  end;
 
   best := GIZMO_AXIS_NONE;
   bestD := GIZMO_PICK_RADIUS * GIZMO_PICK_RADIUS;
@@ -1147,8 +1840,20 @@ begin
   GizmoActiveAxis := AxisIdx;
   GizmoDragMouseStartX := MX;
   GizmoDragMouseStartY := MY;
+
+  // Полный снимок трансформа на начало drag — чтобы Esc мог откатить всё.
+  GizmoCancelX     := CustomTexts[Idx].X;
+  GizmoCancelY     := CustomTexts[Idx].Y;
+  GizmoCancelZ     := CustomTexts[Idx].Z;
+  GizmoCancelRX    := CustomTexts[Idx].RX;
+  GizmoCancelRY    := CustomTexts[Idx].RY;
+  GizmoCancelRZ    := CustomTexts[Idx].RZ;
+  GizmoCancelScale := CustomTexts[Idx].Scale;
+
   if GizmoMode = gmTranslate then
   begin
+    // X/Y/Z по обычной оси либо по центру (free-move) — и в том и в другом
+    // случае запоминаем стартовые позиции по всем трём осям.
     GizmoDragValueStart[0] := CustomTexts[Idx].X;
     GizmoDragValueStart[1] := CustomTexts[Idx].Y;
     GizmoDragValueStart[2] := CustomTexts[Idx].Z;
@@ -1159,18 +1864,51 @@ begin
     GizmoDragValueStart[1] := CustomTexts[Idx].RY;
     GizmoDragValueStart[2] := CustomTexts[Idx].RZ;
     // Инициализация angular tracking: запоминаем угол от центра гизмо до курсора.
-    GizmoRotPrevAngle := ArcTan2(MY - GizmoOriginScreen.Y, MX - GizmoOriginScreen.X);
+    GizmoRotStartAngle := ArcTan2(MY - GizmoOriginScreen.Y, MX - GizmoOriginScreen.X);
+    GizmoRotPrevAngle := GizmoRotStartAngle;
     GizmoRotAccum := 0.0;
   end
-  else
+  else // gmScale
     GizmoDragScaleStart := CustomTexts[Idx].Scale;
+end;
+
+// Возвращает мировой сдвиг по оси axis_idx (0/1/2) для текущего курсора.
+// Считает signed-projection экранного дельта (DX,DY) на screen-axis.
+// Применяет Ctrl-precision и Shift-snap.
+function GizmoTranslateDelta(AxisIdx, DX, DY: Integer): Single;
+var
+  AxisVecX, AxisVecY: Single;
+  AxisLenSq, DotI: Single;
+  WorldDelta: Single;
+begin
+  Result := 0.0;
+  if (AxisIdx < 0) or (AxisIdx > 2) then Exit;
+  AxisVecX := GizmoTipScreen[AxisIdx].X - GizmoOriginScreen.X;
+  AxisVecY := GizmoTipScreen[AxisIdx].Y - GizmoOriginScreen.Y;
+  AxisLenSq := AxisVecX * AxisVecX + AxisVecY * AxisVecY;
+  if AxisLenSq < 4 then Exit;
+  DotI := DX * AxisVecX + DY * AxisVecY;
+  // pixels_along / axis_len, затем * world_per_pixel = (1/axis_len) * GIZMO_ARROW_LEN
+  WorldDelta := (DotI / AxisLenSq) * GIZMO_ARROW_LEN;
+  if GizmoCtrlHeld  then WorldDelta := WorldDelta * GIZMO_PRECISION_FACTOR;
+  if GizmoShiftHeld then WorldDelta := GizmoSnap(WorldDelta, GIZMO_SNAP_TRANSLATE);
+  Result := WorldDelta;
 end;
 
 procedure GizmoApplyDrag(MX, MY: Integer);
 var
   Idx: Integer;
-  AxisVecX, AxisVecY, AxisLenSq, DotI, DX, DY: Integer;
-  AxisLen, PixelsAlongAxis, WorldDelta, AngleDelta, ScaleFactor: Single;
+  DX, DY: Integer;
+  WorldDelta, AngleDelta, ScaleFactor: Single;
+  AxisVecX, AxisVecY, AxisLenSq, DotI, PixelsAlongAxis: Single;
+  // Для view-handle (free-2D translate): выбираем 2 наиболее «экранных» оси
+  // (с наибольшей длиной screen-проекции), решаем 2x2 систему, третья = 0.
+  Sx0, Sy0, Sx1, Sy1, Sx2, Sy2: Single;
+  Len0, Len1, Len2: Single;
+  AxA, AxB, AxSkip: Integer;
+  Det, A, B: Single;
+  DeltaA, DeltaB: Single;
+  DAxis: array[0..2] of Single;
 begin
   Idx := CustomTextSelectedIdx;
   if (GizmoActiveAxis = GIZMO_AXIS_NONE) or (Idx < 0) or (Idx >= Length(CustomTexts)) then Exit;
@@ -1182,18 +1920,70 @@ begin
   case GizmoMode of
     gmTranslate:
     begin
-      AxisVecX := GizmoTipScreen[GizmoActiveAxis].X - GizmoOriginScreen.X;
-      AxisVecY := GizmoTipScreen[GizmoActiveAxis].Y - GizmoOriginScreen.Y;
-      AxisLenSq := AxisVecX * AxisVecX + AxisVecY * AxisVecY;
-      if AxisLenSq < 4 then Exit;
-      AxisLen := Sqrt(AxisLenSq);
-      DotI := DX * AxisVecX + DY * AxisVecY;
-      PixelsAlongAxis := DotI / AxisLen;
-      WorldDelta := (PixelsAlongAxis / AxisLen) * GIZMO_ARROW_LEN;
-      case GizmoActiveAxis of
-        GIZMO_AXIS_X: CustomTexts[Idx].X := GizmoDragValueStart[0] + WorldDelta;
-        GIZMO_AXIS_Y: CustomTexts[Idx].Y := GizmoDragValueStart[1] + WorldDelta;
-        GIZMO_AXIS_Z: CustomTexts[Idx].Z := GizmoDragValueStart[2] + WorldDelta;
+      if GizmoActiveAxis = GIZMO_AXIS_VIEW then
+      begin
+        // Free-move в плоскости экрана: пропускаем ось, наиболее
+        // «уходящую от камеры» (с наименьшей длиной screen-проекции),
+        // решаем 2x2-систему по двум оставшимся.
+        Sx0 := GizmoTipScreen[0].X - GizmoOriginScreen.X;
+        Sy0 := GizmoTipScreen[0].Y - GizmoOriginScreen.Y;
+        Sx1 := GizmoTipScreen[1].X - GizmoOriginScreen.X;
+        Sy1 := GizmoTipScreen[1].Y - GizmoOriginScreen.Y;
+        Sx2 := GizmoTipScreen[2].X - GizmoOriginScreen.X;
+        Sy2 := GizmoTipScreen[2].Y - GizmoOriginScreen.Y;
+        Len0 := Sx0 * Sx0 + Sy0 * Sy0;
+        Len1 := Sx1 * Sx1 + Sy1 * Sy1;
+        Len2 := Sx2 * Sx2 + Sy2 * Sy2;
+        if (Len0 <= Len1) and (Len0 <= Len2) then
+        begin AxSkip := 0; AxA := 1; AxB := 2; end
+        else if (Len1 <= Len0) and (Len1 <= Len2) then
+        begin AxSkip := 1; AxA := 0; AxB := 2; end
+        else
+        begin AxSkip := 2; AxA := 0; AxB := 1; end;
+
+        // 2x2: [SxA SxB; SyA SyB] * [a b]' = [DX DY]'
+        Det := (GizmoTipScreen[AxA].X - GizmoOriginScreen.X) *
+               (GizmoTipScreen[AxB].Y - GizmoOriginScreen.Y) -
+               (GizmoTipScreen[AxA].Y - GizmoOriginScreen.Y) *
+               (GizmoTipScreen[AxB].X - GizmoOriginScreen.X);
+        if Abs(Det) < 4.0 then
+        begin
+          // Выродившийся случай (две оси почти параллельны) — fallback на одну ось.
+          DeltaA := GizmoTranslateDelta(AxA, DX, DY);
+          DAxis[AxA] := DeltaA; DAxis[AxB] := 0; DAxis[AxSkip] := 0;
+        end
+        else
+        begin
+          A := (DX * (GizmoTipScreen[AxB].Y - GizmoOriginScreen.Y) -
+                DY * (GizmoTipScreen[AxB].X - GizmoOriginScreen.X)) / Det;
+          B := (DY * (GizmoTipScreen[AxA].X - GizmoOriginScreen.X) -
+                DX * (GizmoTipScreen[AxA].Y - GizmoOriginScreen.Y)) / Det;
+          DeltaA := A * GIZMO_ARROW_LEN;
+          DeltaB := B * GIZMO_ARROW_LEN;
+          if GizmoCtrlHeld then
+          begin
+            DeltaA := DeltaA * GIZMO_PRECISION_FACTOR;
+            DeltaB := DeltaB * GIZMO_PRECISION_FACTOR;
+          end;
+          if GizmoShiftHeld then
+          begin
+            DeltaA := GizmoSnap(DeltaA, GIZMO_SNAP_TRANSLATE);
+            DeltaB := GizmoSnap(DeltaB, GIZMO_SNAP_TRANSLATE);
+          end;
+          DAxis[AxA] := DeltaA; DAxis[AxB] := DeltaB; DAxis[AxSkip] := 0;
+        end;
+        CustomTexts[Idx].X := GizmoDragValueStart[0] + DAxis[0];
+        CustomTexts[Idx].Y := GizmoDragValueStart[1] + DAxis[1];
+        CustomTexts[Idx].Z := GizmoDragValueStart[2] + DAxis[2];
+      end
+      else
+      begin
+        WorldDelta := GizmoTranslateDelta(GizmoActiveAxis, DX, DY);
+        case GizmoActiveAxis of
+          GIZMO_AXIS_X: CustomTexts[Idx].X := GizmoDragValueStart[0] + WorldDelta;
+          GIZMO_AXIS_Y: CustomTexts[Idx].Y := GizmoDragValueStart[1] + WorldDelta;
+          GIZMO_AXIS_Z: CustomTexts[Idx].Z := GizmoDragValueStart[2] + WorldDelta;
+        end;
       end;
     end;
     gmRotate:
@@ -1204,25 +1994,81 @@ begin
       AngleDelta := ArcTan2(MY - GizmoOriginScreen.Y, MX - GizmoOriginScreen.X) - GizmoRotPrevAngle;
       if AngleDelta >  PI then AngleDelta := AngleDelta - 2 * PI;
       if AngleDelta < -PI then AngleDelta := AngleDelta + 2 * PI;
+      // Ctrl: дельта медленнее на каждый тик — мышь движется быстрее, поворот тонкий.
+      if GizmoCtrlHeld then AngleDelta := AngleDelta * GIZMO_PRECISION_FACTOR;
       GizmoRotAccum := GizmoRotAccum + AngleDelta;
       GizmoRotPrevAngle := ArcTan2(MY - GizmoOriginScreen.Y, MX - GizmoOriginScreen.X);
       // Преобразуем накопленный угол в градусы — наши RX/RY/RZ в градусах.
       AngleDelta := GizmoRotAccum * 180.0 / PI;
+      // Snap: применяется к итоговому offset'у, а не к каждому приращению,
+      // иначе при Ctrl/мелких движениях ничего не двигалось бы.
+      if GizmoShiftHeld then AngleDelta := GizmoSnap(AngleDelta, GIZMO_SNAP_ROTATE);
+      // Свап ротации Y↔Z: клик по зелёному (Y) кольцу крутит RZ, по синему (Z)
+      // кольцу — RY. Это даёт ожидаемое визуальное поведение для текстов
+      // с базовым RX = -90 (когда текст лежит на полу кабины).
       case GizmoActiveAxis of
         GIZMO_AXIS_X: CustomTexts[Idx].RX := GizmoDragValueStart[0] + AngleDelta;
-        GIZMO_AXIS_Y: CustomTexts[Idx].RY := GizmoDragValueStart[1] + AngleDelta;
-        GIZMO_AXIS_Z: CustomTexts[Idx].RZ := GizmoDragValueStart[2] + AngleDelta;
+        GIZMO_AXIS_Y: CustomTexts[Idx].RZ := GizmoDragValueStart[2] + AngleDelta;
+        GIZMO_AXIS_Z: CustomTexts[Idx].RY := GizmoDragValueStart[1] + AngleDelta;
       end;
     end;
     gmScale:
     begin
-      ScaleFactor := 1.0 + DX * 0.005;
+      // Двойной режим:
+      //  • signed projection вдоль ScreenAxis выбранной оси
+      //    (drag tip-кубика наружу = больше, внутрь к центру = меньше).
+      //  • с Ctrl/Shift — поведение «как у translate».
+      // ScaleFactor = 1 + проекция_в_пикс / длина_оси_в_пикс
+      //             = 1 + DotI / AxisLenSq
+      if (GizmoActiveAxis >= 0) and (GizmoActiveAxis <= 2) then
+      begin
+        AxisVecX := GizmoTipScreen[GizmoActiveAxis].X - GizmoOriginScreen.X;
+        AxisVecY := GizmoTipScreen[GizmoActiveAxis].Y - GizmoOriginScreen.Y;
+        AxisLenSq := AxisVecX * AxisVecX + AxisVecY * AxisVecY;
+        if AxisLenSq < 4 then Exit;
+        DotI := DX * AxisVecX + DY * AxisVecY;
+        PixelsAlongAxis := DotI / AxisLenSq;
+        ScaleFactor := 1.0 + PixelsAlongAxis;
+      end
+      else
+      begin
+        // Fallback (на всякий случай) — старая горизонтальная логика.
+        ScaleFactor := 1.0 + DX * 0.005;
+      end;
+
+      if GizmoCtrlHeld then
+        ScaleFactor := 1.0 + (ScaleFactor - 1.0) * GIZMO_PRECISION_FACTOR;
+      if GizmoShiftHeld then
+        ScaleFactor := GizmoSnap(ScaleFactor, GIZMO_SNAP_SCALE);
       if ScaleFactor < 0.05 then ScaleFactor := 0.05;
       CustomTexts[Idx].Scale := GizmoDragScaleStart * ScaleFactor;
       if CustomTexts[Idx].Scale < 0.0005 then CustomTexts[Idx].Scale := 0.0005;
     end;
   end;
   SyncSlidersFromSelected;
+end;
+
+// Откат drag'а — восстанавливаем все поля по снэпшоту, который сделали
+// в GizmoStartDrag. Зовётся из UpdateGizmoFrameRA3 при нажатии Esc.
+procedure GizmoCancelDrag;
+var
+  Idx: Integer;
+begin
+  if not GizmoDragging then Exit;
+  Idx := CustomTextSelectedIdx;
+  if (Idx >= 0) and (Idx < Length(CustomTexts)) then
+  begin
+    CustomTexts[Idx].X     := GizmoCancelX;
+    CustomTexts[Idx].Y     := GizmoCancelY;
+    CustomTexts[Idx].Z     := GizmoCancelZ;
+    CustomTexts[Idx].RX    := GizmoCancelRX;
+    CustomTexts[Idx].RY    := GizmoCancelRY;
+    CustomTexts[Idx].RZ    := GizmoCancelRZ;
+    CustomTexts[Idx].Scale := GizmoCancelScale;
+    SyncSlidersFromSelected;
+  end;
+  GizmoDragging := False;
+  GizmoActiveAxis := GIZMO_AXIS_NONE;
 end;
 
 // Per-frame state machine — копия паттерна РА-3 контроллера. Вызывается из RA3.DrawRA3
@@ -1232,7 +2078,7 @@ end;
 procedure UpdateGizmoFrameRA3;
 var
   MX, MY: Integer;
-  LMB: Boolean;
+  LMB, EscNow: Boolean;
 begin
   // Нет выбранного текста — погасить всё.
   if (CustomTextSelectedIdx < 0) or (CustomTextSelectedIdx >= Length(CustomTexts)) then
@@ -1249,6 +2095,7 @@ begin
       GizmoPatchActive := False;
     end;
     GizmoLastLMB := False;
+    GizmoLastEsc := False;
     Exit;
   end;
 
@@ -1262,13 +2109,25 @@ begin
   MY := Round(MoveYcoord);
   HoveredGizmoAxis := PickGizmoAxis(MX, MY);
   LMB := (GetAsyncKeyState(VK_LBUTTON) and $8000) <> 0;
+  EscNow := (GetAsyncKeyState(VK_ESCAPE) and $8000) <> 0;
 
-  // Rising edge → старт drag'а (если не над окном меню).
+  // Esc во время drag → откат.
+  if GizmoDragging and EscNow and (not GizmoLastEsc) then
+  begin
+    GizmoCancelDrag;
+    SaveConfig;
+    GizmoLastEsc := EscNow;
+    GizmoLastLMB := LMB;
+    Exit;
+  end;
+  GizmoLastEsc := EscNow;
+
+  // Rising edge → старт drag'а (если не над окном меню и не в Dev Editor'е).
   if (not GizmoDragging) and LMB and (not GizmoLastLMB) and (HoveredGizmoAxis <> GIZMO_AXIS_NONE) then
   begin
-    if MenuVisible and PointInAnyMenuWindow(MX, MY) then
+    if (MenuVisible and PointInAnyMenuWindow(MX, MY)) or DevEditorVisible then
     begin
-      // Клик попал в окно меню — пускай его обработает менюшный код.
+      // Клик попал в UI — пускай его обработает соответствующий код.
     end
     else
     begin
@@ -1803,6 +2662,7 @@ begin
             CustomTexts[CTIdx].RZ      := 0.0;
             CustomTexts[CTIdx].Scale   := CUSTOM_TEXT_DEFAULT_SCALE;
             CustomTexts[CTIdx].Visible := True;
+            CustomTexts[CTIdx].Color   := $FFFFFF;
           end;
           if CustomTextSelectedIdx >= CTCount then
             CustomTextSelectedIdx := CTCount - 1;
@@ -1815,6 +2675,7 @@ begin
             if (SrcVal >= 0) and (SrcVal < KLUB_SOURCE_COUNT) then
               CustomTexts[CTIdx].Source := TKlubSource(SrcVal);
           end
+          else if CTPrefix = 'color'   then CustomTexts[CTIdx].Color   := Cardinal(StrToIntDef(Value, $FFFFFF))
           else if CTPrefix = 'x'       then CustomTexts[CTIdx].X       := ParseFloat(Value, 0.0)
           else if CTPrefix = 'y'       then CustomTexts[CTIdx].Y       := ParseFloat(Value, 0.0)
           else if CTPrefix = 'z'       then CustomTexts[CTIdx].Z       := ParseFloat(Value, 0.2)
@@ -1921,6 +2782,7 @@ begin
       WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_ry: ' + FormatValue(CustomTexts[I_SAVE].RY));
       WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_rz: ' + FormatValue(CustomTexts[I_SAVE].RZ));
       WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_scale: ' + FormatValue(CustomTexts[I_SAVE].Scale));
+      WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_color: ' + IntToStr(Integer(CustomTexts[I_SAVE].Color)));
       if CustomTexts[I_SAVE].Visible then
         WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_visible: 1')
       else
@@ -1934,6 +2796,15 @@ begin
       try CloseFile(F); except end;
       AddToLogFile(EngineLog, 'Ошибка сохранения конфига (CheatMenu): ' + E.Message);
     end;
+  end;
+
+  // Зеркалим CustomTexts в per-loco файл data\<folder>\<num>\raildriver\custom_texts.cfg
+  // Это основной store: при смене кабины оттуда же подгружается. Глобальный
+  // zdbooster.cfg остаётся как fallback / общая конфигурация бустера.
+  try
+    SaveCustomTextsForCurrentLoco;
+  except
+    // Не валим SaveConfig из-за per-loco файла.
   end;
 end;
 
@@ -2791,6 +3662,7 @@ var
   H: Integer;
 begin
   H := DEV_TOPPAD + DEV_LIVE_ROWS * DEV_LIVE_ROW_H + DEV_GAP;
+  H := H + (26 + 8); // кнопка Open Full Dev Editor
   H := H + DEV_HDR_H;
   H := H + Length(CustomTexts) * DEV_LIST_ROW_H;
   if (CustomTextSelectedIdx >= 0) and (CustomTextSelectedIdx < Length(CustomTexts)) then
@@ -2827,6 +3699,14 @@ begin
   if CurY <= MaxY then begin DrawDevRow(X, CurY, 'Signal:',   SK_Signal, Alpha, WinScale);             Inc(CurY, RowH); end;
 
   Inc(CurY, Round(DEV_GAP * WinScale));
+
+  // --- Кнопка Open Dev Editor (фуллскрин) ---
+  if CurY > MaxY then Exit;
+  DrawStyledRect(X, CurY, Round(190 * WinScale), Round(26 * WinScale),
+    COLOR_ACCENT, Alpha, True, COLOR_PRIMARY_VARIANT);
+  DrawModernText(X + Round(20 * WinScale), CurY + Round(6 * WinScale),
+    'Open Full Dev Editor →', COLOR_ON_PRIMARY, Alpha, 0.7);
+  Inc(CurY, Round((26 + 8) * WinScale));
 
   // --- Заголовок Custom Texts + кнопка [+ Add] ---
   if CurY > MaxY then Exit;
@@ -3233,15 +4113,38 @@ var
   OverlayColor: Integer;
   AnyWindowVisible: Boolean;
 begin
+  // Сбрасываем per-frame флаг рендера кастомных текстов СРАЗУ, до early exit.
+  // Иначе при закрытом меню тексты отрендерятся один раз и потом флаг
+  // больше не сбросится — texts исчезнут.
+  // DrawCheatMenu вызывается раз в кадр в конце glDraw — отличное место.
+  CustomTextsRenderedThisFrame := False;
+
+  // Проверяем смену локо/состава и подгружаем per-loco custom_texts.cfg.
+  // Внутри throttle на 2 секунды — реально файл читается только при смене кабины.
+  CheckLocoChangeAndReloadTexts;
+
   // Продолжаем рисовать во время анимации закрытия, пока альфа окон не угаснет
   AnyWindowVisible := (RenderWindow.Alpha > 0.01) or (WorldWindow.Alpha > 0.01) or
                       (LocomotiveWindow.Alpha > 0.01) or (MenuWindow.Alpha > 0.01);
-  if (not MenuVisible) and (not AnyWindowVisible) then Exit;
+  // Dev Editor живёт независимо от MenuVisible — его собственный тумблер.
+  if (not MenuVisible) and (not AnyWindowVisible) and (not DevEditorVisible) then Exit;
 
   if MenuVisible then
     LoadConfigThrottled;
 
   UpdateAnimations;
+
+  // Per-frame обновление dev editor'а — hover, scroll, auto-repeat. Работает
+  // даже если основное меню закрыто (когда DevEditorVisible).
+  UpdateDevEditorPerFrame;
+
+  // Если открыт фуллскрин dev editor — рисуем его ВМЕСТО 4 окон. Сам Begin2D
+  // делает внутри, ничего общего с состоянием обычного меню.
+  if DevEditorVisible then
+  begin
+    DrawDevEditor;
+    Exit;
+  end;
 
   Begin2D;
   try
@@ -3456,6 +4359,15 @@ begin
   Inc(CurY, DEV_LIVE_ROWS * DEV_LIVE_ROW_H);
   Inc(CurY, DEV_GAP);
 
+  // [Open Full Dev Editor] — переключаемся в фуллскрин-режим
+  if InRect(X, Y, ContentX, CurY, 190, 26) then
+  begin
+    DevEditorVisible := True;
+    DevEditorScrollY := 0;
+    Exit;
+  end;
+  Inc(CurY, 26 + 8);
+
   // [+ Add] — добавить новый текст
   if InRect(X, Y, ContentX + 160, CurY, 36, 22) then
   begin
@@ -3564,6 +4476,14 @@ var
   FreecamSectionY, MainCameraSectionY, MaxVisibleDistanceSectionY: Integer;
   SectionHeight: Integer;
 begin
+  // Если открыт фуллскрин Dev Editor — все клики перехватывает он, обычное
+  // меню в этом режиме спрятано.
+  if DevEditorVisible then
+  begin
+    HandleDevEditorClick(X, Y);
+    Exit;
+  end;
+
   if not MenuVisible then Exit;
 
   if (RenderWindow.Alpha < 0.1) and (WorldWindow.Alpha < 0.1) and (LocomotiveWindow.Alpha < 0.1) and (MenuWindow.Alpha < 0.1) then Exit;
@@ -3914,25 +4834,25 @@ begin
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
 
-    // Меню разработчика — кнопка expand
-    if InRect(X, Y, LocomotiveWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
+    // Меню разработчика — клик по кнопке expand ИЛИ по toggle:
+    //   обе превратились в одно действие — «открыть фуллскрин Dev Editor».
+    //   Inline-панель (Speed/Limit/Target/Distance + Custom texts) больше не
+    //   разворачиваем — пользователь хочет сразу редактор.
+    if InRect(X, Y, LocomotiveWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) or
+       InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
     begin
-      Settings.DeveloperSection.Expanded := not Settings.DeveloperSection.Expanded;
-      Exit;
-    end;
-
-    // Меню разработчика — toggle самого режима
-    if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
-    begin
-      Settings.DeveloperMenu := not Settings.DeveloperMenu;
-      if Settings.DeveloperMenu then
-        Settings.DeveloperSection.Expanded := True;
+      Settings.DeveloperMenu := True;
+      Settings.DeveloperSection.Expanded := False;
+      DevEditorVisible := True;
+      DevEditorScrollY := 0;
       SaveConfig;
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
 
-    // === Кликабельные зоны внутри Developer-секции ===
+    // === Кликабельные зоны внутри Developer-секции — оставлены на случай,
+    // если кто-то вручную развернёт inline-панель из конфига. В нормальной
+    // работе мы её больше не показываем ===
     if Settings.DeveloperMenu and (Settings.DeveloperSection.AnimProgress > 0.5) then
       HandleDeveloperSectionClick(X, Y, ContentY);
   end;
@@ -3946,6 +4866,11 @@ end;
 // === ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ ОТПУСКАНИЯ МЫШИ ===
 procedure HandleMenuMouseUp; stdcall;
 begin
+  // Dev editor всегда обрабатывает свой mouseUp (release scrollbar drag/auto-repeat),
+  // даже если основное меню спрятано.
+  if DevEditorVisible then
+    HandleDevEditorMouseUp;
+
   if not MenuVisible then Exit;
   
   // Останавливаем драггинг окон
@@ -4014,7 +4939,13 @@ var
   CenterX, CenterY: Integer;
 begin
   MenuVisible := not MenuVisible;
-  
+
+  // F12 открывает обычное меню (4 окна). Dev Editor включается только из
+  // секции «Меню разработчика → Open Full Dev Editor». При закрытии меню
+  // редактор тоже закрываем — чтобы не остался поверх кабины.
+  if not MenuVisible then
+    DevEditorVisible := False;
+
   if MenuVisible then
   begin
     ShowCursor(True);
@@ -4148,6 +5079,911 @@ begin
     MenuWindow.TargetShadowIntensity := 0.0;
     
     RemoveMenuPatch;
+  end;
+end;
+
+// ===========================================================================
+//  DEV EDITOR — реализация
+// ===========================================================================
+
+// Помощник: True, если точка (X,Y) внутри прямоугольника RX..RX+RW × RY..RY+RH.
+function DEInRect(X, Y, RX, RY, RW, RH: Integer): Boolean;
+begin
+  Result := (X >= RX) and (X <= RX + RW) and (Y >= RY) and (Y <= RY + RH);
+end;
+
+// Заголовок столбца над ячейкой — отцентрирован над полем значения,
+// крупнее и контрастнее, чтобы было читаемо.
+procedure DEDrawHdrLabel(CenterX, Y: Integer; const Lbl: string; Alpha: Integer);
+var
+  W: Integer;
+begin
+  // Грубая оценка ширины текста (px на символ при size=0.6 ≈ 7).
+  W := Length(Lbl) * 7;
+  DrawText2D(0, CenterX - W div 2 + 1, Y + 1, Lbl, COLOR_SHADOW, Alpha div 3, 0.6);
+  DrawText2D(0, CenterX - W div 2, Y, Lbl, COLOR_ACCENT, Alpha, 0.6);
+end;
+
+// Рисуем «[−] value [+]» ячейку с заголовком над полем значения.
+// IsHotMinus/IsHotPlus — для подсветки кнопок при hover.
+procedure DEDrawValueCell(X, Y: Integer; const Lbl, ValStr: string;
+  Alpha: Integer; IsHotMinus, IsHotPlus: Boolean);
+var
+  BtnY, ValX, ValTextX, ValTextY: Integer;
+  CMinus, CPlus: Integer;
+  TextW: Integer;
+begin
+  BtnY := Y;
+  ValX := X + DE_BTN_SMALL + 2;
+
+  // Заголовок столбца (X / Y / Z / RX / RY / RZ / Scale) — над value-полем.
+  // Подняли на 3 px ближе к верху карточки.
+  DEDrawHdrLabel(ValX + DE_VAL_W div 2, Y - 17, Lbl, Alpha);
+
+  // Кнопка [-] ---------------------------------------------------------------
+  if IsHotMinus then CMinus := COLOR_PRIMARY else CMinus := COLOR_SURFACE_VARIANT;
+  DrawStyledRect(X, BtnY, DE_BTN_SMALL, DE_BTN_SMALL, CMinus, Alpha, True, COLOR_BORDER);
+  // «−» — текст чуть выше центра кнопки.
+  DrawText2D(0, X + (DE_BTN_SMALL - 6) div 2, BtnY + 1,
+    '-', COLOR_ON_SURFACE, Alpha, 0.7);
+
+  // Поле значения -----------------------------------------------------------
+  DrawStyledRect(ValX, BtnY, DE_VAL_W, DE_BTN_SMALL,
+    COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+  // Центрируем числовой текст (оценка по 7 px/символ при size=0.6).
+  TextW := Length(ValStr) * 7;
+  if TextW > DE_VAL_W - 4 then TextW := DE_VAL_W - 4;
+  ValTextX := ValX + (DE_VAL_W - TextW) div 2;
+  // Подняли значения чуть выше — ближе к верху поля (было +5).
+  ValTextY := BtnY + 2;
+  DrawText2D(0, ValTextX + 1, ValTextY + 1, ValStr, COLOR_SHADOW, Alpha div 3, 0.6);
+  DrawText2D(0, ValTextX,     ValTextY,     ValStr, COLOR_ON_SURFACE, Alpha, 0.6);
+
+  // Кнопка [+] --------------------------------------------------------------
+  if IsHotPlus then CPlus := COLOR_PRIMARY else CPlus := COLOR_SURFACE_VARIANT;
+  DrawStyledRect(ValX + DE_VAL_W + 2, BtnY, DE_BTN_SMALL, DE_BTN_SMALL,
+    CPlus, Alpha, True, COLOR_BORDER);
+  DrawText2D(0, ValX + DE_VAL_W + 2 + (DE_BTN_SMALL - 6) div 2, BtnY + 1,
+    '+', COLOR_ON_SURFACE, Alpha, 0.7);
+end;
+
+// Тестируем, в каком hot-spot'е находится точка (MX,MY) относительно карточки
+// с верхним левым углом (CardX, CardY) и шириной CardW. Карточка имеет
+// фиксированную раскладку — должна совпадать с DrawDevEditor.
+// Возвращает DE_HOT_* код или DE_HOT_NONE.
+function DEHotspotAtPoint(MX, MY, CardX, CardY, CardW: Integer): Integer;
+var
+  CellX, CellY: Integer;
+  i: Integer;
+  Steps: array[0..6] of Integer;
+  StepHotMinus: array[0..6] of Integer;
+  StepHotPlus:  array[0..6] of Integer;
+begin
+  Result := DE_HOT_NONE;
+  // Все интерактивные элементы лежат в одной горизонтальной полосе на CardY+30,
+  // высотой DE_BTN_SMALL (22 px). Над ними — column-labels.
+  CellY := CardY + 30;
+
+  // Source-combobox
+  if DEInRect(MX, MY, CardX + DE_IDX_W, CellY, DE_SOURCE_W, DE_BTN_SMALL) then
+  begin Result := DE_HOT_SOURCE; Exit; end;
+
+  // Семь -/value/+ ячеек по списку
+  Steps[0] := DE_HOT_X_MINUS;  StepHotMinus[0] := DE_HOT_X_MINUS;  StepHotPlus[0] := DE_HOT_X_PLUS;
+  Steps[1] := DE_HOT_Y_MINUS;  StepHotMinus[1] := DE_HOT_Y_MINUS;  StepHotPlus[1] := DE_HOT_Y_PLUS;
+  Steps[2] := DE_HOT_Z_MINUS;  StepHotMinus[2] := DE_HOT_Z_MINUS;  StepHotPlus[2] := DE_HOT_Z_PLUS;
+  Steps[3] := DE_HOT_RX_MINUS; StepHotMinus[3] := DE_HOT_RX_MINUS; StepHotPlus[3] := DE_HOT_RX_PLUS;
+  Steps[4] := DE_HOT_RY_MINUS; StepHotMinus[4] := DE_HOT_RY_MINUS; StepHotPlus[4] := DE_HOT_RY_PLUS;
+  Steps[5] := DE_HOT_RZ_MINUS; StepHotMinus[5] := DE_HOT_RZ_MINUS; StepHotPlus[5] := DE_HOT_RZ_PLUS;
+  Steps[6] := DE_HOT_S_MINUS;  StepHotMinus[6] := DE_HOT_S_MINUS;  StepHotPlus[6] := DE_HOT_S_PLUS;
+
+  CellX := CardX + DE_IDX_W + DE_SOURCE_W + 8;
+  for i := 0 to 6 do
+  begin
+    // [-]
+    if DEInRect(MX, MY, CellX, CellY, DE_BTN_SMALL, DE_BTN_SMALL) then
+    begin Result := StepHotMinus[i]; Exit; end;
+    // [+]
+    if DEInRect(MX, MY, CellX + DE_BTN_SMALL + 2 + DE_VAL_W + 2, CellY,
+      DE_BTN_SMALL, DE_BTN_SMALL) then
+    begin Result := StepHotPlus[i]; Exit; end;
+    Inc(CellX, DE_CELL_W);
+  end;
+
+  // Color swatch — по той же горизонтальной полосе.
+  if DEInRect(MX, MY, CellX, CellY, DE_SWATCH_W - 8, DE_BTN_SMALL) then
+  begin Result := DE_HOT_COLOR; Exit; end;
+  Inc(CellX, DE_SWATCH_W);
+
+  // Visible
+  if DEInRect(MX, MY, CellX, CellY, DE_BTN_SMALL, DE_BTN_SMALL) then
+  begin Result := DE_HOT_VISIBLE; Exit; end;
+  Inc(CellX, DE_VISIBLE_W);
+
+  // Delete
+  if DEInRect(MX, MY, CellX, CellY, DE_DELETE_W - 4, DE_BTN_SMALL) then
+  begin Result := DE_HOT_DELETE; Exit; end;
+end;
+
+// Применить шаг +/− к выбранной карточке.
+procedure DEApplyStep(CardIdx, Hotspot: Integer; Sign: Integer);
+begin
+  if (CardIdx < 0) or (CardIdx >= Length(CustomTexts)) then Exit;
+  case Hotspot of
+    DE_HOT_X_MINUS, DE_HOT_X_PLUS:   CustomTexts[CardIdx].X  := CustomTexts[CardIdx].X  + Sign * DE_STEP_POS;
+    DE_HOT_Y_MINUS, DE_HOT_Y_PLUS:   CustomTexts[CardIdx].Y  := CustomTexts[CardIdx].Y  + Sign * DE_STEP_POS;
+    DE_HOT_Z_MINUS, DE_HOT_Z_PLUS:   CustomTexts[CardIdx].Z  := CustomTexts[CardIdx].Z  + Sign * DE_STEP_POS;
+    DE_HOT_RX_MINUS, DE_HOT_RX_PLUS: CustomTexts[CardIdx].RX := CustomTexts[CardIdx].RX + Sign * DE_STEP_ANG;
+    DE_HOT_RY_MINUS, DE_HOT_RY_PLUS: CustomTexts[CardIdx].RY := CustomTexts[CardIdx].RY + Sign * DE_STEP_ANG;
+    DE_HOT_RZ_MINUS, DE_HOT_RZ_PLUS: CustomTexts[CardIdx].RZ := CustomTexts[CardIdx].RZ + Sign * DE_STEP_ANG;
+    DE_HOT_S_MINUS, DE_HOT_S_PLUS:
+    begin
+      CustomTexts[CardIdx].Scale := CustomTexts[CardIdx].Scale + Sign * DE_STEP_SCALE;
+      if CustomTexts[CardIdx].Scale < 0.0005 then CustomTexts[CardIdx].Scale := 0.0005;
+    end;
+  end;
+  if CardIdx = CustomTextSelectedIdx then SyncSlidersFromSelected;
+end;
+
+// True если хот-спот это +/- кнопка (поддерживает auto-repeat при удержании).
+function DEIsRepeatableHotspot(H: Integer): Boolean;
+begin
+  Result :=
+    (H = DE_HOT_X_MINUS) or (H = DE_HOT_X_PLUS) or
+    (H = DE_HOT_Y_MINUS) or (H = DE_HOT_Y_PLUS) or
+    (H = DE_HOT_Z_MINUS) or (H = DE_HOT_Z_PLUS) or
+    (H = DE_HOT_RX_MINUS) or (H = DE_HOT_RX_PLUS) or
+    (H = DE_HOT_RY_MINUS) or (H = DE_HOT_RY_PLUS) or
+    (H = DE_HOT_RZ_MINUS) or (H = DE_HOT_RZ_PLUS) or
+    (H = DE_HOT_S_MINUS) or (H = DE_HOT_S_PLUS);
+end;
+
+function DEHotspotSign(H: Integer): Integer;
+begin
+  case H of
+    DE_HOT_X_MINUS, DE_HOT_Y_MINUS, DE_HOT_Z_MINUS,
+    DE_HOT_RX_MINUS, DE_HOT_RY_MINUS, DE_HOT_RZ_MINUS,
+    DE_HOT_S_MINUS: Result := -1;
+  else
+    Result := 1;
+  end;
+end;
+
+procedure DrawDevEditor;
+var
+  ScrW, ScrH: Integer;
+  HeaderY, ToolbarY, ListY, ListBottom: Integer;
+  CardX, CardY, CardW, CardInnerW: Integer;
+  i, k: Integer;
+  T: TCustomText3D;
+  Idx: Integer;
+  CellX: Integer;
+  IsSel, IsHover: Boolean;
+  CardBg, CardBorder: Integer;
+  ValStr: string;
+  HotMinus, HotPlus: Boolean;
+  ScrollbarY, ScrollbarH: Integer;
+  ContentH: Integer;
+  // Combobox dropdown
+  CmbX, CmbY, CmbW, CmbH: Integer;
+  // Color picker
+  PkrX, PkrY, PkrW, PkrH: Integer;
+  Col, Row: Integer;
+  PaletteX, PaletteY: Integer;
+begin
+  if not DevEditorVisible then Exit;
+  ScrW := InitResX;
+  ScrH := InitResY;
+
+  Begin2D;
+  try
+    // Полупрозрачный фон, чтобы кабину было слегка видно — но достаточно тёмно
+    // для контраста с UI.
+    DrawRectangle2D(0, 0, ScrW, ScrH, COLOR_BACKGROUND, 230, True);
+
+    // === HEADER ===
+    HeaderY := DE_PAD_Y;
+    DrawRectangle2D(DE_PAD_X, HeaderY, ScrW - 2 * DE_PAD_X, DE_HEADER_H,
+      COLOR_PRIMARY, 255, True);
+    DrawRectangle2D(DE_PAD_X, HeaderY, ScrW - 2 * DE_PAD_X, DE_HEADER_H,
+      COLOR_PRIMARY_VARIANT, 255, False);
+
+    // Кнопка Back СЛЕВА — рядом с краем, чтобы не уходить в правый угол.
+    if DevEditorHoveredHotspot = DE_HOT_BACK then
+      DrawStyledRect(DE_PAD_X + 12, HeaderY + 12, 110, DE_HEADER_H - 24,
+        COLOR_ACCENT, 255, True, COLOR_ACCENT)
+    else
+      DrawStyledRect(DE_PAD_X + 12, HeaderY + 12, 110, DE_HEADER_H - 24,
+        COLOR_PRIMARY_VARIANT, 255, True, COLOR_BORDER_LIGHT);
+    DrawText2D(0, DE_PAD_X + 12 + 18, HeaderY + 16,
+      '< BACK TO MENU', COLOR_ON_PRIMARY, 255, 0.55);
+
+    // Заголовок — справа от Back-кнопки.
+    DrawText2D(0, DE_PAD_X + 12 + 110 + 17, HeaderY + 14,
+      'ZDSIMULATOR BOOSTER  —  CUSTOM TEXT EDITOR',
+      COLOR_SHADOW, 100, 0.95);
+    DrawText2D(0, DE_PAD_X + 12 + 110 + 16, HeaderY + 13,
+      'ZDSIMULATOR BOOSTER  —  CUSTOM TEXT EDITOR',
+      COLOR_ON_PRIMARY, 255, 0.95);
+
+    // === TOOLBAR ===
+    ToolbarY := HeaderY + DE_HEADER_H + 6;
+    DrawRectangle2D(DE_PAD_X, ToolbarY, ScrW - 2 * DE_PAD_X, DE_TOOLBAR_H,
+      COLOR_SURFACE, 240, True);
+    DrawRectangle2D(DE_PAD_X, ToolbarY, ScrW - 2 * DE_PAD_X, DE_TOOLBAR_H,
+      COLOR_BORDER, 240, False);
+
+    // [+ Add Text] кнопка — текст поднят на 3 px.
+    if DevEditorHoveredHotspot = DE_HOT_ADD then
+      DrawStyledRect(DE_PAD_X + 12, ToolbarY + 10, 110, 24,
+        COLOR_ACCENT, 255, True, COLOR_ACCENT)
+    else
+      DrawStyledRect(DE_PAD_X + 12, ToolbarY + 10, 110, 24,
+        COLOR_PRIMARY, 255, True, COLOR_PRIMARY_VARIANT);
+    DrawText2D(0, DE_PAD_X + 28, ToolbarY + 13, '+ Add Text',
+      COLOR_ON_PRIMARY, 255, 0.65);
+
+    // === Mode selector: [Move XYZ] [Rotate XYZ] [Scale] ===
+    // Сразу после Add Text. Меняет глобальный GizmoMode — при выбранной
+    // карточке гизмо в кабине переключается на нужный режим.
+    DrawText2D(0, DE_PAD_X + 134, ToolbarY + 13,
+      'Gizmo:', COLOR_BORDER_LIGHT, 220, 0.55);
+
+    // Кнопка Move (gmTranslate)
+    if (GizmoMode = gmTranslate) then
+      DrawStyledRect(DE_PAD_X + 184, ToolbarY + 10, 90, 24,
+        COLOR_PRIMARY, 255, True, COLOR_PRIMARY_VARIANT)
+    else if DevEditorHoveredHotspot = DE_HOT_MODE_T then
+      DrawStyledRect(DE_PAD_X + 184, ToolbarY + 10, 90, 24,
+        COLOR_ACCENT, 255, True, COLOR_ACCENT)
+    else
+      DrawStyledRect(DE_PAD_X + 184, ToolbarY + 10, 90, 24,
+        COLOR_SURFACE_VARIANT, 255, True, COLOR_BORDER);
+    DrawText2D(0, DE_PAD_X + 200, ToolbarY + 13,
+      'Move XYZ', COLOR_ON_PRIMARY, 255, 0.6);
+
+    // Кнопка Rotate (gmRotate)
+    if (GizmoMode = gmRotate) then
+      DrawStyledRect(DE_PAD_X + 278, ToolbarY + 10, 100, 24,
+        COLOR_PRIMARY, 255, True, COLOR_PRIMARY_VARIANT)
+    else if DevEditorHoveredHotspot = DE_HOT_MODE_R then
+      DrawStyledRect(DE_PAD_X + 278, ToolbarY + 10, 100, 24,
+        COLOR_ACCENT, 255, True, COLOR_ACCENT)
+    else
+      DrawStyledRect(DE_PAD_X + 278, ToolbarY + 10, 100, 24,
+        COLOR_SURFACE_VARIANT, 255, True, COLOR_BORDER);
+    DrawText2D(0, DE_PAD_X + 290, ToolbarY + 13,
+      'Rotate XYZ', COLOR_ON_PRIMARY, 255, 0.6);
+
+    // Кнопка Scale (gmScale)
+    if (GizmoMode = gmScale) then
+      DrawStyledRect(DE_PAD_X + 382, ToolbarY + 10, 70, 24,
+        COLOR_PRIMARY, 255, True, COLOR_PRIMARY_VARIANT)
+    else if DevEditorHoveredHotspot = DE_HOT_MODE_S then
+      DrawStyledRect(DE_PAD_X + 382, ToolbarY + 10, 70, 24,
+        COLOR_ACCENT, 255, True, COLOR_ACCENT)
+    else
+      DrawStyledRect(DE_PAD_X + 382, ToolbarY + 10, 70, 24,
+        COLOR_SURFACE_VARIANT, 255, True, COLOR_BORDER);
+    DrawText2D(0, DE_PAD_X + 401, ToolbarY + 13,
+      'Scale', COLOR_ON_PRIMARY, 255, 0.6);
+
+    // Counter (сдвинут вправо за mode-кнопки).
+    if (CustomTextSelectedIdx >= 0) and (CustomTextSelectedIdx < Length(CustomTexts)) then
+      ValStr := '#' + IntToStr(CustomTextSelectedIdx)
+    else
+      ValStr := '—';
+    DrawText2D(0, DE_PAD_X + 470, ToolbarY + 13,
+      'Total: ' + IntToStr(Length(CustomTexts)) +
+      '   |   Sel: ' + ValStr,
+      COLOR_ON_SURFACE, 220, 0.6);
+
+    // Подсказка справа — короткая, чтобы не упиралась в кнопки.
+    DrawText2D(0, ScrW - DE_PAD_X - 280, ToolbarY + 13,
+      'Click row to select  |  Wheel = scroll  |  Esc = cancel gizmo drag',
+      COLOR_BORDER_LIGHT, 200, 0.55);
+
+    // === LIST AREA ===
+    ListY := ToolbarY + DE_TOOLBAR_H + 6;
+    ListBottom := ScrH - DE_PAD_Y;
+    DevEditorViewportTop := ListY;
+    DevEditorViewportBottom := ListBottom;
+
+    // Фон списка
+    DrawRectangle2D(DE_PAD_X, ListY, ScrW - 2 * DE_PAD_X, ListBottom - ListY,
+      COLOR_BACKGROUND, 200, True);
+    DrawRectangle2D(DE_PAD_X, ListY, ScrW - 2 * DE_PAD_X, ListBottom - ListY,
+      COLOR_BORDER, 200, False);
+
+    CardX := DE_PAD_X + 8;
+    CardW := ScrW - 2 * DE_PAD_X - 16 - DE_SCROLLBAR_W - 4;
+    CardInnerW := CardW;
+
+    // Высота всего контента и ограничение скролла
+    ContentH := Length(CustomTexts) * (DE_CARD_H + DE_CARD_GAP);
+    if ContentH > (ListBottom - ListY - 8) then
+      DevEditorMaxScroll := ContentH - (ListBottom - ListY - 8)
+    else
+      DevEditorMaxScroll := 0;
+    if DevEditorScrollY > DevEditorMaxScroll then DevEditorScrollY := DevEditorMaxScroll;
+    if DevEditorScrollY < 0 then DevEditorScrollY := 0;
+
+    // Карточки
+    for i := 0 to Length(CustomTexts) - 1 do
+    begin
+      CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+      // Off-screen — скип.
+      if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
+
+      T := CustomTexts[i];
+      IsSel := (i = CustomTextSelectedIdx);
+      IsHover := (i = DevEditorHoveredCard);
+
+      if IsSel then
+      begin
+        CardBg := COLOR_PRIMARY_VARIANT;
+        CardBorder := COLOR_ACCENT;
+      end
+      else if IsHover then
+      begin
+        CardBg := COLOR_SURFACE_VARIANT;
+        CardBorder := COLOR_BORDER_LIGHT;
+      end
+      else
+      begin
+        CardBg := COLOR_SURFACE;
+        CardBorder := COLOR_BORDER;
+      end;
+      DrawRectangle2D(CardX, CardY, CardInnerW, DE_CARD_H, CardBg, 240, True);
+      DrawRectangle2D(CardX, CardY, CardInnerW, DE_CARD_H, CardBorder, 240, False);
+
+      // Все интерактивные элементы — на горизонтальной полосе CardY+30, h=22.
+      // Над ними — column-labels (X/Y/Z/...) на высоте CardY+13 (на 3 px выше).
+
+      // Index label (#N) — отцентрирован вертикально по полосе controls (-3 px).
+      DrawText2D(0, CardX + 10, CardY + 30,
+        '#' + IntToStr(i), COLOR_ACCENT, 255, 0.7);
+
+      // "Source" заголовок над combobox'ом — поднят на 3 px.
+      DEDrawHdrLabel(CardX + DE_IDX_W + DE_SOURCE_W div 2, CardY + 13,
+        'Source', 240);
+
+      // Source combobox — высота совпадает с кнопками, центр совпадает с кнопками.
+      DrawStyledRect(CardX + DE_IDX_W, CardY + 30, DE_SOURCE_W, DE_BTN_SMALL,
+        COLOR_SURFACE_VARIANT, 240, True, COLOR_BORDER);
+      DrawText2D(0, CardX + DE_IDX_W + 8, CardY + 30,
+        KlubSourceName(T.Source), COLOR_ON_SURFACE, 240, 0.6);
+      DrawText2D(0, CardX + DE_IDX_W + DE_SOURCE_W - 14, CardY + 30,
+        'v', COLOR_BORDER_LIGHT, 240, 0.6);
+      // Под combobox'ом — текущее живое значение источника (-3 px).
+      DrawText2D(0, CardX + DE_IDX_W + 8, CardY + 53,
+        '= ' + GetKlubSourceValue(T.Source), COLOR_ACCENT, 220, 0.55);
+
+      // Семь -/value/+ ячеек
+      CellX := CardX + DE_IDX_W + DE_SOURCE_W + 12;
+      // X
+      HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_X_MINUS);
+      HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_X_PLUS);
+      ValStr := FormatGizmoFloat(T.X, 3);
+      DEDrawValueCell(CellX, CardY + 30, 'X', ValStr, 240, HotMinus, HotPlus);
+      Inc(CellX, DE_CELL_W);
+      // Y
+      HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_Y_MINUS);
+      HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_Y_PLUS);
+      ValStr := FormatGizmoFloat(T.Y, 3);
+      DEDrawValueCell(CellX, CardY + 30, 'Y', ValStr, 240, HotMinus, HotPlus);
+      Inc(CellX, DE_CELL_W);
+      // Z
+      HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_Z_MINUS);
+      HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_Z_PLUS);
+      ValStr := FormatGizmoFloat(T.Z, 3);
+      DEDrawValueCell(CellX, CardY + 30, 'Z', ValStr, 240, HotMinus, HotPlus);
+      Inc(CellX, DE_CELL_W);
+      // RX
+      HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_RX_MINUS);
+      HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_RX_PLUS);
+      ValStr := FormatGizmoFloat(T.RX, 1);
+      DEDrawValueCell(CellX, CardY + 30, 'RX', ValStr, 240, HotMinus, HotPlus);
+      Inc(CellX, DE_CELL_W);
+      // RY
+      HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_RY_MINUS);
+      HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_RY_PLUS);
+      ValStr := FormatGizmoFloat(T.RY, 1);
+      DEDrawValueCell(CellX, CardY + 30, 'RY', ValStr, 240, HotMinus, HotPlus);
+      Inc(CellX, DE_CELL_W);
+      // RZ
+      HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_RZ_MINUS);
+      HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_RZ_PLUS);
+      ValStr := FormatGizmoFloat(T.RZ, 1);
+      DEDrawValueCell(CellX, CardY + 30, 'RZ', ValStr, 240, HotMinus, HotPlus);
+      Inc(CellX, DE_CELL_W);
+      // Scale
+      HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_S_MINUS);
+      HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_S_PLUS);
+      ValStr := FormatGizmoFloat(T.Scale, 4);
+      DEDrawValueCell(CellX, CardY + 30, 'Scale', ValStr, 240, HotMinus, HotPlus);
+      Inc(CellX, DE_CELL_W);
+
+      // Color swatch — на той же горизонтальной полосе.
+      DEDrawHdrLabel(CellX + (DE_SWATCH_W - 8) div 2, CardY + 13, 'Color', 240);
+      DrawStyledRect(CellX, CardY + 30, DE_SWATCH_W - 8, DE_BTN_SMALL,
+        Integer(T.Color), 255, True, COLOR_BORDER_LIGHT);
+      if IsHover and (DevEditorHoveredHotspot = DE_HOT_COLOR) then
+        DrawRectangle2D(CellX, CardY + 30, DE_SWATCH_W - 8, DE_BTN_SMALL,
+          COLOR_ACCENT, 255, False);
+      Inc(CellX, DE_SWATCH_W);
+
+      // Visible checkbox
+      DEDrawHdrLabel(CellX + DE_BTN_SMALL div 2, CardY + 13, 'Vis', 240);
+      if T.Visible then
+        DrawStyledRect(CellX, CardY + 30, DE_BTN_SMALL, DE_BTN_SMALL,
+          COLOR_PRIMARY, 255, True, COLOR_PRIMARY_VARIANT)
+      else
+        DrawStyledRect(CellX, CardY + 30, DE_BTN_SMALL, DE_BTN_SMALL,
+          COLOR_SURFACE_VARIANT, 255, True, COLOR_BORDER);
+      if T.Visible then
+        DrawText2D(0, CellX + (DE_BTN_SMALL - 6) div 2, CardY + 30,
+          'V', COLOR_ON_PRIMARY, 255, 0.6);
+      if IsHover and (DevEditorHoveredHotspot = DE_HOT_VISIBLE) then
+        DrawRectangle2D(CellX, CardY + 30, DE_BTN_SMALL, DE_BTN_SMALL,
+          COLOR_ACCENT, 255, False);
+      Inc(CellX, DE_VISIBLE_W);
+
+      // Delete button [×]
+      DEDrawHdrLabel(CellX + (DE_DELETE_W - 4) div 2, CardY + 13, 'Del', 240);
+      if IsHover and (DevEditorHoveredHotspot = DE_HOT_DELETE) then
+        DrawStyledRect(CellX, CardY + 30, DE_DELETE_W - 4, DE_BTN_SMALL,
+          COLOR_WARNING, 255, True, COLOR_WARNING)
+      else
+        DrawStyledRect(CellX, CardY + 30, DE_DELETE_W - 4, DE_BTN_SMALL,
+          COLOR_SURFACE_VARIANT, 255, True, COLOR_BORDER);
+      DrawText2D(0, CellX + (DE_DELETE_W - 4 - 7) div 2, CardY + 30,
+        'X', COLOR_ON_SURFACE, 255, 0.65);
+    end;
+
+    // === SCROLLBAR ===
+    if DevEditorMaxScroll > 0 then
+    begin
+      ScrollbarY := ListY + 4;
+      ScrollbarH := ListBottom - ListY - 8;
+      DrawRectangle2D(ScrW - DE_PAD_X - 4 - DE_SCROLLBAR_W, ScrollbarY,
+        DE_SCROLLBAR_W, ScrollbarH, COLOR_SURFACE, 220, True);
+      // Ползунок
+      k := Round(ScrollbarH * (DevEditorScrollY / (DevEditorScrollY + ScrollbarH * 0.5)));
+      // Высота ползунка пропорциональна видимой части.
+      ScrollbarH := Round((ListBottom - ListY - 8) *
+        (ListBottom - ListY - 8) / (ContentH));
+      if ScrollbarH < 24 then ScrollbarH := 24;
+      k := Round(DevEditorScrollY *
+        ((ListBottom - ListY - 8) - ScrollbarH) / DevEditorMaxScroll);
+      DrawRectangle2D(ScrW - DE_PAD_X - 4 - DE_SCROLLBAR_W,
+        ListY + 4 + k, DE_SCROLLBAR_W, ScrollbarH,
+        COLOR_PRIMARY, 240, True);
+    end;
+
+    // === COMBOBOX DROPDOWN OVERLAY ===
+    if DevEditorComboboxOpen and
+       (DevEditorComboboxCardIdx >= 0) and
+       (DevEditorComboboxCardIdx < Length(CustomTexts)) then
+    begin
+      Idx := DevEditorComboboxCardIdx;
+      CardY := ListY + 6 + Idx * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+      CmbX := CardX + DE_IDX_W;
+      // Дропдаун выпадает СРАЗУ под combobox'ом (combobox: CardY+30, h=DE_BTN_SMALL).
+      CmbY := CardY + 30 + DE_BTN_SMALL + 2;
+      CmbW := DE_SOURCE_W;
+      CmbH := KLUB_SOURCE_COUNT * DE_COMBO_DROP_H + 4;
+      // Если выпадает за низ — рисуем над карточкой.
+      if CmbY + CmbH > ScrH - DE_PAD_Y then
+        CmbY := CardY - CmbH - 2;
+
+      DrawRectangle2D(CmbX, CmbY, CmbW, CmbH, COLOR_SURFACE, 245, True);
+      DrawRectangle2D(CmbX, CmbY, CmbW, CmbH, COLOR_ACCENT, 255, False);
+      for k := 0 to KLUB_SOURCE_COUNT - 1 do
+      begin
+        DrawText2D(0, CmbX + 8, CmbY + 4 + k * DE_COMBO_DROP_H + 4,
+          KlubSourceName(TKlubSource(k)),
+          COLOR_ON_SURFACE, 240, 0.55);
+        if Integer(CustomTexts[Idx].Source) = k then
+          DrawText2D(0, CmbX + CmbW - 18, CmbY + 4 + k * DE_COMBO_DROP_H + 4,
+            'V', COLOR_ACCENT, 240, 0.55);
+      end;
+    end;
+
+    // === COLOR PICKER OVERLAY ===
+    if DevEditorColorPickerOpen and
+       (DevEditorColorPickerCardIdx >= 0) and
+       (DevEditorColorPickerCardIdx < Length(CustomTexts)) then
+    begin
+      Idx := DevEditorColorPickerCardIdx;
+      CardY := ListY + 6 + Idx * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+      // Расположение palette: справа от swatch'а. Считаем X swatch'а.
+      CellX := CardX + DE_IDX_W + DE_SOURCE_W + 8 + 7 * DE_CELL_W;
+      PkrW := DE_PICKER_COLS * (DE_PICKER_SIZE + 2) + 8;
+      PkrH := DE_PICKER_ROWS * (DE_PICKER_SIZE + 2) + 8;
+      PkrX := CellX + DE_SWATCH_W - PkrW;
+      if PkrX < DE_PAD_X then PkrX := DE_PAD_X;
+      PkrY := CardY + DE_CARD_H + 4;
+      if PkrY + PkrH > ScrH - DE_PAD_Y then PkrY := CardY - PkrH - 4;
+
+      DrawRectangle2D(PkrX, PkrY, PkrW, PkrH, COLOR_SURFACE, 245, True);
+      DrawRectangle2D(PkrX, PkrY, PkrW, PkrH, COLOR_ACCENT, 255, False);
+      for Row := 0 to DE_PICKER_ROWS - 1 do
+        for Col := 0 to DE_PICKER_COLS - 1 do
+        begin
+          k := Row * DE_PICKER_COLS + Col;
+          if k >= 18 then Break;
+          PaletteX := PkrX + 4 + Col * (DE_PICKER_SIZE + 2);
+          PaletteY := PkrY + 4 + Row * (DE_PICKER_SIZE + 2);
+          DrawRectangle2D(PaletteX, PaletteY, DE_PICKER_SIZE, DE_PICKER_SIZE,
+            Integer(DevEditorPalette[k]), 255, True);
+          if DevEditorPalette[k] = CustomTexts[Idx].Color then
+            DrawRectangle2D(PaletteX, PaletteY, DE_PICKER_SIZE, DE_PICKER_SIZE,
+              COLOR_ACCENT, 255, False);
+        end;
+    end;
+  finally
+    End2D;
+  end;
+end;
+
+// True если точка попадает в любой UI-элемент Dev Editor'а (для гейтинга гизмо).
+function DevEditorPointInUI(MX, MY: Integer): Boolean;
+begin
+  Result := DevEditorVisible and
+    (MX >= 0) and (MX <= InitResX) and (MY >= 0) and (MY <= InitResY);
+end;
+
+procedure HandleDevEditorClick(MX, MY: Integer);
+var
+  ScrW, ScrH: Integer;
+  HeaderY, ToolbarY, ListY, ListBottom: Integer;
+  CardX, CardY, CardW: Integer;
+  i, k: Integer;
+  HitCard, HitHotspot: Integer;
+  CmbX, CmbY, CmbW, CmbH: Integer;
+  PkrX, PkrY, PkrW, PkrH: Integer;
+  CellX: Integer;
+  Col, Row: Integer;
+  Idx: Integer;
+  PaletteX, PaletteY: Integer;
+  ScrollbarX, ScrollbarTop, ScrollbarHandleH, ScrollbarHandleY: Integer;
+  ContentH, VisibleH: Integer;
+begin
+  if not DevEditorVisible then Exit;
+  ScrW := InitResX;
+  ScrH := InitResY;
+  HeaderY := DE_PAD_Y;
+  ToolbarY := HeaderY + DE_HEADER_H + 6;
+  ListY := ToolbarY + DE_TOOLBAR_H + 6;
+  ListBottom := ScrH - DE_PAD_Y;
+  CardX := DE_PAD_X + 8;
+  CardW := ScrW - 2 * DE_PAD_X - 16 - DE_SCROLLBAR_W - 4;
+
+  // 1) Открытый combobox — клик на пункт или вне → закрыть.
+  if DevEditorComboboxOpen and
+     (DevEditorComboboxCardIdx >= 0) and
+     (DevEditorComboboxCardIdx < Length(CustomTexts)) then
+  begin
+    Idx := DevEditorComboboxCardIdx;
+    CardY := ListY + 6 + Idx * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+    CmbX := CardX + DE_IDX_W;
+    CmbY := CardY + 30 + DE_BTN_SMALL + 2;
+    CmbW := DE_SOURCE_W;
+    CmbH := KLUB_SOURCE_COUNT * DE_COMBO_DROP_H + 4;
+    if CmbY + CmbH > ScrH - DE_PAD_Y then CmbY := CardY - CmbH - 2;
+    if DEInRect(MX, MY, CmbX, CmbY, CmbW, CmbH) then
+    begin
+      k := (MY - CmbY - 4) div DE_COMBO_DROP_H;
+      if (k >= 0) and (k < KLUB_SOURCE_COUNT) then
+      begin
+        CustomTexts[Idx].Source := TKlubSource(k);
+        SaveConfig;
+      end;
+    end;
+    DevEditorComboboxOpen := False;
+    DevEditorComboboxCardIdx := -1;
+    Exit;
+  end;
+
+  // 2) Открытый color picker — клик на пункт или вне → закрыть.
+  if DevEditorColorPickerOpen and
+     (DevEditorColorPickerCardIdx >= 0) and
+     (DevEditorColorPickerCardIdx < Length(CustomTexts)) then
+  begin
+    Idx := DevEditorColorPickerCardIdx;
+    CardY := ListY + 6 + Idx * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+    CellX := CardX + DE_IDX_W + DE_SOURCE_W + 8 + 7 * DE_CELL_W;
+    PkrW := DE_PICKER_COLS * (DE_PICKER_SIZE + 2) + 8;
+    PkrH := DE_PICKER_ROWS * (DE_PICKER_SIZE + 2) + 8;
+    PkrX := CellX + DE_SWATCH_W - PkrW;
+    if PkrX < DE_PAD_X then PkrX := DE_PAD_X;
+    PkrY := CardY + DE_CARD_H + 4;
+    if PkrY + PkrH > ScrH - DE_PAD_Y then PkrY := CardY - PkrH - 4;
+    if DEInRect(MX, MY, PkrX, PkrY, PkrW, PkrH) then
+    begin
+      for Row := 0 to DE_PICKER_ROWS - 1 do
+        for Col := 0 to DE_PICKER_COLS - 1 do
+        begin
+          k := Row * DE_PICKER_COLS + Col;
+          if k >= 18 then Break;
+          PaletteX := PkrX + 4 + Col * (DE_PICKER_SIZE + 2);
+          PaletteY := PkrY + 4 + Row * (DE_PICKER_SIZE + 2);
+          if DEInRect(MX, MY, PaletteX, PaletteY, DE_PICKER_SIZE, DE_PICKER_SIZE) then
+          begin
+            CustomTexts[Idx].Color := DevEditorPalette[k];
+            SaveConfig;
+            Break;
+          end;
+        end;
+    end;
+    DevEditorColorPickerOpen := False;
+    DevEditorColorPickerCardIdx := -1;
+    Exit;
+  end;
+
+  // 3) Header buttons
+  if DEInRect(MX, MY, DE_PAD_X + 12, HeaderY + 12, 110, DE_HEADER_H - 24) then
+  begin
+    DevEditorVisible := False;
+    DevEditorScrollY := 0;
+    Exit;
+  end;
+
+  // 4) Toolbar — Add Text
+  if DEInRect(MX, MY, DE_PAD_X + 12, ToolbarY + 10, 110, 24) then
+  begin
+    AddCustomText;
+    SaveConfig;
+    Exit;
+  end;
+
+  // 4b) Toolbar — Mode selector (Move / Rotate / Scale)
+  if DEInRect(MX, MY, DE_PAD_X + 184, ToolbarY + 10, 90, 24) then
+  begin
+    GizmoMode := gmTranslate;
+    SaveConfig;
+    Exit;
+  end;
+  if DEInRect(MX, MY, DE_PAD_X + 278, ToolbarY + 10, 100, 24) then
+  begin
+    GizmoMode := gmRotate;
+    SaveConfig;
+    Exit;
+  end;
+  if DEInRect(MX, MY, DE_PAD_X + 382, ToolbarY + 10, 70, 24) then
+  begin
+    GizmoMode := gmScale;
+    SaveConfig;
+    Exit;
+  end;
+
+  // 5) Scrollbar drag
+  if DevEditorMaxScroll > 0 then
+  begin
+    ScrollbarX := ScrW - DE_PAD_X - 4 - DE_SCROLLBAR_W;
+    VisibleH := ListBottom - ListY - 8;
+    ContentH := Length(CustomTexts) * (DE_CARD_H + DE_CARD_GAP);
+    if ContentH < VisibleH then ContentH := VisibleH;
+    ScrollbarHandleH := Round(VisibleH * VisibleH / ContentH);
+    if ScrollbarHandleH < 24 then ScrollbarHandleH := 24;
+    ScrollbarHandleY := ListY + 4 + Round(DevEditorScrollY *
+      (VisibleH - ScrollbarHandleH) / DevEditorMaxScroll);
+    ScrollbarTop := ListY + 4;
+    if DEInRect(MX, MY, ScrollbarX, ScrollbarHandleY, DE_SCROLLBAR_W, ScrollbarHandleH) then
+    begin
+      DevEditorScrollbarDragging := True;
+      DevEditorScrollbarDragOffsetY := MY - ScrollbarHandleY;
+      Exit;
+    end;
+    // Клик в пустую часть полосы — page-scroll.
+    if DEInRect(MX, MY, ScrollbarX, ScrollbarTop, DE_SCROLLBAR_W, VisibleH) then
+    begin
+      if MY < ScrollbarHandleY then DevEditorScrollY := DevEditorScrollY - VisibleH div 2
+      else DevEditorScrollY := DevEditorScrollY + VisibleH div 2;
+      if DevEditorScrollY < 0 then DevEditorScrollY := 0;
+      if DevEditorScrollY > DevEditorMaxScroll then DevEditorScrollY := DevEditorMaxScroll;
+      Exit;
+    end;
+  end;
+
+  // 6) Карточки — селект + хотспоты
+  if (MY < ListY) or (MY > ListBottom) then Exit;
+  HitCard := -1;
+  HitHotspot := DE_HOT_NONE;
+  for i := 0 to Length(CustomTexts) - 1 do
+  begin
+    CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+    if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
+    if DEInRect(MX, MY, CardX, CardY, CardW, DE_CARD_H) then
+    begin
+      HitCard := i;
+      HitHotspot := DEHotspotAtPoint(MX, MY, CardX, CardY, CardW);
+      Break;
+    end;
+  end;
+  if HitCard < 0 then Exit;
+
+  // Любой клик внутри карточки выделяет её, плюс выполняет hotspot-действие.
+  CustomTextSelectedIdx := HitCard;
+  SyncSlidersFromSelected;
+
+  case HitHotspot of
+    DE_HOT_SOURCE:
+    begin
+      DevEditorComboboxOpen := True;
+      DevEditorComboboxCardIdx := HitCard;
+    end;
+    DE_HOT_X_MINUS, DE_HOT_X_PLUS,
+    DE_HOT_Y_MINUS, DE_HOT_Y_PLUS,
+    DE_HOT_Z_MINUS, DE_HOT_Z_PLUS,
+    DE_HOT_RX_MINUS, DE_HOT_RX_PLUS,
+    DE_HOT_RY_MINUS, DE_HOT_RY_PLUS,
+    DE_HOT_RZ_MINUS, DE_HOT_RZ_PLUS,
+    DE_HOT_S_MINUS, DE_HOT_S_PLUS:
+    begin
+      DEApplyStep(HitCard, HitHotspot, DEHotspotSign(HitHotspot));
+      // Запускаем auto-repeat — продолжается, пока ЛКМ зажата.
+      DevEditorBtnHeldHotspot := HitHotspot;
+      DevEditorBtnHeldCardIdx := HitCard;
+      DevEditorBtnHeldStartTime := GetTickCount;
+      DevEditorBtnLastFireTime := DevEditorBtnHeldStartTime;
+      SaveConfig;
+    end;
+    DE_HOT_COLOR:
+    begin
+      DevEditorColorPickerOpen := True;
+      DevEditorColorPickerCardIdx := HitCard;
+    end;
+    DE_HOT_VISIBLE:
+    begin
+      CustomTexts[HitCard].Visible := not CustomTexts[HitCard].Visible;
+      SaveConfig;
+    end;
+    DE_HOT_DELETE:
+    begin
+      CustomTextSelectedIdx := HitCard;
+      DeleteSelectedCustomText;
+      SaveConfig;
+    end;
+  end;
+end;
+
+procedure HandleDevEditorMouseUp;
+begin
+  DevEditorScrollbarDragging := False;
+  DevEditorBtnHeldHotspot := DE_HOT_NONE;
+  DevEditorBtnHeldCardIdx := -1;
+end;
+
+// Per-frame обновление: hover state, scrollbar drag, auto-repeat, mouse wheel.
+procedure UpdateDevEditorPerFrame;
+var
+  MX, MY: Integer;
+  i, ScrW, ScrH: Integer;
+  ListY, ListBottom: Integer;
+  CardX, CardY, CardW, ToolbarY, HeaderY: Integer;
+  WheelDelta: Integer;
+  TickNow: Cardinal;
+  VisibleH, ScrollbarHandleH, NewHandleY: Integer;
+  ContentH: Integer;
+begin
+  if not DevEditorVisible then
+  begin
+    DevEditorHoveredCard := -1;
+    DevEditorHoveredHotspot := DE_HOT_NONE;
+    Exit;
+  end;
+  MX := Round(MoveXcoord);
+  MY := Round(MoveYcoord);
+  ScrW := InitResX;
+  ScrH := InitResY;
+  HeaderY := DE_PAD_Y;
+  ToolbarY := HeaderY + DE_HEADER_H + 6;
+  ListY := ToolbarY + DE_TOOLBAR_H + 6;
+  ListBottom := ScrH - DE_PAD_Y;
+  CardX := DE_PAD_X + 8;
+  CardW := ScrW - 2 * DE_PAD_X - 16 - DE_SCROLLBAR_W - 4;
+
+  // Hover на header кнопке Back
+  if DEInRect(MX, MY, DE_PAD_X + 12, HeaderY + 12, 110, DE_HEADER_H - 24) then
+  begin
+    DevEditorHoveredHotspot := DE_HOT_BACK;
+    DevEditorHoveredCard := -1;
+  end
+  // Hover на Add Text
+  else if DEInRect(MX, MY, DE_PAD_X + 12, ToolbarY + 10, 110, 24) then
+  begin
+    DevEditorHoveredHotspot := DE_HOT_ADD;
+    DevEditorHoveredCard := -1;
+  end
+  // Hover на Mode-кнопки
+  else if DEInRect(MX, MY, DE_PAD_X + 184, ToolbarY + 10, 90, 24) then
+  begin
+    DevEditorHoveredHotspot := DE_HOT_MODE_T;
+    DevEditorHoveredCard := -1;
+  end
+  else if DEInRect(MX, MY, DE_PAD_X + 278, ToolbarY + 10, 100, 24) then
+  begin
+    DevEditorHoveredHotspot := DE_HOT_MODE_R;
+    DevEditorHoveredCard := -1;
+  end
+  else if DEInRect(MX, MY, DE_PAD_X + 382, ToolbarY + 10, 70, 24) then
+  begin
+    DevEditorHoveredHotspot := DE_HOT_MODE_S;
+    DevEditorHoveredCard := -1;
+  end
+  else
+  begin
+    // Hover на карточках
+    DevEditorHoveredCard := -1;
+    DevEditorHoveredHotspot := DE_HOT_NONE;
+    if (MY >= ListY) and (MY <= ListBottom) then
+    begin
+      for i := 0 to Length(CustomTexts) - 1 do
+      begin
+        CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+        if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
+        if DEInRect(MX, MY, CardX, CardY, CardW, DE_CARD_H) then
+        begin
+          DevEditorHoveredCard := i;
+          DevEditorHoveredHotspot := DEHotspotAtPoint(MX, MY, CardX, CardY, CardW);
+          Break;
+        end;
+      end;
+    end;
+  end;
+
+  // Mouse wheel — прокрутка списка.
+  WheelDelta := MouseWheelDelta;
+  if (WheelDelta <> 0) and (DevEditorMaxScroll > 0) then
+  begin
+    DevEditorScrollY := DevEditorScrollY - WheelDelta * (DE_CARD_H + DE_CARD_GAP);
+    if DevEditorScrollY < 0 then DevEditorScrollY := 0;
+    if DevEditorScrollY > DevEditorMaxScroll then DevEditorScrollY := DevEditorMaxScroll;
+  end;
+
+  // Drag-скроллбара
+  if DevEditorScrollbarDragging and ((GetAsyncKeyState(VK_LBUTTON) and $8000) <> 0) then
+  begin
+    if DevEditorMaxScroll > 0 then
+    begin
+      VisibleH := ListBottom - ListY - 8;
+      ContentH := Length(CustomTexts) * (DE_CARD_H + DE_CARD_GAP);
+      if ContentH < VisibleH then ContentH := VisibleH;
+      ScrollbarHandleH := Round(VisibleH * VisibleH / ContentH);
+      if ScrollbarHandleH < 24 then ScrollbarHandleH := 24;
+      NewHandleY := MY - DevEditorScrollbarDragOffsetY - (ListY + 4);
+      if NewHandleY < 0 then NewHandleY := 0;
+      if NewHandleY > VisibleH - ScrollbarHandleH then NewHandleY := VisibleH - ScrollbarHandleH;
+      DevEditorScrollY := Round(NewHandleY * DevEditorMaxScroll /
+        (VisibleH - ScrollbarHandleH));
+    end;
+  end
+  else
+    DevEditorScrollbarDragging := False;
+
+  // Auto-repeat для +/- кнопок
+  if DevEditorBtnHeldHotspot <> DE_HOT_NONE then
+  begin
+    if (GetAsyncKeyState(VK_LBUTTON) and $8000) = 0 then
+    begin
+      DevEditorBtnHeldHotspot := DE_HOT_NONE;
+      DevEditorBtnHeldCardIdx := -1;
+    end
+    else
+    begin
+      TickNow := GetTickCount;
+      if TickNow - DevEditorBtnHeldStartTime > DE_AUTO_REPEAT_DELAY then
+      begin
+        if TickNow - DevEditorBtnLastFireTime > DE_AUTO_REPEAT_RATE then
+        begin
+          DEApplyStep(DevEditorBtnHeldCardIdx, DevEditorBtnHeldHotspot,
+            DEHotspotSign(DevEditorBtnHeldHotspot));
+          DevEditorBtnLastFireTime := TickNow;
+        end;
+      end;
+    end;
   end;
 end;
 

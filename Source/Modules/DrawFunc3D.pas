@@ -136,6 +136,12 @@ function ApplyKPD3Patch: Boolean;
 function ApplyBLOKPatch: Boolean;
 function HandleBlockKeyboardClick(mouseX, mouseY: Integer): Boolean;
 
+// Идентификация текущего локомотива/составности — используется в CheatMenu
+// для per-loco конфигов кастомных текстов.
+function GetLocomotiveFolder(locType: Integer): string;
+function GetLocomotiveTypeFromMemory: Integer;
+function GetLocNum: string;
+
 
 
 procedure WriteHookAddress; stdcall;
@@ -296,7 +302,7 @@ fbo_w, fbo_h, fbo_z : cardinal;
 fbo2 : cardinal;
 
 implementation
-uses Advanced3D, DrawFunc2D, RA3;
+uses Advanced3D, DrawFunc2D, RA3, CheatMenu;
 
 type TAMesh = record
 Ident : cardinal;
@@ -8046,6 +8052,9 @@ begin
     glEnable(GL_LIGHTING);
     EndObj3D;
   end;
+
+  // Кастомные 3D-тексты + гизмо. Один раз за кадр (внутренний дедуплекс).
+  RenderCustomTextsAndGizmoForFrame;
 end;
 
 procedure DrawKPD3VL85(
@@ -10343,6 +10352,9 @@ begin
     on E: Exception do
       AddToLogFile(EngineLog, 'Ошибка отрисовки BLOCK: ' + E.Message);
   end;
+
+  // Кастомные 3D-тексты + гизмо. Один раз за кадр (внутренний дедуплекс).
+  RenderCustomTextsAndGizmoForFrame;
 end;
 
 // Дополнительная функция для принудительной переинициализации (опционально)
@@ -11944,6 +11956,10 @@ begin
   end;
 end;
 
+  // Кастомные 3D-тексты + гизмо для текущей кабины. Дедуплекс внутри
+  // — за кадр выполнится только один раз, даже если ниже по pipeline'у
+  // тоже сработает DrawKPD3 / DrawBLOCK.
+  RenderCustomTextsAndGizmoForFrame;
 
 end;
 
