@@ -23,7 +23,7 @@ unit EngineCore;
 interface
 uses SysUtils, Windows, Messages, Variables, OpenGl, DrawFunc2D, Textures,
 EngineUtils, DrawFunc3D, Console, Sound, DPC_packages, Advanced3D, Net,
-IniFile, CheatMenu, DiscordRPC, FXAA, Bloom;
+IniFile, CheatMenu, DiscordRPC, FXAA, Bloom, PostFX, SystemTime;
 
 {$R DGLEngine.res}
 {$R Logo.res}
@@ -750,6 +750,7 @@ begin
 
   ResizeFXAA(Width, Height);
   ResizeBloom(Width, Height);
+  ResizePostFX(Width, Height);
 end;
 {------------------------------------------------------------------}
 procedure UpdateRenderRect(NewWidth,NewHeight : integer); stdcall;
@@ -762,6 +763,18 @@ var i : cardinal;
 begin
 
       //PSingle($8CC9A4)^ := -2.0;
+
+      // ZDS-Booster: tell PostFX a new frame is starting so the per-frame
+      // Pre2D snapshot flag can be reset. Done before anything else draws
+      // (and crucially before glClear) — only the first Begin2D in this
+      // frame will then trigger the snapshot.
+      if Assigned(PostFX_OnBeginFrame) then PostFX_OnBeginFrame();
+
+      // ZDS-Booster: пишет системное время Windows в AbsoluteTime
+      // симулятора (если включено в WORLD-вкладке). No-op при выключенной
+      // настройке или если адрес ещё не валиден (раннее меню запуска).
+      ApplySystemTimeOverride;
+
         ProcessFreecam;
 
 //        if not success then
@@ -801,6 +814,17 @@ begin
          for i:=0 to length(Plugins)-1 do
           if(Plugins[i].Loaded) and (@Plugins[i].DrawPost<>nil) then Plugins[i].DrawPost;
 
+       // ZDS-Booster: unified PostFX render-graph (PostFX.pas).
+       // Замечание о порядке: пост-обработка идёт ДО отрисовки наших 2D-
+       // оверлеев (CheatMenu и Logo), чтобы bloom/tonemap/vignette/grain
+       // не размывали и не подкрашивали меню F12 и логотип. Игровой 2D-HUD
+       // (внутри glDraw) при этом всё ещё проходит через PostFX — отделить
+       // его без хуков в ZDSimulator.exe нельзя.
+       //
+       // ApplyPostFX сохраняет/восстанавливает GL-state через glPushAttrib,
+       // так что DrawCheatMenu / DrawTexture2D работают как раньше.
+       ApplyPostFX;
+
        DrawCheatMenu;
 
        if ShowLogo and (LogoA<>0) then
@@ -811,12 +835,10 @@ begin
         End2D;
        end;
 
-       ApplyBloom;
-       EndFXAAFrame;
-
-       glFlush();
-       glFinish();
-
+      // ZDS-Booster perf fix: glFinish() блокировал CPU до конца GPU-кадра,
+      // убивая pipelining и FPS на современных GPU. SwapBuffers сам делает
+      // implicit flush, поэтому отдельные glFlush/glFinish не нужны и при
+      // их отсутствии 165 Hz ощущается реально (а не урезается до 30-60).
       if paused then Sleep(1);
 
       SwapBuffers(h_DC);
@@ -2210,8 +2232,11 @@ end;
   glEnable(GL_NORMALIZE);
   glEnable(GL_COLOR_MATERIAL);
 
+  // Legacy single-pass effects, kept for fallback even though ApplyPostFX
+  // is what actually runs at present time (see EngineMainDraw).
   InitFXAA(Width, Height);
   InitBloom(Width, Height);
+  InitPostFX(Width, Height);
 
   InitEng;
 

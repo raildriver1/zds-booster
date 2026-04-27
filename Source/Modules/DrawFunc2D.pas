@@ -67,6 +67,13 @@ implementation
 
 procedure Begin2D; stdcall;
 begin
+  // ZDS-Booster: notify PostFX that 2D rendering is about to start. On the
+  // first call per frame this snapshots the current backbuffer (the "pure
+  // 3D" reference) so the post-process pass can later detect HUD pixels by
+  // diffing it against the final scene. Subsequent calls in the same frame
+  // are a cheap nil-check + early-out inside MarkBefore2D.
+  if Assigned(PostFX_OnBegin2D) then PostFX_OnBegin2D();
+
   if MultyTexActive then DeactiveMultytexturing;
   glGetFloatv(GL_CURRENT_COLOR, @LColor);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);

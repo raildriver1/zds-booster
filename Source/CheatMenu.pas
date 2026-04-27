@@ -43,6 +43,12 @@ type
     ShadowIntensity: Single;
     TargetShadowIntensity: Single;
     OriginalWidth: Integer;
+    // "Paper-drag" feel: окно немного отстаёт в наклоне за курсором,
+    // как лист бумаги, который держишь сверху и тянешь.
+    // PrevDragX — X-курсор в прошлом кадре (валидно только при IsDragging),
+    // DragVelX  — сглаженная горизонтальная velocity курсора (low-pass).
+    PrevDragX: Integer;
+    DragVelX: Single;
     // Анимация появления
     SpawnDelay: Single;
   end;
@@ -89,9 +95,39 @@ type
     
     NewSky: Boolean;
 
+    // Подмена внутриигрового AbsoluteTime на системное время Windows
+    // (toggle в WORLD-вкладке). Зеркалит InitSystemTimeEnable.
+    SystemTimeEnable: Boolean;
+
     // Visual — engine-level post-process toggles (ZDS-Booster).
     FXAAEnable: Boolean;
     BloomEnable: Boolean;
+    // PostFX render-graph (Phase 1 + Phase 2). Each toggle is mirrored to
+    // its Init* global in Variables.pas which PostFX.pas re-reads every
+    // frame, so flips are visible immediately with no restart.
+    PostFXEnable: Boolean;     // master switch for the whole chain
+    TonemapEnable: Boolean;    // ACES Filmic curve + sRGB roundtrip
+    SharpenEnable: Boolean;    // CAS contrast-adaptive sharpening
+    VignetteEnable: Boolean;   // corner darkening
+    GrainEnable: Boolean;      // film-grain noise
+    SSAOEnable: Boolean;       // screen-space ambient occlusion
+    FogEnable: Boolean;        // depth-based atmospheric fog
+    DOFEnable: Boolean;        // depth of field
+    // Раскрывающаяся секция со списком 9 эффектов. Когда AnimProgress > 0
+    // секция разворачивается с анимацией; высота секции вычисляется в
+    // GetPostFXContentHeight, и WORLD-окно соответственно растёт.
+    PostFXSection: TExpandableSection;
+
+    // Shadow-копия 9 индивидуальных toggle, которая запоминается в момент
+    // выключения мастера ("Графич. эффекты"), чтобы при следующем
+    // включении восстановить ровно ту конфигурацию, что была у пользователя.
+    // Init=False означает что shadow ещё ни разу не сохранялся (свежая
+    // сессия / сразу после старта); в этом случае master-on восстанавливает
+    // дефолты Variables.pas вместо shadow.
+    PostFXSaved: record
+      Init: Boolean;
+      FXAA, Bloom, Tonemap, Sharpen, Vignette, Grain, SSAO, Fog, DOF: Boolean;
+    end;
 
     // Locomotive
     NewClubPositions: Boolean;
@@ -304,8 +340,17 @@ type
     MainCameraText: string;
     MaxDistanceText: string;
     NewSkyText: string;
+    SystemTimeText: string;
     FXAAText: string;
     BloomText: string;
+    PostFXText: string;
+    TonemapText: string;
+    SharpenText: string;
+    VignetteText: string;
+    GrainText: string;
+    SSAOText: string;
+    FogText: string;
+    DOFText: string;
     ClubFixesText: string;
     DeveloperMenuText: string;
     RA3HoverText: string;
@@ -344,8 +389,17 @@ const
       MainCameraText: 'Основная Камера';
       MaxDistanceText: 'Макс. дальность';
       NewSkyText: 'Новая логика неба';
+      SystemTimeText: 'Системное время';
       FXAAText: 'Сглаживание FXAA';
       BloomText: 'Свечение (Bloom)';
+      PostFXText: 'Графич. эффекты';
+      TonemapText: 'Кинокорректор (ACES)';
+      SharpenText: 'Резкость (CAS)';
+      VignetteText: 'Виньетка';
+      GrainText: 'Зернистость';
+      SSAOText: 'Объёмная тень (SSAO)';
+      FogText: 'Атмосферная дымка';
+      DOFText: 'Глубина резкости';
       ClubFixesText: 'Исправления БИЛ-В';
       DeveloperMenuText: 'Меню разработчика';
       RA3HoverText: 'RA3 подсветка';
@@ -375,8 +429,17 @@ const
       MainCameraText: 'Основна Камера';
       MaxDistanceText: 'Макс. відстань';
       NewSkyText: 'Нова логіка неба';
+      SystemTimeText: 'Системний час';
       FXAAText: 'Згладжування FXAA';
       BloomText: 'Сяйво (Bloom)';
+      PostFXText: 'Граф. ефекти';
+      TonemapText: 'Кінокорекція (ACES)';
+      SharpenText: 'Різкість (CAS)';
+      VignetteText: 'Віньєтка';
+      GrainText: 'Зернистість';
+      SSAOText: 'Об''ємна тінь (SSAO)';
+      FogText: 'Атмосферна імла';
+      DOFText: 'Глибина різкості';
       ClubFixesText: 'Виправлення БІЛ-В';
       DeveloperMenuText: 'Меню розробника';
       RA3HoverText: 'RA3 підсвітка';
@@ -406,8 +469,17 @@ const
       MainCameraText: 'Main Camera';
       MaxDistanceText: 'Max Distance';
       NewSkyText: 'New Sky Logic';
+      SystemTimeText: 'System Time';
       FXAAText: 'FXAA Antialiasing';
       BloomText: 'Bloom Glow';
+      PostFXText: 'Graphics FX';
+      TonemapText: 'Filmic Tonemap (ACES)';
+      SharpenText: 'Sharpen (CAS)';
+      VignetteText: 'Vignette';
+      GrainText: 'Film Grain';
+      SSAOText: 'Ambient Occlusion';
+      FogText: 'Atmospheric Fog';
+      DOFText: 'Depth of Field';
       ClubFixesText: 'BIL-V Fixes';
       DeveloperMenuText: 'Developer Menu';
       RA3HoverText: 'RA3 Highlight';
@@ -440,8 +512,17 @@ begin
   else if TextType = 'MainCameraText' then Result := LanguageTexts[CurrentLanguage].MainCameraText
   else if TextType = 'MaxDistanceText' then Result := LanguageTexts[CurrentLanguage].MaxDistanceText
   else if TextType = 'NewSkyText' then Result := LanguageTexts[CurrentLanguage].NewSkyText
+  else if TextType = 'SystemTimeText' then Result := LanguageTexts[CurrentLanguage].SystemTimeText
   else if TextType = 'FXAAText' then Result := LanguageTexts[CurrentLanguage].FXAAText
   else if TextType = 'BloomText' then Result := LanguageTexts[CurrentLanguage].BloomText
+  else if TextType = 'PostFXText' then Result := LanguageTexts[CurrentLanguage].PostFXText
+  else if TextType = 'TonemapText' then Result := LanguageTexts[CurrentLanguage].TonemapText
+  else if TextType = 'SharpenText' then Result := LanguageTexts[CurrentLanguage].SharpenText
+  else if TextType = 'VignetteText' then Result := LanguageTexts[CurrentLanguage].VignetteText
+  else if TextType = 'GrainText' then Result := LanguageTexts[CurrentLanguage].GrainText
+  else if TextType = 'SSAOText' then Result := LanguageTexts[CurrentLanguage].SSAOText
+  else if TextType = 'FogText' then Result := LanguageTexts[CurrentLanguage].FogText
+  else if TextType = 'DOFText' then Result := LanguageTexts[CurrentLanguage].DOFText
   else if TextType = 'ClubFixesText' then Result := LanguageTexts[CurrentLanguage].ClubFixesText
   else if TextType = 'DeveloperMenuText' then Result := LanguageTexts[CurrentLanguage].DeveloperMenuText
   else if TextType = 'RA3HoverText' then Result := LanguageTexts[CurrentLanguage].RA3HoverText
@@ -2621,6 +2702,56 @@ begin
         if Key = 'show_wires' then Settings.ShowWires := (Value = '1');
         if Key = 'show_distant_models' then Settings.ShowDistantModels := (Value = '1');
         if Key = 'show_traffic_lights' then Settings.ShowTrafficLights := (Value = '1');
+
+        // ZDS-Booster: System time override.
+        if Key = 'system_time' then begin
+          Settings.SystemTimeEnable := (Value = '1');
+          InitSystemTimeEnable := Settings.SystemTimeEnable;
+        end;
+
+        // ZDS-Booster: PostFX render-graph. Each key maps to both a Settings
+        // field (for the menu toggles) and the matching Init*Enable global
+        // that PostFX.pas reads on the next frame.
+        if Key = 'fxaa' then begin
+          Settings.FXAAEnable := (Value = '1');
+          InitFXAAEnable := Settings.FXAAEnable;
+        end;
+        if Key = 'bloom' then begin
+          Settings.BloomEnable := (Value = '1');
+          InitBloomEnable := Settings.BloomEnable;
+        end;
+        if Key = 'postfx' then begin
+          Settings.PostFXEnable := (Value = '1');
+          InitPostFXEnable := Settings.PostFXEnable;
+        end;
+        if Key = 'tonemap' then begin
+          Settings.TonemapEnable := (Value = '1');
+          InitTonemapEnable := Settings.TonemapEnable;
+        end;
+        if Key = 'sharpen' then begin
+          Settings.SharpenEnable := (Value = '1');
+          InitSharpenEnable := Settings.SharpenEnable;
+        end;
+        if Key = 'vignette' then begin
+          Settings.VignetteEnable := (Value = '1');
+          InitVignetteEnable := Settings.VignetteEnable;
+        end;
+        if Key = 'grain' then begin
+          Settings.GrainEnable := (Value = '1');
+          InitGrainEnable := Settings.GrainEnable;
+        end;
+        if Key = 'ssao' then begin
+          Settings.SSAOEnable := (Value = '1');
+          InitSSAOEnable := Settings.SSAOEnable;
+        end;
+        if Key = 'fog' then begin
+          Settings.FogEnable := (Value = '1');
+          InitFogEnable := Settings.FogEnable;
+        end;
+        if Key = 'dof' then begin
+          Settings.DOFEnable := (Value = '1');
+          InitDOFEnable := Settings.DOFEnable;
+        end;
         
         // Значения слайдеров (ParseFloat нормализует запятую/точку)
         if Key = 'basespeed' then Settings.BasespeedSlider.Value := ParseFloat(Value, 1.0);
@@ -2754,6 +2885,26 @@ begin
     if Settings.ShowWires then WriteLn(F, 'show_wires: 1') else WriteLn(F, 'show_wires: 0');
     if Settings.ShowDistantModels then WriteLn(F, 'show_distant_models: 1') else WriteLn(F, 'show_distant_models: 0');
     if Settings.ShowTrafficLights then WriteLn(F, 'show_traffic_lights: 1') else WriteLn(F, 'show_traffic_lights: 0');
+
+    // ZDS-Booster: System time override (WORLD-вкладка).
+    if Settings.SystemTimeEnable then WriteLn(F, 'system_time: 1') else WriteLn(F, 'system_time: 0');
+
+    // ZDS-Booster: graphics-effects toggles. PostFX re-reads each
+    // Init*Enable global every frame, so simply mirroring the menu state
+    // here keeps .cfg, in-memory globals and the live pipeline in sync
+    // after SaveConfig(). `postfx:` is the master ("Графич. эффекты"); when
+    // 0, all individual flags will also be 0 because SetPostFXMasterEnabled
+    // forced them off when the user disabled the master.
+    if Settings.PostFXEnable    then WriteLn(F, 'postfx: 1')      else WriteLn(F, 'postfx: 0');
+    if Settings.FXAAEnable      then WriteLn(F, 'fxaa: 1')        else WriteLn(F, 'fxaa: 0');
+    if Settings.BloomEnable     then WriteLn(F, 'bloom: 1')       else WriteLn(F, 'bloom: 0');
+    if Settings.TonemapEnable   then WriteLn(F, 'tonemap: 1')     else WriteLn(F, 'tonemap: 0');
+    if Settings.SharpenEnable   then WriteLn(F, 'sharpen: 1')     else WriteLn(F, 'sharpen: 0');
+    if Settings.VignetteEnable  then WriteLn(F, 'vignette: 1')    else WriteLn(F, 'vignette: 0');
+    if Settings.GrainEnable     then WriteLn(F, 'grain: 1')       else WriteLn(F, 'grain: 0');
+    if Settings.SSAOEnable      then WriteLn(F, 'ssao: 1')        else WriteLn(F, 'ssao: 0');
+    if Settings.FogEnable       then WriteLn(F, 'fog: 1')         else WriteLn(F, 'fog: 0');
+    if Settings.DOFEnable       then WriteLn(F, 'dof: 1')         else WriteLn(F, 'dof: 0');
     
     // Значения слайдеров
     WriteLn(F, 'basespeed: ' + FormatValue(Settings.BasespeedSlider.Value));
@@ -3131,6 +3282,10 @@ begin
   end;
 end;
 
+// Forward — реализация ниже у DrawModernCheckbox/Toggle вместе с другими
+// helpers; UpdateAnimations должна вызвать PaperDragTick на каждом кадре.
+procedure PaperDragTick(var Win: TWindow); forward;
+
 procedure UpdateAnimations;
 var
   CurrentTime: Cardinal;
@@ -3162,6 +3317,14 @@ begin
 
   CenterX := InitResX div 2;
   CenterY := InitResY div 2;
+
+  // Paper-drag: гасим velocity и обновляем TargetRotation КАЖДЫЙ кадр —
+  // даже если курсор не двигается (WM_MOUSEMOVE не приходит). Без этого
+  // окно "залипало" под углом до следующего движения.
+  PaperDragTick(RenderWindow);
+  PaperDragTick(WorldWindow);
+  PaperDragTick(LocomotiveWindow);
+  PaperDragTick(MenuWindow);
 
   // При открытии окно начинает анимацию только после своего SpawnDelay; при закрытии — все сразу
   AnimateWindow(RenderWindow,     DeltaTime, (not MenuVisible) or (MenuOpenTimer >= RenderWindow.SpawnDelay),     MenuAnimationProgress, CenterX, CenterY);
@@ -3214,6 +3377,21 @@ begin
     if MaxVisibleDistanceSection.AnimProgress < 0 then MaxVisibleDistanceSection.AnimProgress := 0;
     if MaxVisibleDistanceSection.AnimProgress > 1 then MaxVisibleDistanceSection.AnimProgress := 1;
 
+    // PostFX секция (Phase 1 + Phase 2). Та же 5x exponential glide, что и
+    // у остальных раскрывающихся секций — глаз не различает разницы.
+    if PostFXSection.Expanded then
+    begin
+      if PostFXSection.AnimProgress < 1.0 then
+        PostFXSection.AnimProgress := PostFXSection.AnimProgress + 5.0 * DeltaTime;
+    end
+    else
+    begin
+      if PostFXSection.AnimProgress > 0.0 then
+        PostFXSection.AnimProgress := PostFXSection.AnimProgress - 5.0 * DeltaTime;
+    end;
+    if PostFXSection.AnimProgress < 0 then PostFXSection.AnimProgress := 0;
+    if PostFXSection.AnimProgress > 1 then PostFXSection.AnimProgress := 1;
+
     // Developer секция
     if DeveloperSection.Expanded then
     begin
@@ -3238,6 +3416,17 @@ begin
   // ZDS-Booster: seed Visual tab state from engine globals.
   Settings.FXAAEnable := InitFXAAEnable;
   Settings.BloomEnable := InitBloomEnable;
+  // Seed system-time toggle from its global.
+  Settings.SystemTimeEnable := InitSystemTimeEnable;
+  // PostFX (Phase 1 + Phase 2) — seed from Variables.pas defaults.
+  Settings.PostFXEnable    := InitPostFXEnable;
+  Settings.TonemapEnable   := InitTonemapEnable;
+  Settings.SharpenEnable   := InitSharpenEnable;
+  Settings.VignetteEnable  := InitVignetteEnable;
+  Settings.GrainEnable     := InitGrainEnable;
+  Settings.SSAOEnable      := InitSSAOEnable;
+  Settings.FogEnable       := InitFogEnable;
+  Settings.DOFEnable       := InitDOFEnable;
 
   // Инициализация ГЛОБАЛЬНОГО слайдера яркости
   Settings.BrightnessSlider.Value := 0.0;
@@ -3479,6 +3668,87 @@ begin
     DrawLine2D(CenterX, CenterY - 5, CenterX, CenterY + 5, IconColor, Alpha, 2.0);
 end;
 
+// Универсальный hover-detection. Возвращает 1.0 если курсор находится
+// внутри прямоугольника (X, Y, W, H), иначе 0.0. Координаты курсора берутся
+// из глобальных MoveXcoord / MoveYcoord (screen-space, обновляются движком
+// каждый кадр), те же что используют гизмо и hover в DrawPostFXToggles.
+//
+// Бинарный (0/1) вместо плавной анимации: DrawModernToggle/Checkbox внутри
+// уже лерпит цвета через LerpColor(...) — на глаз получается мягкий
+// переход за счёт сглаживания между кадрами.
+function HoverFor(X, Y, W, H: Integer): Single;
+var
+  MX, MY: Integer;
+begin
+  MX := Round(MoveXcoord);
+  MY := Round(MoveYcoord);
+  if (MX >= X) and (MX < X + W) and (MY >= Y) and (MY < Y + H) then
+    Result := 1.0
+  else
+    Result := 0.0;
+end;
+
+function ClampF(V, A, B: Single): Single;
+begin
+  if V < A then Result := A
+  else if V > B then Result := B
+  else Result := V;
+end;
+
+// "Paper drag" rotation: окно отстаёт в наклоне за курсором, как лист
+// бумаги, который держишь сверху и тянешь в сторону.
+//
+// Логика разнесена на два хука:
+//
+//   * PaperDragOnMouseMove(Win, X) — вызывается на WM_MOUSEMOVE при
+//     активном drag'е. Накапливает мгновенную velocity курсора в
+//     Win.DragVelX (с инжекцией свежего DeltaX поверх остатка предыдущей
+//     велосити, чтобы быстрые рывки сразу давали большой угол).
+//
+//   * PaperDragTick(Win) — вызывается каждый кадр в UpdateAnimations.
+//     Затухает Win.DragVelX (per-frame damping) и переписывает
+//     Win.TargetRotation. Это критично: WM_MOUSEMOVE приходит только
+//     когда курсор реально двигается, а нам нужно гасить наклон даже
+//     при неподвижном курсоре, иначе окно остаётся "залипшим" под
+//     углом до следующего движения.
+//
+// PAPER_VEL_GAIN     — сколько радиан угла на 1 единицу velocity
+// PAPER_VEL_DAMP     — per-frame retention (0..1)
+// PAPER_ROT_LIMIT    — максимальный угол в радианах (~20°)
+const
+  PAPER_VEL_GAIN  = 0.02;
+  PAPER_VEL_DAMP  = 0.82;
+  PAPER_ROT_LIMIT = 0.35;
+
+procedure PaperDragOnMouseMove(var Win: TWindow; CursorX: Integer);
+var
+  DeltaX: Integer;
+begin
+  DeltaX := CursorX - Win.PrevDragX;
+  Win.PrevDragX := CursorX;
+  // Прибавляем новый дельта поверх существующей velocity — рывок сразу
+  // даёт большой угол, повторные рывки в одну сторону усиливают эффект.
+  Win.DragVelX := Win.DragVelX + DeltaX;
+  // Чтобы рывки не уходили в бесконечность, сразу обрезаем по разумному
+  // потолку (effectively limits per-event impact).
+  if Win.DragVelX >  60.0 then Win.DragVelX :=  60.0;
+  if Win.DragVelX < -60.0 then Win.DragVelX := -60.0;
+end;
+
+procedure PaperDragTick(var Win: TWindow);
+begin
+  if Win.IsDragging then
+  begin
+    Win.DragVelX := Win.DragVelX * PAPER_VEL_DAMP;
+    Win.TargetRotation := ClampF(Win.DragVelX * PAPER_VEL_GAIN,
+                                 -PAPER_ROT_LIMIT, PAPER_ROT_LIMIT);
+  end
+  else
+  begin
+    Win.DragVelX := 0.0;
+  end;
+end;
+
 // Современный чекбокс
 procedure DrawModernCheckbox(X, Y: Integer; Text: string; Checked: Boolean; Alpha: Integer; HoverProgress: Single = 0.0);
 var
@@ -3656,6 +3926,180 @@ const
   DEV_EDITOR_DEL_H       = 28;  // кнопка Delete
   DEV_GAP                = 8;
   DEV_GIZMO_BTN_W        = 28;  // ширина кнопки режима
+
+// "Графич. эффекты" section: 9 toggles laid out vertically inside the
+// expanded panel. Layout constants are local — kept tight (6 px between
+// rows) so the whole panel fits without scroll.
+//
+// POSTFX_INNER_X = MARGIN means the inner toggles are flush-left under the
+// header (the user explicitly asked to remove the +24 px indent). The
+// background panel uses POSTFX_BG_X which has just a small visual padding
+// so the section is clearly grouped without pushing the controls right.
+const
+  POSTFX_PAD_TOP    = 10;
+  POSTFX_PAD_BOTTOM = 10;
+  POSTFX_ROW_GAP    = 6;
+  POSTFX_TOGGLE_COUNT = 9;
+  POSTFX_INNER_X    = MARGIN;       // inner toggles aligned with the header
+  POSTFX_BG_X       = MARGIN - 4;   // background panel — slight outset
+  POSTFX_BG_W       = 240 + 24;     // wide enough to wrap the toggles
+
+function GetPostFXContentHeight: Integer;
+begin
+  // 9 toggles, each ITEM_HEIGHT tall, separated by POSTFX_ROW_GAP, plus
+  // top and bottom padding. Final value is at unscaled coords; the caller
+  // multiplies by Win.Scale.
+  Result := POSTFX_PAD_TOP + POSTFX_PAD_BOTTOM +
+            POSTFX_TOGGLE_COUNT * ITEM_HEIGHT +
+            (POSTFX_TOGGLE_COUNT - 1) * POSTFX_ROW_GAP;
+end;
+
+// Render the 9 effect toggles inside the expanded section.
+// X, Y point to the top-left of the inner content area (already accounting
+// for section padding); SectionHeight is the currently animated height in
+// scaled pixels (so we can fade items in/out as the section expands).
+//
+// Hover detection: для каждого ряда сравниваем позицию мыши
+// (MoveXcoord/MoveYcoord — глобальные курсорные координаты в client-space
+// окна игры) с прямоугольником toggle. Совпало — передаём HoverProgress=1
+// в DrawModernToggle, что плавно подсветит фон + текст.
+procedure DrawPostFXToggles(X, Y: Integer; Alpha: Integer; WinScale: Single; SectionHeight: Integer);
+var
+  RowH, ToggleW: Integer;
+  CurY, MaxY: Integer;
+  MX, MY: Integer;
+
+  procedure DrawOne(const TextKey: string; Enabled: Boolean);
+  var
+    Hover: Single;
+  begin
+    if CurY + RowH > MaxY then
+    begin
+      Inc(CurY, RowH);
+      Exit;
+    end;
+    // Простой бинарный hover: 1.0 если курсор внутри toggle-rect, иначе 0.
+    // Плавная анимация была бы приятнее, но для этого нужен per-toggle
+    // state, а тут toggle'ы безымянные — каждый кадр перерисовываются
+    // одной функцией. Бинарного достаточно: DrawModernToggle уже плавно
+    // лерпит цвет внутри фрейма.
+    if (MX >= X) and (MX < X + ToggleW) and
+       (MY >= CurY) and (MY < CurY + Round(ITEM_HEIGHT * WinScale)) then
+      Hover := 1.0
+    else
+      Hover := 0.0;
+    DrawModernToggle(X, CurY, GetText(TextKey), Enabled, Alpha,
+                     False, 0, False, Hover);
+    Inc(CurY, RowH);
+  end;
+begin
+  RowH := Round((ITEM_HEIGHT + POSTFX_ROW_GAP) * WinScale);
+  ToggleW := Round(220 * WinScale);
+  CurY := Y;
+  MaxY := Y + SectionHeight - Round(POSTFX_PAD_BOTTOM * WinScale);
+
+  // Текущая позиция мыши в координатах окна — те же координаты, в которых
+  // передан X (т.е. ScaledX-relative).
+  MX := Round(MoveXcoord);
+  MY := Round(MoveYcoord);
+
+  // Order is intentional: "primitive" toggles (FXAA, Bloom) that exist in
+  // legacy fallback too go first, then the new PostFX effects in order of
+  // dependency (tonemap is always-on, vignette/grain are pure colour,
+  // SSAO/Fog/DOF need depth).
+  DrawOne('FXAAText',     Settings.FXAAEnable);
+  DrawOne('BloomText',    Settings.BloomEnable);
+  DrawOne('TonemapText',  Settings.TonemapEnable);
+  DrawOne('SharpenText',  Settings.SharpenEnable);
+  DrawOne('VignetteText', Settings.VignetteEnable);
+  DrawOne('GrainText',    Settings.GrainEnable);
+  DrawOne('SSAOText',     Settings.SSAOEnable);
+  DrawOne('FogText',      Settings.FogEnable);
+  DrawOne('DOFText',      Settings.DOFEnable);
+end;
+
+// Master toggle for "Графич. эффекты". Toggling it OFF saves the current
+// per-effect state into PostFXSaved and disables every effect (so the
+// section visually reflects "everything off"). Toggling it ON restores
+// from PostFXSaved if available, otherwise applies the Variables.pas
+// defaults — that way a freshly started session with the master at OFF
+// will come back to a sensible "everything visible" preset on first
+// re-enable.
+//
+// Both Settings.* (UI mirror) and Init*Enable (engine globals that PostFX
+// reads each frame) are updated together, so the change is live.
+procedure SetPostFXMasterEnabled(NewState: Boolean);
+begin
+  if NewState = Settings.PostFXEnable then Exit;
+
+  if not NewState then
+  begin
+    // Master OFF — snapshot per-effect states, then disable everything.
+    Settings.PostFXSaved.Init     := True;
+    Settings.PostFXSaved.FXAA     := Settings.FXAAEnable;
+    Settings.PostFXSaved.Bloom    := Settings.BloomEnable;
+    Settings.PostFXSaved.Tonemap  := Settings.TonemapEnable;
+    Settings.PostFXSaved.Sharpen  := Settings.SharpenEnable;
+    Settings.PostFXSaved.Vignette := Settings.VignetteEnable;
+    Settings.PostFXSaved.Grain    := Settings.GrainEnable;
+    Settings.PostFXSaved.SSAO     := Settings.SSAOEnable;
+    Settings.PostFXSaved.Fog      := Settings.FogEnable;
+    Settings.PostFXSaved.DOF      := Settings.DOFEnable;
+
+    Settings.FXAAEnable     := False;  InitFXAAEnable     := False;
+    Settings.BloomEnable    := False;  InitBloomEnable    := False;
+    Settings.TonemapEnable  := False;  InitTonemapEnable  := False;
+    Settings.SharpenEnable  := False;  InitSharpenEnable  := False;
+    Settings.VignetteEnable := False;  InitVignetteEnable := False;
+    Settings.GrainEnable    := False;  InitGrainEnable    := False;
+    Settings.SSAOEnable     := False;  InitSSAOEnable     := False;
+    Settings.FogEnable      := False;  InitFogEnable      := False;
+    Settings.DOFEnable      := False;  InitDOFEnable      := False;
+  end
+  else
+  begin
+    // Master ON — restore from shadow, or use Variables.pas defaults.
+    if Settings.PostFXSaved.Init then
+    begin
+      Settings.FXAAEnable     := Settings.PostFXSaved.FXAA;
+      Settings.BloomEnable    := Settings.PostFXSaved.Bloom;
+      Settings.TonemapEnable  := Settings.PostFXSaved.Tonemap;
+      Settings.SharpenEnable  := Settings.PostFXSaved.Sharpen;
+      Settings.VignetteEnable := Settings.PostFXSaved.Vignette;
+      Settings.GrainEnable    := Settings.PostFXSaved.Grain;
+      Settings.SSAOEnable     := Settings.PostFXSaved.SSAO;
+      Settings.FogEnable      := Settings.PostFXSaved.Fog;
+      Settings.DOFEnable      := Settings.PostFXSaved.DOF;
+    end
+    else
+    begin
+      // No previous shadow — turn on the safe set (= Variables.pas defaults).
+      // Fog and DOF stay OFF so the user isn't surprised by a heavy DOF blur
+      // they never enabled.
+      Settings.FXAAEnable     := True;
+      Settings.BloomEnable    := True;
+      Settings.TonemapEnable  := True;
+      Settings.SharpenEnable  := True;
+      Settings.VignetteEnable := True;
+      Settings.GrainEnable    := True;
+      Settings.SSAOEnable     := True;
+      Settings.FogEnable      := False;
+      Settings.DOFEnable      := False;
+    end;
+    InitFXAAEnable     := Settings.FXAAEnable;
+    InitBloomEnable    := Settings.BloomEnable;
+    InitTonemapEnable  := Settings.TonemapEnable;
+    InitSharpenEnable  := Settings.SharpenEnable;
+    InitVignetteEnable := Settings.VignetteEnable;
+    InitGrainEnable    := Settings.GrainEnable;
+    InitSSAOEnable     := Settings.SSAOEnable;
+    InitFogEnable      := Settings.FogEnable;
+    InitDOFEnable      := Settings.DOFEnable;
+  end;
+
+  Settings.PostFXEnable := NewState;
+  InitPostFXEnable      := NewState;
+end;
 
 function GetDeveloperContentHeight: Integer;
 var
@@ -3860,14 +4304,24 @@ begin
       TotalHeight := TotalHeight + ITEM_HEIGHT;
       if Settings.MainCameraSection.AnimProgress > 0.01 then
         TotalHeight := TotalHeight + Round(200 * Settings.MainCameraSection.AnimProgress) + MARGIN;
+
+      // "Графич. эффекты" master toggle + optional expanded section with
+      // all 9 post-process toggles. Перенесено сюда из WORLD-окна, чтобы
+      // визуально жить рядом с другими render-настройками.
+      TotalHeight := TotalHeight + MARGIN + ITEM_HEIGHT;
+      if Settings.PostFXSection.AnimProgress > 0.01 then
+        TotalHeight := TotalHeight + Round(GetPostFXContentHeight * Settings.PostFXSection.AnimProgress) + MARGIN;
     end;
     
     1: // WORLD окно
     begin
+      // MaxDistance toggle (+ optional expanded slider section).
       TotalHeight := TotalHeight + ITEM_HEIGHT;
       if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
         TotalHeight := TotalHeight + Round(180 * Settings.MaxVisibleDistanceSection.AnimProgress) + MARGIN;
-      
+
+      // NewSky + SystemTime toggles.
+      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;
       TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;
     end;
     
@@ -3941,20 +4395,29 @@ begin
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FreeCameraText'), Settings.Freecam, Alpha, True, ExpandButtonX, Settings.FreecamSection.Expanded, Settings.FreecamSection.AnimProgress);
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
-      // Freecam секция
+      // Freecam секция. Контент сдвинут на CONTENT_TEXT_INSET (= 16)
+      // вправо от MARGIN, чтобы ТЕКСТ слайдеров стоял точно под текстом
+      // header'а (у DrawModernToggle тоже +16 px паддинг до текста).
       if Settings.FreecamSection.AnimProgress > 0.01 then
       begin
         SectionHeight := Round(150 * Settings.FreecamSection.AnimProgress * Win.Scale);
-        
-        // Фон секции
-        DrawStyledRect(ScaledX + Round((MARGIN + 12) * Win.Scale), ContentY, Round(240 * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
-        
+
+        DrawStyledRect(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+
         if SectionHeight > Round(40 * Win.Scale) then
         begin
-          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.BasespeedSlider, GetText('BaseSpeedText'), Alpha, Win.Scale);
-          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(75 * Win.Scale), Settings.FastspeedSlider, GetText('FastSpeedText'), Alpha, Win.Scale);
+          Settings.BasespeedSlider.HoverProgress :=
+            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round((25 - 22) * Win.Scale),
+                     Round((SLIDER_WIDTH + 30) * Win.Scale), Round(40 * Win.Scale));
+          DrawModernSlider(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.BasespeedSlider, GetText('BaseSpeedText'), Alpha, Win.Scale);
+
+          Settings.FastspeedSlider.HoverProgress :=
+            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round((75 - 22) * Win.Scale),
+                     Round((SLIDER_WIDTH + 30) * Win.Scale), Round(40 * Win.Scale));
+          DrawModernSlider(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(75 * Win.Scale), Settings.FastspeedSlider, GetText('FastSpeedText'), Alpha, Win.Scale);
         end;
-        
+
         Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
       
@@ -3963,29 +4426,79 @@ begin
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MainCameraText'), Settings.MainCamera, Alpha, True, ExpandButtonX, Settings.MainCameraSection.Expanded, Settings.MainCameraSection.AnimProgress);
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
-      // Main Camera секция
+      // Main Camera секция — контент сдвинут на +16 чтобы выровнять текст
+      // элементов с текстом header'а (у toggle padding 16 px до текста).
       if Settings.MainCameraSection.AnimProgress > 0.01 then
       begin
         SectionHeight := Round(200 * Settings.MainCameraSection.AnimProgress * Win.Scale);
-        
-        // Фон секции
-        DrawStyledRect(ScaledX + Round((MARGIN + 12) * Win.Scale), ContentY, Round(240 * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
-        
+
+        DrawStyledRect(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+
         if SectionHeight > Round(40 * Win.Scale) then
-          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.StepForwardSlider, GetText('StepForwardText'), Alpha, Win.Scale);
-        
+        begin
+          Settings.StepForwardSlider.HoverProgress :=
+            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round((25 - 22) * Win.Scale),
+                     Round((SLIDER_WIDTH + 30) * Win.Scale), Round(40 * Win.Scale));
+          DrawModernSlider(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.StepForwardSlider, GetText('StepForwardText'), Alpha, Win.Scale);
+        end;
+
         if SectionHeight > Round(70 * Win.Scale) then
-          DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(60 * Win.Scale), GetText('NewZoomText'), Settings.NewViewAngle, Alpha);
-        
+          DrawModernCheckbox(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(60 * Win.Scale), GetText('NewZoomText'), Settings.NewViewAngle, Alpha,
+            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(60 * Win.Scale), Round(200 * Win.Scale), Round(20 * Win.Scale)));
+
         if (SectionHeight > Round(110 * Win.Scale)) and Settings.NewViewAngle then
-          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(95 * Win.Scale), Settings.ViewAngleSlider, GetText('ValueText'), Alpha, Win.Scale);
-        
+        begin
+          Settings.ViewAngleSlider.HoverProgress :=
+            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round((95 - 22) * Win.Scale),
+                     Round((SLIDER_WIDTH + 30) * Win.Scale), Round(40 * Win.Scale));
+          DrawModernSlider(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(95 * Win.Scale), Settings.ViewAngleSlider, GetText('ValueText'), Alpha, Win.Scale);
+        end;
+
         if SectionHeight > Round(140 * Win.Scale) then
-          DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(130 * Win.Scale), GetText('SensitivityText'), Settings.CameraSensitivity, Alpha);
-        
+          DrawModernCheckbox(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(130 * Win.Scale), GetText('SensitivityText'), Settings.CameraSensitivity, Alpha,
+            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(130 * Win.Scale), Round(200 * Win.Scale), Round(20 * Win.Scale)));
+
         if (SectionHeight > Round(170 * Win.Scale)) and Settings.CameraSensitivity then
-          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(165 * Win.Scale), Settings.CameraSensitivitySlider, GetText('ValueText'), Alpha, Win.Scale);
-        
+        begin
+          Settings.CameraSensitivitySlider.HoverProgress :=
+            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round((165 - 22) * Win.Scale),
+                     Round((SLIDER_WIDTH + 30) * Win.Scale), Round(40 * Win.Scale));
+          DrawModernSlider(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(165 * Win.Scale), Settings.CameraSensitivitySlider, GetText('ValueText'), Alpha, Win.Scale);
+        end;
+
+        Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
+      end;
+
+      // === "Графич. эффекты" — master toggle + раскрывающаяся секция ===
+      // Перенесено сюда (RENDER) из WORLD-окна. Левая часть toggle-а
+      // переключает все 9 эффектов разом (с запоминанием в PostFXSaved
+      // для последующего восстановления); правый шеврон — независимое
+      // expand/collapse секции.
+      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY,
+        GetText('PostFXText'), Settings.PostFXEnable, Alpha,
+        True, ExpandButtonX,
+        Settings.PostFXSection.Expanded, Settings.PostFXSection.AnimProgress);
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
+      // Развёрнутая секция с 9 toggle (FXAA, Bloom, Tonemap, Sharpen,
+      // Vignette, Grain, SSAO, Fog, DOF). Контент выровнен под header
+      // (POSTFX_INNER_X = MARGIN), фон секции лишь чуть-чуть выходит за
+      // края (POSTFX_BG_X = MARGIN-4) — без огромного отступа вправо.
+      if Settings.PostFXSection.AnimProgress > 0.01 then
+      begin
+        SectionHeight := Round(GetPostFXContentHeight * Settings.PostFXSection.AnimProgress * Win.Scale);
+
+        DrawStyledRect(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+
+        if SectionHeight > Round(POSTFX_PAD_TOP * Win.Scale) then
+          DrawPostFXToggles(
+            ScaledX + Round(POSTFX_INNER_X * Win.Scale),
+            ContentY + Round(POSTFX_PAD_TOP * Win.Scale),
+            Alpha, Win.Scale, SectionHeight);
+
         Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
     end;
@@ -3997,50 +4510,63 @@ begin
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MaxDistanceText'), Settings.MaxVisibleDistance, Alpha, True, ExpandButtonX, Settings.MaxVisibleDistanceSection.Expanded, Settings.MaxVisibleDistanceSection.AnimProgress);
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
-      // Max Visible Distance секция
+      // Max Visible Distance секция — контент сдвинут на +16 для
+      // вертикального выравнивания текста с header.
       if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
       begin
         SectionHeight := Round(180 * Settings.MaxVisibleDistanceSection.AnimProgress * Win.Scale);
-        
-        // Фон секции
-        DrawStyledRect(ScaledX + Round((MARGIN + 12) * Win.Scale), ContentY, Round(240 * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
-        
+
+        DrawStyledRect(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+
         if SectionHeight > Round(40 * Win.Scale) then
         begin
-          DrawModernSlider(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.MaxVisibleDistanceSlider, GetText('DistanceText'), Alpha, Win.Scale);
-          
+          Settings.MaxVisibleDistanceSlider.HoverProgress :=
+            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round((25 - 22) * Win.Scale),
+                     Round((SLIDER_WIDTH + 30) * Win.Scale), Round(40 * Win.Scale));
+          DrawModernSlider(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.MaxVisibleDistanceSlider, GetText('DistanceText'), Alpha, Win.Scale);
+
           if SectionHeight > Round(70 * Win.Scale) then
           begin
-            DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(60 * Win.Scale), GetText('WiresText'), Settings.ShowWires, Alpha);
-            DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(90 * Win.Scale), GetText('DistantModelsText'), Settings.ShowDistantModels, Alpha);
+            DrawModernCheckbox(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(60 * Win.Scale), GetText('WiresText'), Settings.ShowWires, Alpha,
+              HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(60 * Win.Scale), Round(200 * Win.Scale), Round(20 * Win.Scale)));
+            DrawModernCheckbox(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(90 * Win.Scale), GetText('DistantModelsText'), Settings.ShowDistantModels, Alpha,
+              HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(90 * Win.Scale), Round(200 * Win.Scale), Round(20 * Win.Scale)));
           end;
           if SectionHeight > Round(120 * Win.Scale) then
-            DrawModernCheckbox(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(120 * Win.Scale), GetText('TrafficLightsText'), Settings.ShowTrafficLights, Alpha);
+            DrawModernCheckbox(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(120 * Win.Scale), GetText('TrafficLightsText'), Settings.ShowTrafficLights, Alpha,
+              HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(120 * Win.Scale), Round(200 * Win.Scale), Round(20 * Win.Scale)));
         end;
-        
+
         Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
       
       // New Sky
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('NewSkyText'), Settings.NewSky, Alpha);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('NewSkyText'), Settings.NewSky, Alpha,
+        False, 0, False,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
-      // ZDS-Booster: FXAA постпроцесс — живое переключение, без рестарта.
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FXAAText'), Settings.FXAAEnable, Alpha);
-      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
-
-      // ZDS-Booster: Bloom — тоже живой, ApplyBloom перечитывает флаг каждый кадр.
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('BloomText'), Settings.BloomEnable, Alpha);
+      // System Time — подмена AbsoluteTime симулятора на Windows time.
+      // SystemTime.pas читает InitSystemTimeEnable каждый кадр, так что
+      // переключение сразу применяется без рестарта.
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('SystemTimeText'), Settings.SystemTimeEnable, Alpha,
+        False, 0, False,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
     end;
     
     2: // LOCOMOTIVE окно
     begin
       // Исправления КЛУБ
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('ClubFixesText'), Settings.NewClubPositions, Alpha);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('ClubFixesText'), Settings.NewClubPositions, Alpha,
+        False, 0, False,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
       // RA3 подсветка
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('RA3HoverText'), Settings.RA3Hover, Alpha);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('RA3HoverText'), Settings.RA3Hover, Alpha,
+        False, 0, False,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
       // Меню разработчика (toggle + expand)
@@ -4066,10 +4592,13 @@ begin
       DrawModernText(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(15 * Win.Scale), GetText('LanguageText'), COLOR_ON_SURFACE, Alpha, 0.85);
       Inc(ContentY, Round(50 * Win.Scale));
       
-      // Кнопки языков в ряд
-      DrawModernLanguageButton(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale), GetText('RussianText'), Alpha, CurrentLanguage = langRussian);
-      DrawModernLanguageButton(ScaledX + Round((MARGIN + 100) * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale), GetText('UkrainianText'), Alpha, CurrentLanguage = langUkrainian);
-      DrawModernLanguageButton(ScaledX + Round((MARGIN + 200) * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale), GetText('EnglishText'), Alpha, CurrentLanguage = langEnglish);
+      // Кнопки языков в ряд (с hover-подсветкой)
+      DrawModernLanguageButton(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale), GetText('RussianText'), Alpha, CurrentLanguage = langRussian,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale)));
+      DrawModernLanguageButton(ScaledX + Round((MARGIN + 100) * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale), GetText('UkrainianText'), Alpha, CurrentLanguage = langUkrainian,
+        HoverFor(ScaledX + Round((MARGIN + 100) * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale)));
+      DrawModernLanguageButton(ScaledX + Round((MARGIN + 200) * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale), GetText('EnglishText'), Alpha, CurrentLanguage = langEnglish,
+        HoverFor(ScaledX + Round((MARGIN + 200) * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale)));
     end;
   end;
 end;
@@ -4167,25 +4696,38 @@ begin
   end;
 end;
 
+// Per-drag throttle для SaveConfig.
+// SaveConfig — это write всего .cfg на диск; в горячем пути drag'а это
+// убивало FPS до однозначных цифр на быстрых движениях слайдера. Теперь
+// помечаем "грязный" флаг, на диск пишем не чаще раза в N миллисекунд,
+// и финальный гарантированный save делается в HandleMouseUp (см. ниже).
+const
+  SLIDER_SAVE_THROTTLE_MS = 250;
+var
+  SliderDirty: Boolean = False;
+  LastSliderSaveTime: Cardinal = 0;
+
 // Оптимизированная функция перетаскивания слайдера
 procedure HandleSliderDrag(X: Integer; var Slider: TSlider; SliderX: Integer);
 var
   NewProgress: Single;
   OldValue: Single;
+  CurrentTime: Cardinal;
 begin
   if not Slider.IsDragging then Exit;
-  
+
   OldValue := Slider.Value;
-  
+
   NewProgress := (X - SliderX) / SLIDER_WIDTH;
   if NewProgress < 0 then NewProgress := 0;
   if NewProgress > 1 then NewProgress := 1;
-  
+
   Slider.Value := Slider.MinValue + NewProgress * (Slider.MaxValue - Slider.MinValue);
-  
+
   if Abs(Slider.Value - OldValue) > 0.001 then
   begin
-    // Синхронизация с глобальными переменными
+    // Синхронизация с глобальными переменными — это live-эффект, должен
+    // обновляться каждый кадр без throttle.
     if @Slider = @Settings.BasespeedSlider then
       MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
     if @Slider = @Settings.FastspeedSlider then
@@ -4207,8 +4749,17 @@ begin
         WriteFloatToMemory(CameraSensitivityAddr, Settings.CameraSensitivitySlider.Value);
     end;
 
-    SaveConfig;
-  
+    // SaveConfig теперь throttled — на диск пишем максимум раз в 250 мс
+    // во время drag, а финальный save точно случится в HandleMouseUp.
+    SliderDirty := True;
+    CurrentTime := GetTickCount;
+    if (CurrentTime - LastSliderSaveTime) > SLIDER_SAVE_THROTTLE_MS then
+    begin
+      SaveConfig;
+      LastSliderSaveTime := CurrentTime;
+      SliderDirty := False;
+    end;
+
     if (@Slider <> @Settings.BrightnessSlider) then
       ApplySettingsThrottled;
   end;
@@ -4219,7 +4770,10 @@ begin
   if not MenuVisible then Exit;
   
   // Обработка драггинга окон с анимацией "подхвата":
-  //   - расширение по ширине, усиление тени, лёгкий наклон и приподнятие (scale bump)
+  //   - расширение по ширине, усиление тени, "бумажный" наклон по
+  //     velocity курсора (см. UpdatePaperDrag). Никакого scale-bump'а:
+  //     окно не "подпрыгивает", только плавно наклоняется в сторону
+  //     движения и выпрямляется при остановке.
   if RenderWindow.IsDragging then
   begin
     RenderWindow.X := X - RenderWindow.DragOffsetX;
@@ -4228,8 +4782,8 @@ begin
     RenderWindow.OriginalY := RenderWindow.Y;
     RenderWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
     RenderWindow.TargetShadowIntensity := 1.8;
-    RenderWindow.TargetRotation := 0.04;   // ~2.3° наклон
-    RenderWindow.TargetScale := 1.04;
+    PaperDragOnMouseMove(RenderWindow, X);
+    RenderWindow.TargetScale := 1.0;       // без scale-bump
   end
   else
   begin
@@ -4250,8 +4804,8 @@ begin
     WorldWindow.OriginalY := WorldWindow.Y;
     WorldWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
     WorldWindow.TargetShadowIntensity := 1.8;
-    WorldWindow.TargetRotation := -0.04;  // в другую сторону — разнообразие
-    WorldWindow.TargetScale := 1.04;
+    PaperDragOnMouseMove(WorldWindow, X);
+    WorldWindow.TargetScale := 1.0;
   end
   else
   begin
@@ -4272,8 +4826,8 @@ begin
     LocomotiveWindow.OriginalY := LocomotiveWindow.Y;
     LocomotiveWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
     LocomotiveWindow.TargetShadowIntensity := 1.8;
-    LocomotiveWindow.TargetRotation := 0.04;
-    LocomotiveWindow.TargetScale := 1.04;
+    PaperDragOnMouseMove(LocomotiveWindow, X);
+    LocomotiveWindow.TargetScale := 1.0;
   end
   else
   begin
@@ -4294,8 +4848,8 @@ begin
     MenuWindow.OriginalY := MenuWindow.Y;
     MenuWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
     MenuWindow.TargetShadowIntensity := 1.8;
-    MenuWindow.TargetRotation := -0.04;
-    MenuWindow.TargetScale := 1.04;
+    PaperDragOnMouseMove(MenuWindow, X);
+    MenuWindow.TargetScale := 1.0;
   end
   else
   begin
@@ -4308,23 +4862,25 @@ begin
     end;
   end;
   
-  // Обработка драггинга слайдеров
+  // Обработка драггинга слайдеров. Drag-origin совпадает с X, в котором
+  // слайдер реально отрисовывается (= MARGIN + 16 внутри expanded секций),
+  // иначе при перетаскивании thumb прыгает.
   if Settings.BrightnessSlider.IsDragging then
-    HandleSliderDrag(X, Settings.BrightnessSlider, RenderWindow.X + MARGIN + 24);
+    HandleSliderDrag(X, Settings.BrightnessSlider, RenderWindow.X + MARGIN + 16);
   if Settings.BasespeedSlider.IsDragging then
-    HandleSliderDrag(X, Settings.BasespeedSlider, RenderWindow.X + MARGIN + 24);
+    HandleSliderDrag(X, Settings.BasespeedSlider, RenderWindow.X + MARGIN + 16);
   if Settings.FastspeedSlider.IsDragging then
-    HandleSliderDrag(X, Settings.FastspeedSlider, RenderWindow.X + MARGIN + 24);
+    HandleSliderDrag(X, Settings.FastspeedSlider, RenderWindow.X + MARGIN + 16);
   if Settings.TurnspeedSlider.IsDragging then
-    HandleSliderDrag(X, Settings.TurnspeedSlider, RenderWindow.X + MARGIN + 24);
+    HandleSliderDrag(X, Settings.TurnspeedSlider, RenderWindow.X + MARGIN + 16);
   if Settings.StepForwardSlider.IsDragging then
-    HandleSliderDrag(X, Settings.StepForwardSlider, RenderWindow.X + MARGIN + 24);
+    HandleSliderDrag(X, Settings.StepForwardSlider, RenderWindow.X + MARGIN + 16);
   if Settings.MaxVisibleDistanceSlider.IsDragging then
-    HandleSliderDrag(X, Settings.MaxVisibleDistanceSlider, WorldWindow.X + MARGIN + 24);
+    HandleSliderDrag(X, Settings.MaxVisibleDistanceSlider, WorldWindow.X + MARGIN + 16);
   if Settings.ViewAngleSlider.IsDragging then
-    HandleSliderDrag(X, Settings.ViewAngleSlider, RenderWindow.X + MARGIN + 24);
+    HandleSliderDrag(X, Settings.ViewAngleSlider, RenderWindow.X + MARGIN + 16);
   if Settings.CameraSensitivitySlider.IsDragging then
-    HandleSliderDrag(X, Settings.CameraSensitivitySlider, RenderWindow.X + MARGIN + 24);
+    HandleSliderDrag(X, Settings.CameraSensitivitySlider, RenderWindow.X + MARGIN + 16);
 
   // Слайдеры редактора кастомных текстов — после изменения пишем в выбранный текст.
   if CustomXSlider.IsDragging then
@@ -4475,6 +5031,7 @@ var
   ContentY: Integer;
   FreecamSectionY, MainCameraSectionY, MaxVisibleDistanceSectionY: Integer;
   SectionHeight: Integer;
+  I_PFX: Integer;  // PostFX section row dispatch index
 begin
   // Если открыт фуллскрин Dev Editor — все клики перехватывает он, обычное
   // меню в этом режиме спрятано.
@@ -4503,6 +5060,8 @@ begin
       MenuWindow.IsDragging := True;
       MenuWindow.DragOffsetX := X - MenuWindow.X;
       MenuWindow.DragOffsetY := Y - MenuWindow.Y;
+      MenuWindow.PrevDragX  := X;     // seed paper-drag velocity tracking
+      MenuWindow.DragVelX   := 0.0;
       Exit;
     end;
     
@@ -4545,6 +5104,8 @@ begin
       RenderWindow.IsDragging := True;
       RenderWindow.DragOffsetX := X - RenderWindow.X;
       RenderWindow.DragOffsetY := Y - RenderWindow.Y;
+      RenderWindow.PrevDragX  := X;
+      RenderWindow.DragVelX   := 0.0;
       Exit;
     end;
     
@@ -4575,12 +5136,12 @@ begin
       SectionHeight := Round(150 * Settings.FreecamSection.AnimProgress);
       if SectionHeight > 40 then
       begin
-        if InRect(X, Y, RenderWindow.X + MARGIN + 24, FreecamSectionY + 15, SLIDER_WIDTH + 30, 30) then
+        if InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 15, SLIDER_WIDTH + 30, 30) then
         begin
           Settings.BasespeedSlider.IsDragging := True;
           Exit;
         end;
-        if InRect(X, Y, RenderWindow.X + MARGIN + 24, FreecamSectionY + 65, SLIDER_WIDTH + 30, 30) then
+        if InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 65, SLIDER_WIDTH + 30, 30) then
         begin
           Settings.FastspeedSlider.IsDragging := True;
           Exit;
@@ -4630,14 +5191,14 @@ begin
       SectionHeight := Round(200 * Settings.MainCameraSection.AnimProgress);
       
       // Клик по слайдеру StepForward
-      if (SectionHeight > 40) and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 15, SLIDER_WIDTH + 30, 30) then
+      if (SectionHeight > 40) and InRect(X, Y, RenderWindow.X + MARGIN + 16, MainCameraSectionY + 15, SLIDER_WIDTH + 30, 30) then
       begin
         Settings.StepForwardSlider.IsDragging := True;
         Exit;
       end;
       
       // Клик по галочке "Новый угол обзора"
-      if (SectionHeight > 70) and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 60, 200, 20) then
+      if (SectionHeight > 70) and InRect(X, Y, RenderWindow.X + MARGIN + 16, MainCameraSectionY + 60, 200, 20) then
       begin
         Settings.NewViewAngle := not Settings.NewViewAngle;
         
@@ -4651,14 +5212,14 @@ begin
       end;
       
       // Клик по слайдеру угла обзора
-      if (SectionHeight > 110) and Settings.NewViewAngle and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 85, SLIDER_WIDTH + 30, 30) then
+      if (SectionHeight > 110) and Settings.NewViewAngle and InRect(X, Y, RenderWindow.X + MARGIN + 16, MainCameraSectionY + 85, SLIDER_WIDTH + 30, 30) then
       begin
         Settings.ViewAngleSlider.IsDragging := True;
         Exit;
       end;
       
       // Галочка чувствительности камеры
-      if (SectionHeight > 140) and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 130, 200, 20) then
+      if (SectionHeight > 140) and InRect(X, Y, RenderWindow.X + MARGIN + 16, MainCameraSectionY + 130, 200, 20) then
       begin
         Settings.CameraSensitivity := not Settings.CameraSensitivity;
         
@@ -4672,12 +5233,68 @@ begin
       end;
       
       // Слайдер чувствительности камеры
-      if (SectionHeight > 170) and Settings.CameraSensitivity and InRect(X, Y, RenderWindow.X + MARGIN + 24, MainCameraSectionY + 155, SLIDER_WIDTH + 30, 30) then
+      if (SectionHeight > 170) and Settings.CameraSensitivity and InRect(X, Y, RenderWindow.X + MARGIN + 16, MainCameraSectionY + 155, SLIDER_WIDTH + 30, 30) then
       begin
         Settings.CameraSensitivitySlider.IsDragging := True;
         Exit;
       end;
       
+      Inc(ContentY, SectionHeight + MARGIN);
+    end;
+
+    // === "Графич. эффекты" header (in RENDER tab) ===
+    // Раздельная семантика для двух интерактивных областей:
+    //   * шеврон  → expand/collapse секции, не трогает enable;
+    //   * label    → master ON/OFF (через SetPostFXMasterEnabled, что
+    //                 синхронизирует все 9 индивидуальных toggle).
+    if InRect(X, Y, RenderWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
+    begin
+      Settings.PostFXSection.Expanded := not Settings.PostFXSection.Expanded;
+      Exit;
+    end;
+
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      SetPostFXMasterEnabled(not Settings.PostFXEnable);
+      if Settings.PostFXEnable then
+        Settings.PostFXSection.Expanded := True;
+      SaveConfig;
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
+    // Внутри секции: диспетчер на 9 toggle. Layout совпадает с
+    // DrawPostFXToggles — PAD_TOP сверху, потом 9 рядов высотой
+    // (ITEM_HEIGHT + ROW_GAP). Координаты теперь относительно RenderWindow,
+    // не WorldWindow (PostFX переехал в RENDER tab).
+    if Settings.PostFXSection.AnimProgress > 0.01 then
+    begin
+      SectionHeight := Round(GetPostFXContentHeight * Settings.PostFXSection.AnimProgress);
+      if SectionHeight > POSTFX_PAD_TOP then
+      begin
+        for I_PFX := 0 to POSTFX_TOGGLE_COUNT - 1 do
+        begin
+          if InRect(X, Y,
+                    RenderWindow.X + POSTFX_INNER_X,
+                    ContentY + POSTFX_PAD_TOP + I_PFX * (ITEM_HEIGHT + POSTFX_ROW_GAP),
+                    220, ITEM_HEIGHT) then
+          begin
+            case I_PFX of
+              0: begin Settings.FXAAEnable     := not Settings.FXAAEnable;     InitFXAAEnable     := Settings.FXAAEnable;     end;
+              1: begin Settings.BloomEnable    := not Settings.BloomEnable;    InitBloomEnable    := Settings.BloomEnable;    end;
+              2: begin Settings.TonemapEnable  := not Settings.TonemapEnable;  InitTonemapEnable  := Settings.TonemapEnable;  end;
+              3: begin Settings.SharpenEnable  := not Settings.SharpenEnable;  InitSharpenEnable  := Settings.SharpenEnable;  end;
+              4: begin Settings.VignetteEnable := not Settings.VignetteEnable; InitVignetteEnable := Settings.VignetteEnable; end;
+              5: begin Settings.GrainEnable    := not Settings.GrainEnable;    InitGrainEnable    := Settings.GrainEnable;    end;
+              6: begin Settings.SSAOEnable     := not Settings.SSAOEnable;     InitSSAOEnable     := Settings.SSAOEnable;     end;
+              7: begin Settings.FogEnable      := not Settings.FogEnable;      InitFogEnable      := Settings.FogEnable;      end;
+              8: begin Settings.DOFEnable      := not Settings.DOFEnable;      InitDOFEnable      := Settings.DOFEnable;      end;
+            end;
+            SaveConfig;
+            Exit;
+          end;
+        end;
+      end;
       Inc(ContentY, SectionHeight + MARGIN);
     end;
   end;
@@ -4693,6 +5310,8 @@ begin
       WorldWindow.IsDragging := True;
       WorldWindow.DragOffsetX := X - WorldWindow.X;
       WorldWindow.DragOffsetY := Y - WorldWindow.Y;
+      WorldWindow.PrevDragX  := X;
+      WorldWindow.DragVelX   := 0.0;
       Exit;
     end;
     
@@ -4732,14 +5351,14 @@ begin
       if SectionHeight > 40 then
       begin
         // Слайдер дальности
-        if InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 15, SLIDER_WIDTH + 30, 30) then
+        if InRect(X, Y, WorldWindow.X + MARGIN + 16, MaxVisibleDistanceSectionY + 15, SLIDER_WIDTH + 30, 30) then
         begin
           Settings.MaxVisibleDistanceSlider.IsDragging := True;
           Exit;
         end;
         
         // Чекбоксы
-        if (SectionHeight > 70) and InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 60, 200, 20) then
+        if (SectionHeight > 70) and InRect(X, Y, WorldWindow.X + MARGIN + 16, MaxVisibleDistanceSectionY + 60, 200, 20) then
         begin
           Settings.ShowWires := not Settings.ShowWires;
           if Settings.MaxVisibleDistance then 
@@ -4747,7 +5366,7 @@ begin
           SaveConfig;
           Exit;
         end;
-        if (SectionHeight > 100) and InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 90, 200, 20) then
+        if (SectionHeight > 100) and InRect(X, Y, WorldWindow.X + MARGIN + 16, MaxVisibleDistanceSectionY + 90, 200, 20) then
         begin
           Settings.ShowDistantModels := not Settings.ShowDistantModels;
           if Settings.MaxVisibleDistance then 
@@ -4755,7 +5374,7 @@ begin
           SaveConfig;
           Exit;
         end;
-        if (SectionHeight > 130) and InRect(X, Y, WorldWindow.X + MARGIN + 24, MaxVisibleDistanceSectionY + 120, 200, 20) then
+        if (SectionHeight > 130) and InRect(X, Y, WorldWindow.X + MARGIN + 16, MaxVisibleDistanceSectionY + 120, 200, 20) then
         begin
           Settings.ShowTrafficLights := not Settings.ShowTrafficLights;
           if Settings.MaxVisibleDistance then 
@@ -4777,25 +5396,17 @@ begin
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
 
-    // ZDS-Booster: FXAA toggle. EndFXAAFrame re-reads InitFXAAEnable every
-    // frame, so this takes effect immediately with no restart.
+    // System Time toggle — пишет в InitSystemTimeEnable, который
+    // SystemTime.pas читает на каждый кадр.
     if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
     begin
-      Settings.FXAAEnable := not Settings.FXAAEnable;
-      InitFXAAEnable := Settings.FXAAEnable;
+      Settings.SystemTimeEnable := not Settings.SystemTimeEnable;
+      InitSystemTimeEnable := Settings.SystemTimeEnable;
       SaveConfig;
       Exit;
     end;
-    Inc(ContentY, ITEM_HEIGHT + MARGIN);
-
-    // ZDS-Booster: Bloom toggle.
-    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
-    begin
-      Settings.BloomEnable := not Settings.BloomEnable;
-      InitBloomEnable := Settings.BloomEnable;
-      SaveConfig;
-      Exit;
-    end;
+    // Note: PostFX header + section dispatcher переехали в RENDER click
+    // handler выше — здесь только NewSky + SystemTime.
   end;
 
   // LOCOMOTIVE WINDOW
@@ -4809,6 +5420,8 @@ begin
       LocomotiveWindow.IsDragging := True;
       LocomotiveWindow.DragOffsetX := X - LocomotiveWindow.X;
       LocomotiveWindow.DragOffsetY := Y - LocomotiveWindow.Y;
+      LocomotiveWindow.PrevDragX  := X;
+      LocomotiveWindow.DragVelX   := 0.0;
       Exit;
     end;
 
@@ -4873,11 +5486,12 @@ begin
 
   if not MenuVisible then Exit;
   
-  // Останавливаем драггинг окон
-  RenderWindow.IsDragging := False;
-  WorldWindow.IsDragging := False;
-  LocomotiveWindow.IsDragging := False;
-  MenuWindow.IsDragging := False;
+  // Останавливаем драггинг окон. Сбрасываем paper-drag velocity, иначе
+  // при следующем нажатии rotation начнёт с inherit-значения.
+  RenderWindow.IsDragging := False;     RenderWindow.DragVelX := 0.0;
+  WorldWindow.IsDragging := False;      WorldWindow.DragVelX := 0.0;
+  LocomotiveWindow.IsDragging := False; LocomotiveWindow.DragVelX := 0.0;
+  MenuWindow.IsDragging := False;       MenuWindow.DragVelX := 0.0;
   
   // Возвращаем размеры окон к нормальным
   RenderWindow.TargetDragWidthExpansion := 0.0;
@@ -4911,6 +5525,15 @@ begin
   Settings.MaxVisibleDistanceSlider.IsDragging := False;
   Settings.ViewAngleSlider.IsDragging := False;
   Settings.CameraSensitivitySlider.IsDragging := False;
+
+  // Если drag слайдера успел запачкать настройки, но throttle не дал
+  // записать на диск — финальный гарантированный save при отпускании.
+  if SliderDirty then
+  begin
+    SaveConfig;
+    SliderDirty := False;
+    LastSliderSaveTime := GetTickCount;
+  end;
 
   // Слайдеры редактора кастомных текстов
   if AnyCustomSliderDragging then

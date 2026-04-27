@@ -33,6 +33,24 @@
 - **Поддержка зимы и лета** с разными временными интервалами
 - **Кастомные текстуры** для кабины, пульта и других элементов
 
+### 🎬 Единый PostFX render-graph (новое в 2026)
+Современный кинематографичный конвейер пост-эффектов поверх рендера ZDSimulator. Все эффекты включаются и настраиваются прямо из меню, переключаются на лету без рестарта.
+
+**Tier 1 — цветовой пост (включено по умолчанию):**
+- **HDR Bloom** — мульти-мип pyramid свечения (6 уровней) с soft-knee curve. Гораздо мягче и шире, чем старый однопроходный Gaussian.
+- **ACES Filmic Tone Mapping** — киношная цветовая кривая с roundtrip через линейный свет, экспозиция настраивается.
+- **CAS sharpening** — резкость без halo-артефактов (Contrast Adaptive Sharpening, AMD FidelityFX).
+- **Vignette + Film grain + Dithering** — углы темнее, плёночное зерно, ordered-dither против банд на 8-битном backbuffer.
+- **Хроматическая аберрация** (off по умолчанию) — кинематографичная оптика.
+- **FXAA 3.11** edge-aware antialiasing.
+
+**Tier 2 — depth-aware эффекты:**
+- **SSAO** (Screen-Space Ambient Occlusion) — объёмные тени в кабине, под приборами и в углах.
+- **Атмосферная дымка** (off по умолчанию) — экспоненциальный depth-based fog с настраиваемым цветом.
+- **Depth of Field** (off по умолчанию) — глубина резкости с фокусом и bokeh-blur. Чистый кинематографический эффект для скриншотов и replay-видео.
+
+Все toggle-ы лежат в окне **RENDER** меню `F12`. Master toggle «PostFX» отключает весь chain и возвращает старый Bloom + FXAA fallback.
+
 ## 📁 Структура файлов
 
 ```
@@ -69,6 +87,21 @@ ZDSimulator/
 saut: 0     # Отображение данных САУТ
 bgsd: 1     # Отображение монитора УСАВПП
 stupen: 1   # Отображение уровня ступени
+```
+
+### PostFX в `zdbooster.cfg` (автосохранение из меню)
+```ini
+# Унифицированный пост-процессинг (PostFX render-graph)
+postfx: 1     # 0/1 master toggle всего chain'а
+fxaa: 1       # 0/1 FXAA антиалиасинг (последний пасс)
+bloom: 1      # 0/1 HDR Bloom (multi-mip pyramid)
+tonemap: 1    # 0/1 ACES Filmic tone mapping
+sharpen: 1    # 0/1 CAS sharpening
+vignette: 1   # 0/1 виньетирование
+grain: 1      # 0/1 film grain
+ssao: 1       # 0/1 ambient occlusion (нужен depth)
+fog: 0        # 0/1 атмосферная дымка (нужен depth)
+dof: 0        # 0/1 depth of field (нужен depth)
 ```
 
 > **⚠️ Важно**: Система HookKLUB (отображение информации в кабине и АЛС-ЕН) работает только на ЧС7. Остальные функции (фрикам, новое небо и т.д) работают на всех локомотивах.
