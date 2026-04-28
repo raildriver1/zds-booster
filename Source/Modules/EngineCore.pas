@@ -23,7 +23,8 @@ unit EngineCore;
 interface
 uses SysUtils, Windows, Messages, Variables, OpenGl, DrawFunc2D, Textures,
 EngineUtils, DrawFunc3D, Console, Sound, DPC_packages, Advanced3D, Net,
-IniFile, CheatMenu, DiscordRPC, FXAA, Bloom, PostFX, SystemTime;
+IniFile, CheatMenu, DiscordRPC, FXAA, Bloom, PostFX, SystemTime, RA3Patches,
+CameraResetPatch, FreecamWorldAnchor;
 
 {$R DGLEngine.res}
 {$R Logo.res}
@@ -777,6 +778,19 @@ begin
 
         ProcessFreecam;
 
+      // ZDS-Booster: одно- и покадровые патчи RA-3. Идёт ПОСЛЕ
+      // ProcessFreecam, чтобы наши значения camera-X/Y/Z перебивали
+      // то, что туда мог записать freecam — это соблюдение "якорной"
+      // позиции независимо от свободной камеры. Сам модуль no-op'ит
+      // пока память невалидна, безопасно вызывать каждый кадр.
+      ApplyRA3PerFrame;
+
+      // ZDS-Booster: world-anchor для freecam (Alt+Shift+X). Идёт ПОСЛЕ
+      // ProcessFreecam (тот пишет в FREECAM_X/Y/Z) и ПОСЛЕ ApplyRA3PerFrame
+      // (тот может писать якорь камеры в RA-3) — наша counter-translation
+      // финально корректирует freecam, чтобы остаться в мировой точке.
+      ApplyFreecamWorldAnchor;
+
 //        if not success then
 //          begin
 //            ApplyMaxVisibleDistance;
@@ -808,7 +822,15 @@ begin
 
        if @glDraw<>nil then glDraw;
 
-
+      // ZDS-Booster: подавление сброса камеры по ЛКМ-в-центре когда мышь
+      // наведена на контроллер/кран/РБ/РБС/гизмо. Идёт СРАЗУ ПОСЛЕ glDraw
+      // потому что DrawRA3.UpdateHover (источник HoveredController и
+      // HoveredBrake) и UpdateGizmoFrameRA3 (источник HoveredGizmoAxis)
+      // вызываются ВНУТРИ glDraw — нужно сначала прогнать их, потом
+      // обновлять флаг для следующего вызова PROCESSKEYS.
+      // Само инсталлирование патча в Launcher.exe — однократное при
+      // первом вызове, последующие вызовы только обновляют флаг.
+      UpdateCameraResetSuppress;
 
        if length(Plugins)<>0 then
          for i:=0 to length(Plugins)-1 do

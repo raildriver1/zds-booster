@@ -1,0 +1,1055 @@
+name: arrow_PM.001
+texture: None
+bmp_tex: None
+material_folder: material0
+x: 1.164639949798584
+y: 10.638299942016602
+z: 2.7522099018096924
+
+name: indicator_active cabin
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.7556060552597046
+y: 10.715225219726562
+z: 2.675917625427246
+
+name: indicator_alarm
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.7254773378372192
+y: 10.715225219726562
+z: 2.675917625427246
+
+name: indicator_anxiety
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.7254773378372192
+y: 10.734943389892578
+z: 2.7074718475341797
+
+name: indicator_battery
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.7556060552597046
+y: 10.774551391601562
+z: 2.770857810974121
+
+name: indicator_KDL
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.7254773378372192
+y: 10.795101165771484
+z: 2.8037452697753906
+
+name: indicator_KDP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.7556060552597046
+y: 10.795101165771484
+z: 2.8037452697753906
+
+name: buttonindicator_maintaining_speed
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.4380495846271515
+y: 10.56942367553711
+z: 2.621626615524292
+
+name: indicator_overheating_axle_boxes
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.7254773378372192
+y: 10.754776000976562
+z: 2.7392120361328125
+
+name: indicator_parking_brake
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.7254773378372192
+y: 10.774551391601562
+z: 2.770857810974121
+
+name: indicator_SOT
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.7556060552597046
+y: 10.754776000976562
+z: 2.7392120361328125
+
+name: indicator_SOTH
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.7556060552597046
+y: 10.734943389892578
+z: 2.7074718475341797
+
+name: buttonindicator_open_passdoorsr
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.659090518951416
+y: 10.63460922241211
+z: 2.621725559234619
+
+name: buttonindicator_close_passdoorsr
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.7006558179855347
+y: 10.63460922241211
+z: 2.6217751502990723
+
+name: buttonindicator_open_passdoorsl
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.34323427081108093
+y: 10.63460922241211
+z: 2.621528387069702
+
+name: buttonindicator_close_passdoorsl
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.3847995102405548
+y: 10.63460922241211
+z: 2.621577739715576
+
+name: buttonindicator_steps
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.6058404445648193
+y: 10.63460922241211
+z: 2.621676206588745
+
+name: buttonindicator_mirror_heating
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 1.0748194456100464
+y: 10.610038757324219
+z: 2.656630516052246
+
+name: dial2
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 1.164638876914978
+y: 10.638267517089844
+z: 2.7522106170654297
+
+name: dial1
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 1.065273642539978
+y: 10.679039001464844
+z: 2.7517223358154297
+
+name: button_boardnet_off
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6347450017929077
+y: 8.991188049316406
+z: 2.845135450363159
+
+name: button_boardnet_on
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.593671441078186
+y: 8.991188049316406
+z: 2.845135450363159
+
+name: toggle_direction_of_movement
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.17056119441986084
+y: 10.313739776611328
+z: 2.6211280822753906
+
+name: controller_driver
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.19997453689575195
+y: 10.424112319946289
+z: 2.5994462966918945
+
+name: button_emergency_stop
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 1.2049026489257812
+y: 10.30672836303711
+z: 2.6523046493530273
+
+name: toggle_lighting_salon
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.5510051250457764
+y: 10.63460922241211
+z: 2.6211280822753906
+
+name: button_minus
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.6058404445648193
+y: 10.56942367553711
+z: 2.6211280822753906
+
+name: toggle_parking_brake
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 1.0288844108581543
+y: 10.629718780517578
+z: 2.656294822692871
+
+name: button_plus
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.5510051250457764
+y: 10.56942367553711
+z: 2.6211280822753906
+
+name: button_RB
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 1.1706289052963257
+y: 10.476131439208984
+z: 2.627157211303711
+
+name: button_RBP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -1.186029314994812
+y: 10.496479034423828
+z: 2.627157211303711
+
+name: button_RBS
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 1.3634312152862549
+y: 9.821863174438477
+z: 3.651383876800537
+
+name: controller_braking
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.9812414646148682
+y: 10.381782531738281
+z: 2.5848045349121094
+
+name: button_speed_selection
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.49288487434387207
+y: 10.56942367553711
+z: 2.6211280822753906
+
+name: toggle_searchlight
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.49288487434387207
+y: 10.63460922241211
+z: 2.6211280822753906
+
+name: button_diesel_start
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.10452431440353394
+y: 10.488540649414062
+z: 2.6211280822753906
+
+name: button_diesel_stop
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.038484156131744385
+y: 10.488540649414062
+z: 2.6211280822753906
+
+name: arrow_TC2
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 1.0652735233306885
+y: 10.679037094116211
+z: 2.7517223358154297
+
+name: arrow_TC1
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 1.0652735233306885
+y: 10.679037094116211
+z: 2.7517223358154297
+
+name: arrow_TM
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 1.1646387577056885
+y: 10.638265609741211
+z: 2.7522106170654297
+
+name: arrow_PM
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.0
+y: 0.0
+z: 0.0
+
+name: arrow_voltmeter_24v
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.812515377998352
+y: 8.99095344543457
+z: 2.8316171169281006
+
+name: arrow_voltmeter_110v
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.8807117938995361
+y: 8.992374420166016
+z: 2.835019826889038
+
+name: button_windscreen_washers
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.837736964225769
+y: 10.457134246826172
+z: 2.6211280822753906
+
+name: button_whistle_M
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.837736964225769
+y: 10.394996643066406
+z: 2.6211280822753906
+
+name: button_whistle_MP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -1.1860295534133911
+y: 10.42160415649414
+z: 2.6211280822753906
+
+name: toggle_windscreen_wipers
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.8377368450164795
+y: 10.518562316894531
+z: 2.6211280822753906
+
+name: button_emergency_management
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.17056119441986084
+y: 10.488540649414062
+z: 2.6211280822753906
+
+name: toggle_buffered_warning_lights
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.038484156131744385
+y: 10.398391723632812
+z: 2.6211280822753906
+
+name: toggle_ventilation_cabin
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -1.1079163551330566
+y: 8.991188049316406
+z: 2.8690555095672607
+
+name: toggle_climate_control_salon
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -1.04746413230896
+y: 8.991188049316406
+z: 2.84104323387146
+
+name: toggle_conditioner_cabin
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -1.1669220924377441
+y: 8.991188049316406
+z: 2.8690555095672607
+
+name: toggle_maneuvering_warning_lights
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.10452431440353394
+y: 10.398391723632812
+z: 2.6211280822753906
+
+name: button_microphone
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.038484156131744385
+y: 10.313739776611328
+z: 2.6211280822753906
+
+name: toggle_glass_heating
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -1.0014140605926514
+y: 8.991188049316406
+z: 2.806091070175171
+
+name: toggle_trolley_lighting
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.9498013257980347
+y: 8.991188049316406
+z: 2.8690555095672607
+
+name: toggle_heater_cabin
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -1.1079163551330566
+y: 8.991188049316406
+z: 2.806091070175171
+
+name: button_sand
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.4380495846271515
+y: 10.63460922241211
+z: 2.6211280822753906
+
+name: toggle_PZD
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -1.0014140605926514
+y: 8.991188049316406
+z: 2.8690555095672607
+
+name: button_replay
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.17056119441986084
+y: 10.398391723632812
+z: 2.6211280822753906
+
+name: button_start_recording
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.10452431440353394
+y: 10.313739776611328
+z: 2.6211280822753906
+
+name: dimmer_temperature_cabin
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -1.1669220924377441
+y: 8.98794937133789
+z: 2.80609393119812
+
+name: dimmer_brightness_M
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.015938222408294678
+y: 10.148494720458984
+z: 2.468716621398926
+
+name: dimmer_brightness_MP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -1.1756120920181274
+y: 10.148487091064453
+z: 2.468716621398926
+
+name: radio_station
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.06768643856048584
+y: 9.892571449279785
+z: 3.084378719329834
+
+name: button_typhon_M
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.8377370834350586
+y: 10.334091186523438
+z: 2.6211280822753906
+
+name: button_typhon_MP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -1.1860294342041016
+y: 10.358478546142578
+z: 2.6211280822753906
+
+name: toggle_EPK
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: 0.9103736877441406
+y: 10.192710876464844
+z: 2.460989475250244
+
+name: azv_1_heating_TF1_MTU
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_2_heating_TF2_MTU
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_3_MTU_management
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_4_power_GMP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_5_starter
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_6_generator_power_supply
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_7_pump
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_8_PZD1
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_9_PZD2
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_10_braking
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_11_110V-SU
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_12_consumers_SU_PK
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_13_control_panel_MFDU
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_14_24V_chain_management
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.40324330329895
+
+name: azv_15_BLOK
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_16_KVARC
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_17_CIK_P
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_18_CIK_L
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_19_boardnet
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_20_control_circuits
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_21_searchlight
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_22_lanterns
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_23_radio_station
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_24_add_equipment
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_25_mirrors
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_26_wiper_blade
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_27_socket_24v
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_28_doors_control
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_29_ASOTP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_30_reserve_1
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: azv_31_reserve_2
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.6528425216674805
+y: 8.98910140991211
+z: 3.220672369003296
+
+name: toggle_reserve
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.9498013854026794
+y: 8.991835594177246
+z: 2.806091785430908
+
+name: toggle_cabin_lighting
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.1032467931509018
+y: 10.145103454589844
+z: 2.470015287399292
+
+name: toggle_remote_control_lighting_M
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -0.03383314609527588
+y: 10.145103454589844
+z: 2.470015287399292
+
+name: toggle_remote_control_lighting_MP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_11_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material1\ra3_11_RGBA.bmp
+material_folder: material1
+x: -1.2359262704849243
+y: 10.145103454589844
+z: 2.470015287399292
+
+name: indicator_LS_G1_M
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: 0.3535272777080536
+y: 10.762934684753418
+z: 2.7386202812194824
+
+name: indicator_LS_G1_MP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.524755597114563
+y: 10.655879020690918
+z: 2.7386202812194824
+
+name: indicator_LS_G2_M
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: 0.3535272777080536
+y: 10.770751953125
+z: 2.7511091232299805
+
+name: indicator_LS_G2_MP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.524755597114563
+y: 10.6636962890625
+z: 2.7511091232299805
+
+name: indicator_LS_G3_M
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: 0.3535272777080536
+y: 10.778569221496582
+z: 2.7635984420776367
+
+name: indicator_LS_G3_MP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.524755597114563
+y: 10.671513557434082
+z: 2.7635984420776367
+
+name: indicator_LS_G4_M
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: 0.3535272777080536
+y: 10.786385536193848
+z: 2.776087522506714
+
+name: indicator_LS_G4_MP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.524755597114563
+y: 10.679329872131348
+z: 2.776087522506714
+
+name: indicator_LS_R_M
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: 0.3535272777080536
+y: 10.739482879638672
+z: 2.701152801513672
+
+name: indicator_LS_R_MP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.524755597114563
+y: 10.632427215576172
+z: 2.701152801513672
+
+name: indicator_LS_RY_M
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: 0.3535272777080536
+y: 10.747300148010254
+z: 2.713641881942749
+
+name: indicator_LS_RY_MP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.524755597114563
+y: 10.640244483947754
+z: 2.713641881942749
+
+name: indicator_LS_W_MP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.524755597114563
+y: 10.62460994720459
+z: 2.6886634826660156
+
+name: indicator_LS_W_M
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: 0.3535272777080536
+y: 10.73166561126709
+z: 2.6886634826660156
+
+name: indicator_LS_Y_M
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: 0.3535272777080536
+y: 10.755117416381836
+z: 2.726130962371826
+
+name: indicator_LS_Y_MP
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.524755597114563
+y: 10.648061752319336
+z: 2.726130962371826
+
+name: light_cabin
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: 0.008851289749145508
+y: 10.005729675292969
+z: 3.9187724590301514
+
+name: pult_light
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.5933901071548462
+y: 10.705550193786621
+z: 2.834451675415039
+
+name: seats
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_12_RGBA.jpg
+bmp_tex: C:\Users\8888\Desktop\cab\material3\ra3_12_RGBA.bmp
+material_folder: material3
+x: -0.010660886764526367
+y: 9.197700500488281
+z: 2.353393077850342
+
+name: panel_gosha
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_8_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material5\ra3_8_RGBA.bmp
+material_folder: material5
+x: -0.006806373596191406
+y: 10.567201614379883
+z: 2.2183995246887207
+
+name: footboards
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.12085378170013428
+y: 9.745814323425293
+z: 2.644296646118164
+
+name: button_transition
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.6762245893478394
+y: 8.991188049316406
+z: 2.845135450363159
+
+name: button_recharge
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.7583754062652588
+y: 8.991188049316406
+z: 2.845135450363159
+
+name: key_emergency_management
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.716688334941864
+y: 8.979291915893555
+z: 2.8452260494232178
+
+name: cap_recharge
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.7583754658699036
+y: 8.99263858795166
+z: 2.866581916809082
+
+name: cap_transition
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.6762245893478394
+y: 8.99263858795166
+z: 2.866581916809082
+
+name: cap_emergency_management
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\ra3_10_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material2\ra3_10_RGBA.bmp
+material_folder: material2
+x: -0.17056119441986084
+y: 10.509986877441406
+z: 2.622579574584961
+
+name: display_MFDU
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\display_MFDU_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material6\display_MFDU_RGBA.bmp
+material_folder: material6
+x: 0.10450473427772522
+y: 10.702808380126953
+z: 2.722994327545166
+
+name: display_BLOK
+texture: C:\Users\8888\Desktop\ra3\ra3new\textures\display_BLOK_RGBA.bmp
+bmp_tex: C:\Users\8888\Desktop\cab\material7\display_BLOK_RGBA.bmp
+material_folder: material7
+x: 0.5356290340423584
+y: 10.771315574645996
+z: 2.716470241546631

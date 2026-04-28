@@ -45,7 +45,10 @@ uses
   FXAA in 'Modules\FXAA.pas',
   Bloom in 'Modules\Bloom.pas',
   PostFX in 'Modules\PostFX.pas',
-  SystemTime in 'Modules\SystemTime.pas';
+  SystemTime in 'Modules\SystemTime.pas',
+  RA3Patches in 'Modules\RA3Patches.pas',
+  CameraResetPatch in 'Modules\CameraResetPatch.pas',
+  FreecamWorldAnchor in 'Modules\FreecamWorldAnchor.pas';
 
 //Function needed for engine header
 function DLL_ver : byte; stdcall;

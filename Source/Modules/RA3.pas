@@ -14,10 +14,18 @@ procedure ApplyRA3BlockTransform(x, y, z, AngZ: Single);
 // без потерь точности через byte (0..5/251..255).
 function GetRRSHandlePos: Single;
 
+// Публичные hover-флаги для CameraResetPatch (подавление LMB-в-центре сброса
+// камеры). Выставляются внутри UpdateHover / UpdateRBButtons каждый кадр.
+var
+  HoveredController: Boolean = False;
+  HoveredBrake:      Boolean = False;
+  HoveredRB:         Boolean = False;
+  HoveredRBS:        Boolean = False;
+
 implementation
 
 uses
-  OpenGL, Windows, SysUtils, Variables, EngineUtils, DrawFunc3D, Advanced3D, Textures, KlubData, CheatMenu, RA3Physics;
+  OpenGL, Windows, SysUtils, Classes, Variables, EngineUtils, DrawFunc3D, Advanced3D, Textures, KlubData, CheatMenu, RA3Physics;
 
 
 const
@@ -113,9 +121,6 @@ var
   LocoRightDoorXOut:   Single = 0;       // выдвиг створок правой стороны
   LocoRightDoorSide:   Single = 0;       // разъезд правых половинок (rl → -Y, rr → +Y)
 
-  HoveredController: Boolean = False;
-  HoveredBrake: Boolean = False;
-
   HoverMode: Boolean = False;
   PatchActive: Boolean = False;
 
@@ -207,8 +212,7 @@ var
   RightDoorsOpen: Boolean = False;
   RightDoorOffset: Single = 0;
 
-HoveredRB: Boolean = False;
-HoveredRBS: Boolean = False;
+// HoveredRB / HoveredRBS вынесены в interface (секция var выше).
 
 RBPressed: Boolean = False;
 RBSPressed: Boolean = False;
@@ -232,6 +236,60 @@ const
   // (8 дверей вагона: пары 0-1, 2-3, 4-5, 6-7).
   DOOR_Y_DIR: array[0..7] of Integer = (-1, 1, 1, -1, -1, 1, -1, 1);
 
+// ============================================================================
+// NEWCAB — интерактивная кабина РА-3 с hover/click элементами
+// ============================================================================
+// Источник моделей: C:\ZDSimulator55.008new\ra3\newcab\
+//   objects_data.txt        — координаты каждого .dmd объекта (UTF-8, ASCII keys)
+//   material{0..7}\*.dmd    — отдельный .dmd на каждую кнопку/тумблер/индикатор
+// (старая cab\ — слитный main.dmd на материал, без интерактивности).
+//
+// Каждый объект из objects_data.txt → запись в NewCabItems с координатой,
+// текстурой и типом (button/toggle/dimmer/azv/...). UpdateNewCabHover каждый
+// кадр считает экранную позицию (Get2DPos) и проверяет курсор; при попадании
+// модель подсвечивается жёлтым и для button-типов опускается по Z при ЛКМ.
+// ============================================================================
+type
+  TNewCabItemType = (
+    nciGeneric,    // не-интерактивная (стрелка/индикатор/кресла/кузов)
+    nciButton,     // кнопка — приседает по Z при ЛКМ
+    nciToggle,     // тумблер — переключает Toggled при клике
+    nciDimmer,     // диммер/регулятор — пока без вращения, только hover
+    nciAzv,        // АЗВ (автомат защиты) — двухпозиционный, как toggle
+    nciKey         // ключ (key_*) — кратковременное нажатие
+  );
+
+  TNewCabItem = record
+    Name:           AnsiString;    // например, 'button_diesel_start'
+    ModelID:        Integer;
+    TextureID:      Integer;
+    MaterialFolder: AnsiString;    // имя папки, например 'Material #15.006'
+    X, Y, Z:        Single;        // координата в локальном пространстве кабины
+    BaseZ:          Single;        // оригинальный Z (для возврата после press)
+    ItemType:       TNewCabItemType;
+    Hovered:        Boolean;
+    LastLMB:        Boolean;       // edge-detect ЛКМ для toggle
+    Toggled:        Boolean;       // состояние тумблера/АЗВ
+    PressOffset:    Single;        // текущее смещение по Z вниз (анимация)
+    PressTarget:    Single;        // целевое смещение
+  end;
+
+  TFolderTexCache = record
+    Folder: AnsiString;
+    TexID:  Integer;
+  end;
+
+const
+  NEWCAB_HOVER_RADIUS_PX: Integer = 25;     // px радиус hit-теста
+  NEWCAB_PRESS_DEPTH:     Single  = -0.004; // насколько кнопка "приседает" по Z
+  NEWCAB_PRESS_LERP:      Single  = 0.3;    // скорость анимации press
+
+var
+  NewCabItems:           array of TNewCabItem;
+  NewCabFolderTex:       array of TFolderTexCache;  // кэш текстур по имени папки
+  RA3_NewCabInitialized: Boolean = False;
+  HoveredNewCabIdx:      Integer = -1;
+
 function IsKeyDownEx(Key: Integer): Boolean;
 begin
   Result := (GetAsyncKeyState(Key) and $8000) <> 0;
@@ -244,18 +302,10 @@ begin
   want := IsRA3HoverEnabled;
   if want = HoverMode then Exit;
   HoverMode := want;
-  if HoverMode then
-    ShowCursor(True)
-  else
-  begin
-    ShowCursor(False);
-    if PatchActive then
-    begin
-      RemoveMenuPatch;
-      PatchActive := False;
-    end;
+  // ZDS-Booster: hover-патч ($743B9E NOP) и системный курсор отключены —
+  // ориентация только по жёлтой подсветке рычага в DrawController/DrawBrake.
+  if not HoverMode then
     DraggingController := False;
-  end;
 end;
 
 // Проверка попадания курсора в «капсулу» вдоль отрезка A→B в экранных координатах
@@ -346,51 +396,38 @@ var
   v: TVertex;
   pTop, pBot, pCenter: TPoint;
   px, py, dx, dy, rr: Integer;
-  wantPatch: Boolean;
 begin
   SyncHoverModeWithSettings;
 
   HoveredController := False;
   HoveredBrake := False;
 
-  if HoverMode then
-  begin
-    px := Round(MoveXcoord);
-    py := Round(MoveYcoord);
-    rr := HOVER_RADIUS_PX * HOVER_RADIUS_PX;
+  // ZDS-Booster: hit-test делается ВСЕГДА (раньше был под `if HoverMode`,
+  // но тогда CameraResetPatch не мог читать флаги если RA3-подсветка
+  // выключена в настройках). Подсветка/драг — отдельный вопрос, рулится
+  // HoverMode внутри Draw* и обработчиков ЛКМ.
+  px := Round(MoveXcoord);
+  py := Round(MoveYcoord);
+  rr := HOVER_RADIUS_PX * HOVER_RADIUS_PX;
 
-    // Капсула между основанием и верхушкой контроллера
-    v.X := CONTROLLER_POS_X; v.Y := CONTROLLER_POS_Y; v.Z := CONTROLLER_POS_Z;
-    pBot := Get2DPos(v);
-    v.X := CONTROLLER_TOP_X; v.Y := CONTROLLER_TOP_Y; v.Z := CONTROLLER_TOP_Z;
-    pTop := Get2DPos(v);
-    if HitCapsule2D(pBot, pTop, px, py, HOVER_RADIUS_PX) then
-      HoveredController := True;
+  // Капсула между основанием и верхушкой контроллера
+  v.X := CONTROLLER_POS_X; v.Y := CONTROLLER_POS_Y; v.Z := CONTROLLER_POS_Z;
+  pBot := Get2DPos(v);
+  v.X := CONTROLLER_TOP_X; v.Y := CONTROLLER_TOP_Y; v.Z := CONTROLLER_TOP_Z;
+  pTop := Get2DPos(v);
+  if HitCapsule2D(pBot, pTop, px, py, HOVER_RADIUS_PX) then
+    HoveredController := True;
 
-    // Тормозной — круговая зона
-    v.X := BRAKE_POS_X; v.Y := BRAKE_POS_Y; v.Z := BRAKE_POS_Z;
-    pCenter := Get2DPos(v);
-    dx := pCenter.X - px; dy := pCenter.Y - py;
-    if (dx*dx + dy*dy) < rr then
-      HoveredBrake := True;
-  end;
+  // Тормозной — круговая зона
+  v.X := BRAKE_POS_X; v.Y := BRAKE_POS_Y; v.Z := BRAKE_POS_Z;
+  pCenter := Get2DPos(v);
+  dx := pCenter.X - px; dy := pCenter.Y - py;
+  if (dx*dx + dy*dy) < rr then
+    HoveredBrake := True;
 
-  // Патч держим пока: 1) наведён, ИЛИ 2) идёт драг контроллера.
-  // Снимаем когда оба условия сняты (курсор ушёл И ЛКМ отпущена).
-  // Кроме того, если активен гизмо кастомных текстов — он сам уже зовёт
-  // ApplyMenuPatch (UpdateGizmoFrameRA3 живёт по тому же паттерну), так что
-  // не мешаем ему: HoverMode-ветка просто не должна снимать патч в этом случае.
-  wantPatch := (HoverMode and (HoveredController or DraggingController or HoveredBrake or DraggingBrake)) or IsGizmoActive;
-  if wantPatch and not PatchActive then
-  begin
-    ApplyMenuPatch;
-    PatchActive := True;
-  end
-  else if (not wantPatch) and PatchActive then
-  begin
-    RemoveMenuPatch;
-    PatchActive := False;
-  end;
+  // ZDS-Booster: hover-патч ($743B9E NOP) полностью отключён. Hovered*
+  // флаги по-прежнему вычисляются (используются для подсветки и hit-теста
+  // drag'а контроллера/тормоза), но игровой code patch больше не делается.
 end;
 
 procedure DrawSimpleModel(ModelID: Integer; x, y, z: Single; TextureID: Integer = 0);
@@ -1033,6 +1070,477 @@ begin
   end;
 end;
 
+// ============================================================================
+// NEWCAB — парсер objects_data.txt + загрузчик моделей
+// ============================================================================
+
+// Имена которые УЖЕ обрабатываются в существующем коде (dynamic) с собственной
+// hover-логикой и/или анимацией — пропускаем при загрузке newcab чтобы не было
+// двойного рендера.
+function IsNewCabHandledExternally(const N: AnsiString): Boolean;
+begin
+  Result :=
+       (N = 'controller_driver')
+    or (N = 'controller_braking')
+    or (N = 'button_RB')
+    or (N = 'button_RBP')
+    or (N = 'button_RBS')
+    or (N = 'arrow_PM')
+    or (N = 'arrow_PM.001')
+    or (N = 'arrow_TC1')
+    or (N = 'arrow_TC2')
+    or (N = 'arrow_TM')
+    or (N = 'arrow_voltmeter_24v')
+    or (N = 'arrow_voltmeter_110v')
+    // ALS-EN индикаторы — DrawALSIndicator выбирает один по сигналу
+    or (Pos(AnsiString('indicator_LS_'), N) = 1);
+end;
+
+// Определяем тип элемента по префиксу имени.
+function NewCabItemTypeFromName(const N: AnsiString): TNewCabItemType;
+begin
+  if Pos(AnsiString('button_'), N) = 1 then Result := nciButton
+  else if Pos(AnsiString('buttonindicator_'), N) = 1 then Result := nciButton
+  else if Pos(AnsiString('toggle_'), N) = 1  then Result := nciToggle
+  else if Pos(AnsiString('dimmer_'), N) = 1  then Result := nciDimmer
+  else if Pos(AnsiString('azv_'), N) = 1     then Result := nciAzv
+  else if Pos(AnsiString('key_'), N) = 1     then Result := nciKey
+  else Result := nciGeneric;
+end;
+
+// Парсим строку "key: value" возвращаем value (с подрезанием пробелов).
+function ExtractAfterColon(const Line: AnsiString): AnsiString;
+var
+  p: Integer;
+begin
+  p := Pos(AnsiString(':'), Line);
+  if p = 0 then begin Result := ''; Exit; end;
+  Result := Copy(Line, p + 1, MaxInt);
+  // trim leading/trailing whitespace + CR
+  while (Length(Result) > 0) and (Result[1] in [' ', #9, #13]) do Delete(Result, 1, 1);
+  while (Length(Result) > 0) and (Result[Length(Result)] in [' ', #9, #13]) do
+    SetLength(Result, Length(Result) - 1);
+end;
+
+// "1.2345" → 1.2345 (всегда точка как разделитель, как в objects_data.txt).
+function ParseFloatDot(const S: AnsiString): Single;
+var
+  fs: TFormatSettings;
+begin
+{$IF DECLARED(FormatSettings)}
+  fs := FormatSettings;
+{$ELSE}
+  GetLocaleFormatSettings(0, fs);
+{$IFEND}
+  fs.DecimalSeparator := '.';
+  Result := StrToFloatDef(string(S), 0.0, fs);
+end;
+
+// Прочитать UTF-8/ASCII текстовый файл целиком в AnsiString — байт-в-байт.
+// objects_data.txt после latinization русских имён состоит только из ASCII,
+// так что AnsiString сравнения работают напрямую.
+function LoadTextFileBytes(const FileName: string): AnsiString;
+var
+  fs: TFileStream;
+  n: Integer;
+begin
+  Result := '';
+  if not FileExists(FileName) then Exit;
+  fs := TFileStream.Create(FileName, fmOpenRead or fmShareDenyNone);
+  try
+    n := fs.Size;
+    if n <= 0 then Exit;
+    SetLength(Result, n);
+    fs.ReadBuffer(Result[1], n);
+  finally
+    fs.Free;
+  end;
+end;
+
+// Разбиение содержимого objects_data.txt на строки по CR/LF.
+procedure SplitLinesAnsi(const S: AnsiString; out Lines: array of AnsiString;
+                         var LinesCount: Integer);
+var
+  i, start: Integer;
+  cap: Integer;
+begin
+  LinesCount := 0;
+  cap := Length(Lines);
+  start := 1;
+  for i := 1 to Length(S) do
+  begin
+    if (S[i] = #10) or (S[i] = #13) then
+    begin
+      if i > start then
+      begin
+        if LinesCount < cap then
+          Lines[LinesCount] := Copy(S, start, i - start);
+        Inc(LinesCount);
+      end;
+      start := i + 1;
+    end;
+  end;
+  if start <= Length(S) then
+  begin
+    if LinesCount < cap then
+      Lines[LinesCount] := Copy(S, start, Length(S) - start + 1);
+    Inc(LinesCount);
+  end;
+end;
+
+// Преобразование UTF-8 (как лежит в objects_data.txt) в текущую системную ANSI
+// кодировку (Win-1251 для русской локали). Это нужно потому что файловые
+// имена кириллицей на NTFS пишутся через UTF-16, и при доступе через ANSI API
+// (Delphi 2007 string = AnsiString) Windows конвертирует через текущий
+// codepage. Если оставить UTF-8 байты — `FileExists` / `LoadModel` не найдут
+// файл с русским именем.
+function Utf8ToAnsiCp(const s: AnsiString): AnsiString;
+var
+  ws: WideString;
+begin
+  if s = '' then
+  begin
+    Result := '';
+    Exit;
+  end;
+  ws := UTF8Decode(s);
+  // Если строка не валидный UTF-8 (например, чисто ASCII с одним
+  // hi-bit байтом), UTF8Decode вернёт ''. Тогда оставляем оригинал —
+  // он уже в Win-1251 / ASCII.
+  if ws = '' then
+  begin
+    Result := s;
+    Exit;
+  end;
+  Result := AnsiString(ws);
+end;
+
+// Финализирует ранее накопленный блок (curName/...) и добавляет его в NewCabItems
+// если имя валидное и не помечено как "обрабатывается извне".
+procedure FlushNewCabBlock(const curName: AnsiString;
+                           const curMatFolder: AnsiString;
+                           curX, curY, curZ: Single;
+                           curHas: Boolean);
+var
+  cur: TNewCabItem;
+  nameAnsi, folderAnsi: AnsiString;
+begin
+  if not curHas then Exit;
+  if curName = '' then Exit;
+  if curMatFolder = '' then Exit;
+
+  // UTF-8 → Win-1251 для совместимости с FindFirst/FileExists/LoadModel.
+  nameAnsi   := Utf8ToAnsiCp(curName);
+  folderAnsi := Utf8ToAnsiCp(curMatFolder);
+
+  if IsNewCabHandledExternally(nameAnsi) then Exit;
+
+  FillChar(cur, SizeOf(cur), 0);
+  cur.Name           := nameAnsi;
+  cur.MaterialFolder := folderAnsi;
+  cur.X              := curX;
+  cur.Y              := curY;
+  cur.Z              := curZ;
+  cur.BaseZ          := curZ;
+  cur.ItemType       := NewCabItemTypeFromName(nameAnsi);
+  cur.ModelID        := 0;
+  cur.TextureID      := 0;
+
+  SetLength(NewCabItems, Length(NewCabItems) + 1);
+  NewCabItems[High(NewCabItems)] := cur;
+end;
+
+// Парсим objects_data.txt и заполняем NewCabItems. Поля name + material_folder
+// + x/y/z обязательны; original_name / texture / bmp_tex просто игнорируем
+// (они для информации Blender-экспорта).
+//
+// ПАРСИНГ НЕ ЗАВИСИТ ОТ ПУСТЫХ СТРОК между блоками — мой SplitLinesAnsi не
+// эмитит их (CRLF трактуется как один разделитель). Поэтому фиксируем блок
+// при ВСТРЕЧЕ следующего "name:" — это надёжнее.
+procedure LoadNewCabObjectsData(const FileName: string);
+var
+  raw: AnsiString;
+  Lines: array of AnsiString;
+  LinesCount, i: Integer;
+  curName: AnsiString;
+  curMatFolder: AnsiString;
+  curX, curY, curZ: Single;
+  curHas: Boolean;
+  key, val: AnsiString;
+  p: Integer;
+begin
+  raw := LoadTextFileBytes(FileName);
+  if raw = '' then Exit;
+
+  SetLength(Lines, Length(raw) div 4 + 16);
+  LinesCount := 0;
+  SplitLinesAnsi(raw, Lines, LinesCount);
+
+  curName       := '';
+  curMatFolder  := '';
+  curX := 0; curY := 0; curZ := 0;
+  curHas        := False;
+
+  for i := 0 to LinesCount - 1 do
+  begin
+    if Length(Lines[i]) = 0 then Continue;
+
+    p := Pos(AnsiString(':'), Lines[i]);
+    if p = 0 then Continue;
+    key := Copy(Lines[i], 1, p - 1);
+    val := ExtractAfterColon(Lines[i]);
+
+    if key = 'name' then
+    begin
+      // Перед началом нового блока — финализируем предыдущий.
+      FlushNewCabBlock(curName, curMatFolder, curX, curY, curZ, curHas);
+
+      curName       := val;
+      curMatFolder  := '';
+      curX := 0; curY := 0; curZ := 0;
+      curHas        := True;
+    end
+    else if key = 'material_folder' then
+      curMatFolder := val
+    else if key = 'x' then
+      curX := ParseFloatDot(val)
+    else if key = 'y' then
+      curY := ParseFloatDot(val)
+    else if key = 'z' then
+      curZ := ParseFloatDot(val);
+    // 'original_name', 'texture', 'bmp_tex' — игнорируем
+  end;
+
+  // Финализируем последний блок (после последнего "name:" нет следующего).
+  FlushNewCabBlock(curName, curMatFolder, curX, curY, curZ, curHas);
+end;
+
+// Поиск/загрузка текстуры в указанной папке материала. Так как имена .bmp
+// в каждой папке разные (ra3_8_RGBA.bmp, ra3_11_RGBA.bmp, display_MFDU_RGBA.bmp,
+// и т.д.), ищем ПЕРВЫЙ .bmp/.jpg/.png в папке через FindFirst. Кэшируем
+// результат в NewCabFolderTex, чтобы не вызывать LoadTextureFromFile много раз
+// для одной и той же папки.
+function GetOrLoadFolderTex(const BasePath: string;
+                            const Folder: AnsiString): Integer;
+var
+  i: Integer;
+  matPath: string;
+  sr: TSearchRec;
+  patterns: array[0..3] of string;
+  k: Integer;
+begin
+  // Поиск в кэше
+  for i := 0 to High(NewCabFolderTex) do
+    if NewCabFolderTex[i].Folder = Folder then
+    begin
+      Result := NewCabFolderTex[i].TexID;
+      Exit;
+    end;
+
+  Result  := 0;
+  matPath := BasePath + string(Folder) + '\';
+
+  patterns[0] := '*.bmp';
+  patterns[1] := '*.jpg';
+  patterns[2] := '*.jpeg';
+  patterns[3] := '*.png';
+
+  for k := Low(patterns) to High(patterns) do
+  begin
+    if FindFirst(matPath + patterns[k], faAnyFile, sr) = 0 then
+    begin
+      try
+        Result := LoadTextureFromFile(matPath + sr.Name, 0, -1);
+      finally
+        FindClose(sr);
+      end;
+      if Result <> 0 then Break;
+    end;
+  end;
+
+  // В кэш — даже если 0 (чтобы не пытаться грузить много раз для папки без bmp).
+  SetLength(NewCabFolderTex, Length(NewCabFolderTex) + 1);
+  NewCabFolderTex[High(NewCabFolderTex)].Folder := Folder;
+  NewCabFolderTex[High(NewCabFolderTex)].TexID  := Result;
+end;
+
+// Проверка: есть ли уже NewCabItems с таким (Folder, Name).
+function FindNewCabItemIdx(const Folder, Name: AnsiString): Integer;
+var
+  i: Integer;
+begin
+  Result := -1;
+  for i := 0 to High(NewCabItems) do
+    if (NewCabItems[i].MaterialFolder = Folder) and (NewCabItems[i].Name = Name) then
+    begin
+      Result := i;
+      Exit;
+    end;
+end;
+
+// Простой логгер для диагностики newcab. Пишет в C:\ZDSimulator55.008new\newcab.log.
+procedure NewCabLog(const Msg: AnsiString);
+const
+  LogPath = 'C:\ZDSimulator55.008new\newcab.log';
+var
+  fs: TFileStream;
+  full: AnsiString;
+begin
+  full := Msg + #13#10;
+  try
+    if FileExists(LogPath) then
+      fs := TFileStream.Create(LogPath, fmOpenWrite or fmShareDenyNone)
+    else
+      fs := TFileStream.Create(LogPath, fmCreate or fmShareDenyNone);
+    try
+      fs.Position := fs.Size;
+      if Length(full) > 0 then
+        fs.WriteBuffer(full[1], Length(full));
+    finally
+      fs.Free;
+    end;
+  except
+    // log не критичен
+  end;
+end;
+
+procedure InitNewCabRA3;
+const
+  BasePath = 'C:\ZDSimulator55.008new\ra3\newcab\';
+var
+  i: Integer;
+  modelPath, matPath: string;
+  srDir, sr: TSearchRec;
+  dmdName: AnsiString;
+  folderName: AnsiString;
+  itemIdx: Integer;
+  newItem: TNewCabItem;
+  loadedCount, totalCount, withCoordsCount: Integer;
+begin
+  if RA3_NewCabInitialized then Exit;
+  RA3_NewCabInitialized := True;
+
+  if FileExists('C:\ZDSimulator55.008new\newcab.log') then
+    DeleteFile('C:\ZDSimulator55.008new\newcab.log');
+
+  NewCabLog('=== InitNewCabRA3 start ===');
+  NewCabLog(AnsiString('BasePath: ') + AnsiString(BasePath));
+
+  if not DirectoryExists(BasePath) then
+  begin
+    NewCabLog('!! BasePath does NOT exist — abort.');
+    Exit;
+  end;
+
+  SetLength(NewCabItems, 0);
+  SetLength(NewCabFolderTex, 0);
+
+  // 1) Парсим координаты + типы + папку материала из objects_data.txt
+  LoadNewCabObjectsData(BasePath + 'objects_data.txt');
+  NewCabLog(AnsiString('After parse objects_data.txt: NewCabItems = ')
+            + AnsiString(IntToStr(Length(NewCabItems))));
+
+  // 2) Для каждого item грузим .dmd и текстуру (по имени папки).
+  loadedCount := 0;
+  for i := 0 to High(NewCabItems) do
+  begin
+    modelPath := BasePath + string(NewCabItems[i].MaterialFolder)
+                          + '\' + string(NewCabItems[i].Name) + '.dmd';
+    if FileExists(modelPath) then
+    begin
+      NewCabItems[i].ModelID := LoadModel(modelPath, 0, False);
+      if NewCabItems[i].ModelID <> 0 then Inc(loadedCount);
+    end
+    else
+    begin
+      NewCabItems[i].ModelID := 0;
+      NewCabLog(AnsiString('  miss .dmd: ') + AnsiString(modelPath));
+    end;
+
+    NewCabItems[i].TextureID := GetOrLoadFolderTex(BasePath,
+                                                    NewCabItems[i].MaterialFolder);
+  end;
+  NewCabLog(AnsiString('Loaded from objects_data.txt: ')
+            + AnsiString(IntToStr(loadedCount)) + AnsiString('/')
+            + AnsiString(IntToStr(Length(NewCabItems))));
+  withCoordsCount := Length(NewCabItems);
+
+  // 3) ДОПОЛНИТЕЛЬНО — обходим ВСЕ подкаталоги newcab и грузим .dmd
+  //    которых нет в objects_data.txt (без координат, hover для них не работает).
+  if FindFirst(BasePath + '*', faDirectory, srDir) = 0 then
+  begin
+    try
+      repeat
+        if (srDir.Name = '.') or (srDir.Name = '..') then Continue;
+        if (srDir.Attr and faDirectory) = 0 then Continue;
+
+        folderName := AnsiString(srDir.Name);
+        matPath    := BasePath + srDir.Name + '\';
+
+        if FindFirst(matPath + '*.dmd', faAnyFile, sr) = 0 then
+        begin
+          try
+            repeat
+              dmdName := AnsiString(ChangeFileExt(string(sr.Name), ''));
+              if dmdName = '' then Continue;
+              if IsNewCabHandledExternally(dmdName) then Continue;
+
+              itemIdx := FindNewCabItemIdx(folderName, dmdName);
+              if itemIdx >= 0 then Continue;
+
+              FillChar(newItem, SizeOf(newItem), 0);
+              newItem.Name           := dmdName;
+              newItem.MaterialFolder := folderName;
+              newItem.X              := 0;
+              newItem.Y              := 0;
+              newItem.Z              := 0;
+              newItem.BaseZ          := 0;
+              newItem.ItemType       := NewCabItemTypeFromName(dmdName);
+              newItem.ModelID        := LoadModel(matPath + sr.Name, 0, False);
+              newItem.TextureID      := GetOrLoadFolderTex(BasePath, folderName);
+
+              SetLength(NewCabItems, Length(NewCabItems) + 1);
+              NewCabItems[High(NewCabItems)] := newItem;
+            until FindNext(sr) <> 0;
+          finally
+            FindClose(sr);
+          end;
+        end;
+      until FindNext(srDir) <> 0;
+    finally
+      FindClose(srDir);
+    end;
+  end;
+
+  // Финальная статистика.
+  totalCount := Length(NewCabItems);
+  loadedCount := 0;
+  for i := 0 to High(NewCabItems) do
+    if NewCabItems[i].ModelID <> 0 then Inc(loadedCount);
+
+  NewCabLog(AnsiString('=== Final stats ==='));
+  NewCabLog(AnsiString('Items total:        ') + AnsiString(IntToStr(totalCount)));
+  NewCabLog(AnsiString('  with coords (hover): ') + AnsiString(IntToStr(withCoordsCount)));
+  NewCabLog(AnsiString('  ModelID loaded OK:   ') + AnsiString(IntToStr(loadedCount)));
+  NewCabLog(AnsiString('  Folders cached:      ') + AnsiString(IntToStr(Length(NewCabFolderTex))));
+
+  NewCabLog(AnsiString('--- first 30 items ---'));
+  for i := 0 to High(NewCabItems) do
+  begin
+    if i >= 30 then Break;
+    NewCabLog(AnsiString('  [') + AnsiString(IntToStr(i)) + AnsiString('] folder="')
+              + NewCabItems[i].MaterialFolder
+              + AnsiString('" name="') + NewCabItems[i].Name
+              + AnsiString('" model=') + AnsiString(IntToStr(NewCabItems[i].ModelID))
+              + AnsiString(' tex=') + AnsiString(IntToStr(NewCabItems[i].TextureID)));
+  end;
+
+  NewCabLog(AnsiString('--- folder texture cache ---'));
+  for i := 0 to High(NewCabFolderTex) do
+    NewCabLog(AnsiString('  folder="') + NewCabFolderTex[i].Folder
+              + AnsiString('" texID=') + AnsiString(IntToStr(NewCabFolderTex[i].TexID)));
+end;
+
 procedure DrawTelega;
 begin
   DrawSimpleModel(TelegaMotorID, 0, 0, 0, TelegaTextureID);
@@ -1248,6 +1756,161 @@ begin
 
     EndObj3D;
   end;
+end;
+
+// ============================================================================
+// NEWCAB — hover (hit-test 2D) + click + рендер
+// ============================================================================
+
+// Hit-test: курсор в круге радиуса NEWCAB_HOVER_RADIUS_PX от 2D-проекции X,Y,Z.
+// Только интерактивные типы (button/toggle/dimmer/azv/key) попадают под hover —
+// generic объекты (стрелки, кресла, индикаторы) не берут события мыши.
+procedure UpdateNewCabHover;
+var
+  i, px, py, dx, dy, r2: Integer;
+  v: TVertex;
+  p: TPoint;
+  bestIdx: Integer;
+  bestDist2: Integer;
+  d2: Integer;
+begin
+  HoveredNewCabIdx := -1;
+
+  // Hover работает только когда RA3HoverMode включён (как у controller_driver).
+  if not HoverMode then
+  begin
+    for i := 0 to High(NewCabItems) do
+      NewCabItems[i].Hovered := False;
+    Exit;
+  end;
+
+  px := Round(MoveXcoord);
+  py := Round(MoveYcoord);
+  r2 := NEWCAB_HOVER_RADIUS_PX * NEWCAB_HOVER_RADIUS_PX;
+
+  bestIdx := -1;
+  bestDist2 := MaxInt;
+
+  // Ищем БЛИЖАЙШИЙ к курсору интерактивный объект — иначе на плотных скоплениях
+  // кнопок (как АЗВ) hover будет «прыгать» по индексу.
+  for i := 0 to High(NewCabItems) do
+  begin
+    NewCabItems[i].Hovered := False;
+    if NewCabItems[i].ModelID = 0 then Continue;
+
+    case NewCabItems[i].ItemType of
+      nciButton, nciToggle, nciDimmer, nciAzv, nciKey: ;
+    else
+      Continue;  // generic не интерактивен
+    end;
+
+    v.X := NewCabItems[i].X;
+    v.Y := NewCabItems[i].Y;
+    v.Z := NewCabItems[i].Z;
+    p := Get2DPos(v);
+    // Get2DPos возвращает (-1,-1) если точка позади камеры — пропускаем.
+    if (p.X < 0) or (p.Y < 0) then Continue;
+
+    dx := p.X - px;
+    dy := p.Y - py;
+    d2 := dx*dx + dy*dy;
+    if (d2 < r2) and (d2 < bestDist2) then
+    begin
+      bestDist2 := d2;
+      bestIdx := i;
+    end;
+  end;
+
+  if bestIdx >= 0 then
+  begin
+    NewCabItems[bestIdx].Hovered := True;
+    HoveredNewCabIdx := bestIdx;
+  end;
+end;
+
+// Логика ЛКМ: на rising-edge меняем состояние/инициируем press.
+procedure UpdateNewCabClicks;
+var
+  i: Integer;
+  lb: Boolean;
+begin
+  lb := IsKeyDownEx(VK_LBUTTON);
+
+  for i := 0 to High(NewCabItems) do
+  begin
+    // press-target по умолчанию = 0 (вернётся в исходное)
+    NewCabItems[i].PressTarget := 0;
+
+    if not NewCabItems[i].Hovered then
+    begin
+      NewCabItems[i].LastLMB := lb;
+      Continue;
+    end;
+
+    case NewCabItems[i].ItemType of
+      nciButton, nciKey:
+        begin
+          // Удерживаем нажатие пока ЛКМ зажата над hovered.
+          if lb then NewCabItems[i].PressTarget := NEWCAB_PRESS_DEPTH;
+        end;
+
+      nciToggle, nciAzv:
+        begin
+          // Rising-edge → переключение состояния. Визуально наклон по PressOffset
+          // не делаем (тумблеры рисуются той же моделью); состояние Toggled
+          // сейчас доступно для будущего использования (lighting/audio).
+          if lb and not NewCabItems[i].LastLMB then
+            NewCabItems[i].Toggled := not NewCabItems[i].Toggled;
+        end;
+
+      nciDimmer:
+        begin
+          // Базовая обратная связь — лёгкое погружение пока drag.
+          if lb then NewCabItems[i].PressTarget := NEWCAB_PRESS_DEPTH * 0.5;
+        end;
+    end;
+
+    NewCabItems[i].LastLMB := lb;
+  end;
+end;
+
+procedure DrawNewCabRA3;
+var
+  i: Integer;
+  z: Single;
+begin
+  // .dmd объекты в newcab экспортированы с ЛОКАЛЬНЫМ пивотом в центре каждого
+  // объекта — координаты пивота (X,Y,Z) живут в objects_data.txt. Поэтому
+  // рисуем каждый объект в Position3D(X, Y, Z) из его записи. Это работает
+  // как у локомотива (DrawArrow / KuzovVnesh / passdoors) и в отличие от
+  // old cab/main.dmd где пивот запечён в (0,0,0).
+  for i := 0 to High(NewCabItems) do
+  begin
+    if NewCabItems[i].ModelID = 0 then Continue;
+
+    // Анимация press: PressOffset → PressTarget. PressOffset применяется
+    // как небольшой dz сдвиг — конкретная нажатая кнопка визуально приседает.
+    NewCabItems[i].PressOffset := NewCabItems[i].PressOffset
+      + (NewCabItems[i].PressTarget - NewCabItems[i].PressOffset) * NEWCAB_PRESS_LERP;
+
+    z := NewCabItems[i].BaseZ + NewCabItems[i].PressOffset;
+
+    BeginObj3D;
+      Position3D(NewCabItems[i].X, NewCabItems[i].Y, z);
+
+      if NewCabItems[i].TextureID <> 0 then
+        SetTexture(NewCabItems[i].TextureID);
+
+      // Подсветка: жёлтый при hover.
+      if NewCabItems[i].Hovered then
+        glColor4f(1, 1, 0, 1)
+      else
+        glColor4f(1, 1, 1, 1);
+
+      DrawModel(NewCabItems[i].ModelID, 0, False);
+    EndObj3D;
+  end;
+  glColor4f(1, 1, 1, 1);
 end;
 
 function IsKeyDown(Key: Integer): Boolean;
@@ -1985,6 +2648,7 @@ procedure InitRA3;
 begin
   if not IsRA3Active then Exit;
   InitCabRA3;
+  InitNewCabRA3;
   InitLocoRA3;
   InitWagonRA3;
   InitDynamicRA3;
@@ -2060,6 +2724,11 @@ begin
 
   // --- отрисовка ---
   DrawCabRA3;
+  // newcab hover/click обновляем ДО отрисовки — чтобы PressOffset/Hovered
+  // флаги были актуальны для DrawNewCabRA3 в этом же кадре.
+  UpdateNewCabHover;
+  UpdateNewCabClicks;
+  DrawNewCabRA3;
   DrawLocoRA3;
   DrawTelega;
   DrawWheels;

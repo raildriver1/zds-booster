@@ -2170,11 +2170,7 @@ begin
       GizmoDragging := False;
       GizmoActiveAxis := GIZMO_AXIS_NONE;
     end;
-    if GizmoPatchActive then
-    begin
-      RemoveMenuPatch;
-      GizmoPatchActive := False;
-    end;
+    // ZDS-Booster: hover-патч ($743B9E NOP) для гизмо отключён.
     GizmoLastLMB := False;
     GizmoLastEsc := False;
     Exit;
@@ -2232,17 +2228,7 @@ begin
     SaveConfig;
   end;
 
-  // Патч игрового меню: накладывается, пока hover ИЛИ drag активны.
-  if (GizmoDragging or (HoveredGizmoAxis <> GIZMO_AXIS_NONE)) and (not GizmoPatchActive) then
-  begin
-    ApplyMenuPatch;
-    GizmoPatchActive := True;
-  end
-  else if (not GizmoDragging) and (HoveredGizmoAxis = GIZMO_AXIS_NONE) and GizmoPatchActive then
-  begin
-    RemoveMenuPatch;
-    GizmoPatchActive := False;
-  end;
+  // ZDS-Booster: hover-патч игрового меню ($743B9E NOP) для гизмо отключён.
 
   GizmoLastLMB := LMB;
 end;
@@ -4360,12 +4346,29 @@ begin
   TransformX4 := ScaledX;
   TransformY4 := ScaledY + ScaledHeight;
   
-  // Применяем трансформацию к углам
+  // Применяем трансформацию к углам (для hit-testing при ротации, не
+  // используется для отрисовки — отрисовку поворачивает glRotate ниже).
   TransformCoords(TransformX1, TransformY1, CenterX, CenterY, 1.0, Win.Rotation);
   TransformCoords(TransformX2, TransformY2, CenterX, CenterY, 1.0, Win.Rotation);
   TransformCoords(TransformX3, TransformY3, CenterX, CenterY, 1.0, Win.Rotation);
   TransformCoords(TransformX4, TransformY4, CenterX, CenterY, 1.0, Win.Rotation);
-  
+
+  // === ROTATION ВОКРУГ ЦЕНТРА ===
+  // Без push/rotate/pop сюда DrawStyledRect и пр. рисуют axis-aligned, и
+  // Win.Rotation никак не виден на экране. Begin2D к этому моменту уже
+  // настроил GL_MODELVIEW в screen-space, мы добавляем поверх него:
+  //   translate(CenterX,  CenterY)  → опорная точка
+  //   rotate    (Rotation, Z)        → собственно поворот
+  //   translate(-CenterX, -CenterY) → возвращаем сетку
+  // Снимается одним glPopMatrix в самом конце процедуры.
+  glPushMatrix;
+  if Abs(Win.Rotation) > 0.0001 then
+  begin
+    glTranslatef(CenterX, CenterY, 0);
+    glRotatef(Win.Rotation * 180.0 / PI, 0, 0, 1);
+    glTranslatef(-CenterX, -CenterY, 0);
+  end;
+
   // === СОВРЕМЕННАЯ ТЕНЬ ===
   DrawShadow(ScaledX, ScaledY, ScaledWidth, ScaledHeight, Round(Win.ShadowIntensity * Alpha), Win.ShadowIntensity);
   
@@ -4601,6 +4604,11 @@ begin
         HoverFor(ScaledX + Round((MARGIN + 200) * Win.Scale), ContentY, Round(90 * Win.Scale), Round(35 * Win.Scale)));
     end;
   end;
+
+  // Снимаем rotation-матрицу: вернёт MODELVIEW в исходное состояние,
+  // которое настроил Begin2D, чтобы следующее окно/инфо-бар рисовались
+  // без накопления поворотов.
+  glPopMatrix;
 end;
 
 // Современная информационная панель

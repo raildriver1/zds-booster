@@ -1,0 +1,32 @@
+New object
+indicator_SOTH()
+numverts numfaces
+          4          2
+Mesh vertices:
+	0.014381 -0.005081 -0.008131
+	0.014381 0.005080 0.008131
+	-0.014381 0.005080 0.008131
+	-0.014381 -0.005081 -0.008131
+end vertices
+Mesh faces:
+	     1      2      3
+	     3      4      1
+end faces
+end mesh
+New Texture:
+numtverts numtvfaces
+          6          2
+Texture vertices:
+	0.995089 0.713232 0.000000
+	0.995089 0.740901 0.000000
+	0.953586 0.740901 0.000000
+	0.953586 0.740901 0.000000
+	0.953586 0.713232 0.000000
+	0.995089 0.713232 0.000000
+end texture vertices
+Texture faces:
+	     1      2      3
+	     4      5      6
+end texture faces
+end of texture
+end of file

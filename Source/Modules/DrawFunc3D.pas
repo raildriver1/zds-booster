@@ -152,6 +152,13 @@ procedure ProcessFreecam; stdcall;
 procedure LoadSettingsAndCustomModels; stdcall;
 procedure ProcessDayNightSystem; stdcall;
 
+// Runtime state freecam'а — был объявлен в implementation, но нужен
+// из RA3Patches.pas для решения когда писать camera anchor. Объявление
+// фактического var-а остаётся в implementation; здесь только external
+// reference, чтобы не ломать существующие места.
+var
+  FreecamEnabled: Boolean;
+
 
 
 var
@@ -486,8 +493,8 @@ var
   YellowBlockPosZ: Single = 0.223;
   YellowBlockScale: Single = 0.88999999;
   YellowBlockParamsLoaded: Boolean = False;
-  // Переменные для фрикамы
-  FreecamEnabled: Boolean = False;
+  // Переменные для фрикамы. FreecamEnabled теперь объявлен в interface
+  // (нужен из RA3Patches), здесь оставляем только остальные.
   FreecamInitialized: Boolean = False;
 
   // Переменные для параметров стрелки

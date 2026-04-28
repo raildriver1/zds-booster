@@ -1,0 +1,34 @@
+New object
+indicator_LS_G4_MP()
+numverts numfaces
+          6          2
+Mesh vertices:
+	-0.016315 -0.003137 -0.005013
+	-0.016315 -0.003137 -0.005013
+	0.016315 -0.003137 -0.005013
+	0.016315 0.003138 0.005013
+	0.016315 0.003138 0.005013
+	-0.016315 0.003138 0.005013
+end vertices
+Mesh faces:
+	     1      3      4
+	     5      6      2
+end faces
+end mesh
+New Texture:
+numtverts numtvfaces
+          6          2
+Texture vertices:
+	0.166770 0.920516 0.000000
+	0.001953 0.920515 0.000000
+	0.001954 0.860775 0.000000
+	0.001954 0.860775 0.000000
+	0.166770 0.860775 0.000000
+	0.166770 0.920516 0.000000
+end texture vertices
+Texture faces:
+	     1      2      3
+	     4      5      6
+end texture faces
+end of texture
+end of file
