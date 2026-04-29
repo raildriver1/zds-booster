@@ -1,229 +1,336 @@
+<div align="center">
+
+<img src="booster.png" alt="ZDS-Booster — preview" width="100%"/>
+
+<br/>
+
 # ZDS-Booster
 
-![nslF7moNeUQeEz9qRz0OMe3sGbrpGGdB7kCRRgbIbxyjKgsO2qVDYO3sPJ9uTugC3CQ5a8bptXXbgTXRYy5xeRLB (1)](https://github.com/user-attachments/assets/b6100d33-35af-4a7b-b786-6d65d76c9da1)
+**Кинематографичный движок и расширения для [ZDSimulator](https://zdsimulator.com/)**
 
-Модифицированный движок для ZDSimulator с расширенными возможностями отображения информации, управления камерой и настройки визуальных эффектов.
+<br/>
 
-Полная версия восстановленного движка (без ZDS-Booster) - https://github.com/maisvendoo/DGLEngine
+[![License](https://img.shields.io/badge/license-GPL%202.0-blue?style=for-the-badge)](LICENSE)
+[![Delphi](https://img.shields.io/badge/built%20with-Delphi%202007-c80000?style=for-the-badge&logo=delphi&logoColor=white)](https://www.embarcadero.com/)
+[![Pascal](https://img.shields.io/badge/100%25-Pascal-3776AB?style=for-the-badge&logo=delphi&logoColor=white)](https://github.com/raildriver1/zds-booster)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#требования)
+[![Status](https://img.shields.io/badge/release-1.2-green?style=for-the-badge)](https://github.com/raildriver1/zds-booster/releases)
 
-## 🚀 Возможности
+<br/>
 
-### 🎥 Система свободной камеры (Freecam)
-- **Включение/выключение**: `Alt + X` (включить/выключить)
-- **Управление движением**: 
-  - `W/S` - вперед/назад
-  - `A/D` - влево/вправо  
-  - `Пробел` - вверх
-  - `Shift` - ускорение
+[**О проекте**](#-о-проекте) • [**Возможности**](#-возможности) • [**Установка**](#️-установка) • [**Управление**](#-управление) • [**Конфиги**](#-конфигурация) • [**Поддержка**](#-поддержка)
 
-### 📊 Расширенная информация в кабине (только ЧС7)
-- **Основные данные (УСАВПП)**: время, дата, координаты, давление, ускорение
-- **Система скорости и лимитов (САУТ)**: цифровые индикаторы скорости и допустимых ограничений
-- **Ступени тяги (Уровень ступени)**: отображение текущих ступеней
+</div>
 
-### 🚦 Система светофоров АЛС-ЕН (только ЧС7)
-- **Команда активации**: `137` → `ENTER` → выбор частоты (1-3) → `ENTER`
-- **Визуальная индикация**: цветные блоки согласно показаниям светофоров
-- **Двойная система отображения**: КЛУБ и БИЛ ПОМЕ
-- **Автоматический анализ** последовательности сигналов
-- **⚠️ ВАЖНО**: HookKLUB (АЛС-ЕН) работает данный момент только на локомотиве ЧС7 (айди локомотива 822)
+---
 
-### 🌅 Система смены текстур день/ночь
-- **Автоматическая смена** в зависимости от времени суток и сезона
-- **Поддержка зимы и лета** с разными временными интервалами
-- **Кастомные текстуры** для кабины, пульта и других элементов
+## 📖 О проекте
 
-### 🎬 Единый PostFX render-graph (новое в 2026)
-Современный кинематографичный конвейер пост-эффектов поверх рендера ZDSimulator. Все эффекты включаются и настраиваются прямо из меню, переключаются на лету без рестарта.
+**ZDS-Booster** — модифицированный `DGLEngine.dll` для **ZDSimulator**, который добавляет в симулятор современный графический pipeline, свободную камеру, расширенную информацию в кабине, систему АЛС-ЕН и кучу других возможностей. Никаких внешних зависимостей — просто заменяешь DLL и сразу получаешь всё.
 
-**Tier 1 — цветовой пост (включено по умолчанию):**
-- **HDR Bloom** — мульти-мип pyramid свечения (6 уровней) с soft-knee curve. Гораздо мягче и шире, чем старый однопроходный Gaussian.
-- **ACES Filmic Tone Mapping** — киношная цветовая кривая с roundtrip через линейный свет, экспозиция настраивается.
-- **CAS sharpening** — резкость без halo-артефактов (Contrast Adaptive Sharpening, AMD FidelityFX).
-- **Vignette + Film grain + Dithering** — углы темнее, плёночное зерно, ordered-dither против банд на 8-битном backbuffer.
-- **Хроматическая аберрация** (off по умолчанию) — кинематографичная оптика.
-- **FXAA 3.11** edge-aware antialiasing.
+> 🔗 Базовый, не модифицированный движок (для сравнения и backup): [maisvendoo/DGLEngine](https://github.com/maisvendoo/DGLEngine)
 
-**Tier 2 — depth-aware эффекты:**
-- **SSAO** (Screen-Space Ambient Occlusion) — объёмные тени в кабине, под приборами и в углах.
-- **Атмосферная дымка** (off по умолчанию) — экспоненциальный depth-based fog с настраиваемым цветом.
-- **Depth of Field** (off по умолчанию) — глубина резкости с фокусом и bokeh-blur. Чистый кинематографический эффект для скриншотов и replay-видео.
+<br/>
 
-Все toggle-ы лежат в окне **RENDER** меню `F12`. Master toggle «PostFX» отключает весь chain и возвращает старый Bloom + FXAA fallback.
+## ✨ Возможности
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🎬 Cinematic PostFX render-graph
+
+Современный конвейер пост-эффектов поверх рендера ZDSimulator. Все эффекты переключаются **на лету** из меню `F12` без рестарта.
+
+**Tier 1 — цветовой пост:**
+- 🌟 **HDR Bloom** — мульти-мип pyramid (6 уровней) с soft-knee curve
+- 🎞️ **ACES Filmic Tone Mapping** — киношная кривая, экспозиция настраивается
+- 🔪 **CAS Sharpening** — резкость без halo (AMD FidelityFX)
+- 🎥 **Vignette + Film Grain + Dithering**
+- 🌈 **Хроматическая аберрация** (опционально)
+- 🔲 **FXAA 3.11** — edge-aware антиалиасинг
+
+**Tier 2 — depth-aware:**
+- 🕳️ **SSAO** — объёмные тени в кабине
+- 🌫️ **Атмосферная дымка** — depth-based fog
+- 🎯 **Depth of Field** — bokeh-blur с фокусом
+
+</td>
+<td width="50%" valign="top">
+
+### 🎥 Свободная камера (Freecam)
+- Тоггл: <kbd>Alt</kbd>+<kbd>X</kbd>
+- Полное управление: <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> <kbd>Space</kbd> <kbd>Shift</kbd>
+- Настраиваемые скорости (base / fast / turn)
+- World-anchor режим: <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd> — камера остаётся в мировой точке когда поезд едет
+
+### 📊 Расширенная кабина (только ЧС7)
+- УСАВПП: время / дата / координаты / давление / ускорение
+- САУТ: цифровые скорость и лимиты
+- Ступени тяги (Уровень ступени)
+
+### 🚦 Система АЛС-ЕН (только ЧС7)
+- Активация: <kbd>1</kbd><kbd>3</kbd><kbd>7</kbd> → <kbd>Enter</kbd> → частота → <kbd>Enter</kbd>
+- Двойная индикация: КЛУБ + БИЛ ПОМЕ
+- Автоматический анализ последовательности сигналов
+
+### 🌅 Карусель неба
+- Авто-смена день/ночь по игровому времени
+- Поддержка зимы/лета с раздельными интервалами
+
+</td>
+</tr>
+</table>
+
+<br/>
+
+## 🛠️ Установка
+
+```bash
+# 1. Резервная копия оригинального DLL
+copy DGLEngine.dll DGLEngine_backup.dll
+
+# 2. Замени DGLEngine.dll на бустер-версию
+# 3. Запусти игру — zdbooster.cfg создастся автоматически
+```
+
+> 💡 Все настройки в `zdbooster.cfg` сохраняются автоматически из меню `F12`. Файл можно редактировать руками для тонкого тюнинга.
+
+<br/>
+
+## 🎮 Управление
+
+### Глобальные хоткеи
+
+| Действие | Хоткей |
+|---|---|
+| Открыть/закрыть меню | <kbd>F12</kbd> |
+| Включить / выключить фрикам | <kbd>Alt</kbd>+<kbd>X</kbd> |
+| World-anchor для фрикама | <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd> |
+| АЛС-ЕН (только ЧС7) | <kbd>1</kbd><kbd>3</kbd><kbd>7</kbd> + <kbd>Enter</kbd> |
+
+### В режиме фрикама
+
+| Действие | Клавиша |
+|---|---|
+| Движение | <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> |
+| Подъём / спуск | <kbd>Space</kbd> / <kbd>Ctrl</kbd> |
+| Ускорение (×N) | <kbd>Shift</kbd> |
+| Поворот камеры | мышь |
+
+### Гизмо для редактирования 3D-текстов / картинок (RA-3 кабина)
+
+| Режим | Что делает |
+|---|---|
+| **T** (translate) | стрелки X/Y/Z для перемещения |
+| **R** (rotate) | кольца для вращения по осям |
+| **S** (scale) | кубики для масштабирования |
+| <kbd>Shift</kbd> при drag | snap к шагу (5мм / 5° / 0.05×) |
+| <kbd>Ctrl</kbd> при drag | precision mode (×0.2) |
+| <kbd>Esc</kbd> при drag | отмена и откат к началу drag'а |
+
+<br/>
 
 ## 📁 Структура файлов
 
 ```
 ZDSimulator/
-├── DGLEngine.dll          # Основной модифицированный движок
-├── zdbooster.cfg          # Главный конфиг (автосоздается)
-├── data/
-│   └── [тип_локомотива]/
-│       └── [номер]/
-│           ├── loc/                    # Кастомные модели
-│           │   ├── kolpara_*.dmd      # Модели колпаков
-│           │   ├── klub_ls_*.dmd      # Модели светофоров АЛС
-│           │   ├── strelka_skor.dmd   # Стрелка скорости
-│           │   ├── pisec1.dmd         # Писец 1
-│           │   ├── pisec2.dmd         # Писец 2
-│           │   └── ...
-│           └── raildriver/            # Конфиги отображения
-│               ├── booster.txt        # В данный момент только для ЧС7 
-└── routes/
-    └── [название_маршрута]/
-        └── textures/
-            ├── sky_sunriseDawn.bmp          # Предрассветные сумерки
-            ├── sky_sunsetTwilight.bmp       # Закатные сумерки
-            ├── sky_sunriseDawn_snow.bmp     # Зимние варианты
-            ├── sky_sunsetTwilight_snow.bmp # Зимние варианты
-        └── models/
-            ├── sky.dmd      # Модель для буста дальности видимости
-
+├── DGLEngine.dll              # ← Бустер
+├── zdbooster.cfg              # Главный конфиг (autosave из F12)
+│
+├── data/<тип_лок>/<номер>/
+│   ├── loc/                   # Кастомные модели
+│   │   ├── kolpara_*.dmd
+│   │   ├── klub_ls_*.dmd      # АЛС-ЕН блоки
+│   │   ├── strelka_skor.dmd
+│   │   └── pisec*.dmd
+│   └── raildriver/
+│       ├── booster.txt        # Тоггл-флаги (только ЧС7)
+│       ├── custom_texts.cfg   # 3D-тексты в кабине (per-loco)
+│       └── custom_images.cfg  # 3D-картинки в кабине (per-loco)
+│
+└── routes/<маршрут>/
+    ├── textures/
+    │   ├── sky_sunriseDawn.bmp        # Предрассветные сумерки
+    │   ├── sky_sunsetTwilight.bmp     # Закатные сумерки
+    │   ├── sky_sunriseDawn_snow.bmp   # ↳ зима
+    │   └── sky_sunsetTwilight_snow.bmp
+    └── models/
+        └── sky.dmd            # Расширенная сфера неба (для дальности)
 ```
 
-### Конфиг отображения `raildriver/booster.txt`
+<br/>
+
+## ⚙️ Конфигурация
+
+<details>
+<summary><b>📝 <code>raildriver/booster.txt</code> — отображение элементов в кабине ЧС7</b></summary>
+
 ```ini
-# Настройки отображения элементов
-saut: 0     # Отображение данных САУТ
-bgsd: 1     # Отображение монитора УСАВПП
-stupen: 1   # Отображение уровня ступени
+saut: 0       # Отображение данных САУТ
+bgsd: 1       # Отображение монитора УСАВПП
+stupen: 1    # Отображение уровня ступени
 ```
 
-### PostFX в `zdbooster.cfg` (автосохранение из меню)
+</details>
+
+<details>
+<summary><b>🎬 <code>zdbooster.cfg</code> — PostFX render-graph (autosave)</b></summary>
+
 ```ini
-# Унифицированный пост-процессинг (PostFX render-graph)
-postfx: 1     # 0/1 master toggle всего chain'а
-fxaa: 1       # 0/1 FXAA антиалиасинг (последний пасс)
-bloom: 1      # 0/1 HDR Bloom (multi-mip pyramid)
-tonemap: 1    # 0/1 ACES Filmic tone mapping
-sharpen: 1    # 0/1 CAS sharpening
-vignette: 1   # 0/1 виньетирование
-grain: 1      # 0/1 film grain
-ssao: 1       # 0/1 ambient occlusion (нужен depth)
-fog: 0        # 0/1 атмосферная дымка (нужен depth)
-dof: 0        # 0/1 depth of field (нужен depth)
+# Master
+postfx: 1     # 0/1 — весь PostFX-chain (если 0 → fallback на старый Bloom + FXAA)
+
+# Tier 1 — цвет
+fxaa: 1       # FXAA 3.11
+bloom: 1      # HDR Bloom
+tonemap: 1    # ACES Filmic
+sharpen: 1    # CAS sharpening
+vignette: 1   # виньетирование
+grain: 1      # film grain
+
+# Tier 2 — depth-aware
+ssao: 1       # SSAO (требует depth)
+fog: 0        # атмосферная дымка
+dof: 0        # depth of field
 ```
 
-> **⚠️ Важно**: Система HookKLUB (отображение информации в кабине и АЛС-ЕН) работает только на ЧС7. Остальные функции (фрикам, новое небо и т.д) работают на всех локомотивах.
+Каждый toggle живой — переключаешь и сразу видишь результат. Master-toggle `postfx: 0` отрубает весь chain и возвращает старый Bloom + FXAA fallback.
 
-## 🛠️ Установка
+</details>
 
-1. **Резервная копия**: Сохраните оригинальный `DGLEngine.dll`
-   ```bash
-   copy DGLEngine.dll DGLEngine_backup.dll
-   ```
-2. **Замена файла**: Скопируйте модифицированный `DGLEngine.dll` в папку игры
-3. **Настройка**: При первом запуске автоматически создастся `zdbooster.cfg`
-4. **Кастомизация**: Добавьте кастомные модели и текстуры по желанию
+<details>
+<summary><b>📍 <code>custom_texts.cfg</code> / <code>custom_images.cfg</code> — пользовательские 3D-объекты в кабине (per-loco)</b></summary>
 
-## 🎮 Управление
+Любой текст из KLUB-данных (скорость / давление / координаты / время / лимиты) или произвольную BMP/JPG/TGA картинку можно разместить **3D в кабине** через DevEditor (`F12` → Locomotive → «Open Full Dev Editor»).
 
-### Основное
-- `F12` - Меню настроек (если доступно)
-- `Alt + X` - Включить фрикам
-- `Alt + X` - Выключить фрикам
-- `К137` + `Enter` - Система АЛС-ЕН (только ЧС7)
+Редактор поддерживает:
+- gizmo translate / rotate / scale
+- ввод чисел руками в ячейки
+- per-loco сохранение (своя конфигурация для каждого `<тип_лок>/<номер>`)
+- magenta-key прозрачность ($FF00FF) для картинок
 
-### В режиме фрикама
-- `W/A/S/D` - Движение
-- `Пробел` - Подъем
-- `Shift` - Ускорение
+</details>
 
-### Основная камера
-- `Шаг вперёд` - Шаг вперед/назад в кабине
-- `Новый Zoom` - Плавный настраеваемый Zoom
-- `Чувствительность` - Чувствительность внутриигровой камеры 
+> ⚠️ **Важно**: Расширенная информация в кабине и АЛС-ЕН (HookKLUB) работают **только на ЧС7** (тип 822). Все остальные функции (фрикам, PostFX, новое небо, кастомные 3D-объекты, гизмо) работают **на всех локомотивах**.
 
-## 🔧 HookKLUB (только ЧС7)
-
-### Функции HookKLUB (для call патча)
-```pascal
-procedure HookKLUB(
-  x: Single;
-  y: Single;
-  z: Single;
-  AngZ: Single
-); stdcall; export;
-```
-
-```pascal
-procedure HookSkorostemerCHS7(
-  x: Single;
-  y: Single;
-  z: Single;
-  AngZ: Single
-);
-```
+<br/>
 
 ## 🐛 Диагностика
 
-### Лог файлы
-- `DGLEngine_Log.txt` - Основной лог движка
-- Содержит информацию о:
-  - Загрузке моделей и текстур
-  - Активации систем
-  - Ошибках инициализации
-  - Типе локомотива
+Все сообщения движка пишутся в `DGLEngine_Log.txt` рядом с игрой.
 
-### Типичные проблемы
+<details>
+<summary><b>HookKLUB не работает</b></summary>
 
-1. **HookKLUB не работает**
-   ```
-   Проверьте лог: "Hook activated for locomotive type 822 (CS7)"
-   Если нет - используете не ЧС7
-   ```
-
-2. **Фрикам не активируется**
-   ```
-   Проверьте: freecam: 1 в zdbooster.cfg
-   Лог: "Freecam initialized for locomotive type"
-   ```
-
-3. **Не загружаются модели**
-   ```
-   Проверьте структуру: data/chs7/[номер]/loc/
-   Лог: "Модель [название] загружена, ID: [число]"
-   ```
-
-4. **Не меняются новые текстуры карусели неба**
-   ```
-   Проверьте: есть ли «sky_sunriseDawn.bmp»; «sky_sunsetTwilight.bmp»; «sky_sunriseDawn_snow.bmp»; «sky_sunsetTwilight_snow.bmp» в папке textures в маршруте
-   Запущена ли функция «Новая логика неба»
-   ```
-
-## ⚠️ Важные замечания
-
-- **Совместимость**: HookKLUB протестирован только на ЧС7 (тип 822)
-- **Безопасность**: Всегда делайте резервные копии оригинальных файлов
-- **Обновления**: Следите за обновлениями для поддержки новых локомотивов
-
-## 🔍 Техническая информация
-
-### Требования к модифкации кода
+В логе должно быть:
 ```
-IDE: CodeGear Delphi 2007
+Hook activated for locomotive type 822 (CS7)
 ```
+Если нет — используется не ЧС7, или айди локомотива не 822.
+
+</details>
+
+<details>
+<summary><b>Фрикам не активируется</b></summary>
+
+В `zdbooster.cfg`:
+```ini
+freecam: 1
+```
+В логе:
+```
+Freecam initialized for locomotive type ...
+```
+
+</details>
+
+<details>
+<summary><b>Не загружаются кастомные модели</b></summary>
+
+Проверь структуру:
+```
+data/chs7/<номер>/loc/
+```
+В логе должно быть:
+```
+Модель <название> загружена, ID: <число>
+```
+
+</details>
+
+<details>
+<summary><b>Не меняются текстуры карусели неба</b></summary>
+
+Должны лежать в `routes/<маршрут>/textures/`:
+- `sky_sunriseDawn.bmp`
+- `sky_sunsetTwilight.bmp`
+- `sky_sunriseDawn_snow.bmp` (зима)
+- `sky_sunsetTwilight_snow.bmp` (зима)
+
+И в `zdbooster.cfg`:
+```ini
+newsky: 1
+```
+
+</details>
+
+<br/>
+
+## 🔧 Техническая информация
+
+### Стек
+
+- **IDE:** CodeGear Delphi 2007 (`dcc32.exe`)
+- **Язык:** Object Pascal
+- **API:** OpenGL 1.x + GLSL для PostFX-шейдеров
+- **Целевая платформа:** Windows 10 / 11 (x86)
 
 ### Методы патчинга
-1. **VirtualProtect** - изменение защиты памяти
-2. **Перехват вызовов** - модификация адресов функций  
-3. **Инъекция кода** - добавление новых функций
 
-### Требования
-- Windows 10/11
-- ZDSimulator
-- OpenGL 1.x+
-- Права администратора (для патчинга памяти)
+| Техника | Назначение |
+|---|---|
+| **`VirtualProtect` + Move** | Изменение байтов в `.text` секции `Launcher.exe` |
+| **Перехват CALL** | Переписывание `E8` rel32 на адрес собственной функции в DLL |
+| **Function pointer hooks** | Регистрация Pascal-процедур через `RegProcedure` (game callback) |
+| **`FlushInstructionCache`** | Гарантия видимости новых байт CPU после patching |
+
+### Что делает бустер с памятью игры
+
+- Расширяет дальность видимости (`gluPerspective(zFar)` и `fcomp` distance constants)
+- Подавляет сброс камеры при ЛКМ-в-центре когда мышь над кабинными элементами
+- Подменяет вызов `DrawSky` на собственную карусель текстур
+- Хукает `HookKLUB` (только ЧС7) для отрисовки расширенной информации
+- Перехватывает `SetFog` / `SetCutingPlanes` для тюнинга визуала
+
+> ⚠️ Все патчи делаются с `VirtualProtect(PAGE_EXECUTE_READWRITE)` и автоматически восстанавливаются если соответствующая опция отключена в меню. Для самозащиты — **обязательно делай резервную копию `DGLEngine.dll`** перед заменой.
+
+<br/>
 
 ## 📞 Поддержка
 
 При возникновении проблем:
-1. Проверьте `DGLEngine_Log.txt`
-2. Убедитесь в правильности конфигурации
-3. Для ЧС7: проверьте активацию HookKLUB в логе
-4. Создайте Issue с описанием проблемы и логами
-5. Напишите нам в группу https://vk.com/raildriver и скиньте DGLEngine_Log.txt
 
----
-*ZDBooster - модификация для энтузиастов железнодорожного моделирования*  
-*HookKLUB работает только на ЧС7. Остальные функции доступны на всех локомотивах.*
+1. 📋 Проверь `DGLEngine_Log.txt`
+2. ⚙️ Убедись что `zdbooster.cfg` содержит нужные тоггл-флаги
+3. 🚂 Для ЧС7 — проверь активацию HookKLUB в логе
+4. 🐛 [Создай Issue](https://github.com/raildriver1/zds-booster/issues/new) с описанием и логом
+5. 💬 Или напиши в группу [VK • RailDriver](https://vk.com/raildriver) с приложенным `DGLEngine_Log.txt`
+
+<br/>
+
+## 📜 Лицензия
+
+[GPL-2.0](LICENSE) — свободное ПО, любой может изучать, изменять и распространять. См. [LICENSE](LICENSE) и [LICENSE-Russian](LICENSE-Russian).
+
+<br/>
+
+<div align="center">
+
+**ZDS-Booster** — для энтузиастов железнодорожного моделирования
+
+[💜 Поддержать проект](donate.txt) • [🚂 VK RailDriver](https://vk.com/raildriver) • [🔧 Базовый DGLEngine](https://github.com/maisvendoo/DGLEngine)
+
+<sub>HookKLUB работает только на ЧС7 • Все остальное — на всех локомотивах • Made with ☕ in Pascal</sub>
+
+</div>
