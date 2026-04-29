@@ -3,7 +3,7 @@
 interface
 uses
   Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils,
-  KlubData, ShellAPI, Math, OpenGL, Advanced3D;
+  KlubData, ShellAPI, Math, OpenGL, Advanced3D, CommDlg;
 
 type
   TSlider = record
@@ -12,6 +12,11 @@ type
     MaxValue: Single;
     IsDragging: Boolean;
     HoverProgress: Single;
+    // Anchor для relative-drag: при клике запоминаем экранный X курсора
+    // и текущее value слайдера. HandleSliderDrag дальше считает прирост
+    // как (X - DragStartX) / SLIDER_WIDTH * range, без «прыжка» к месту клика.
+    DragStartX: Integer;
+    DragStartValue: Single;
   end;
   
   TExpandableSection = record
@@ -147,6 +152,7 @@ type
   // Один пользовательский 3D-текст в кабине РА-3.
   // Локальные координаты кабины (как в DrawTextSimple/DrawAllInfoFields).
   TCustomText3D = record
+    Name: string;       // произвольное имя элемента (только для UI, в рендере не используется)
     Source: TKlubSource;
     X, Y, Z: Single;
     RX, RY, RZ: Single; // углы в градусах
@@ -196,7 +202,7 @@ procedure LoadConfig; stdcall;
 implementation
 
 uses
-  EngineCore; // только в implementation — иначе circular reference (EngineCore uses CheatMenu)
+  EngineCore, CustomImages3D; // EngineCore только в implementation — иначе circular reference
 
 var
   MenuVisible: Boolean = False;
@@ -741,6 +747,18 @@ var
   CustomScaleSlider: TSlider;
 
 type
+  // Какой объект сейчас редактируется гизмо/UI:
+  //   gtkNone  — ничего не выделено
+  //   gtkText  — выделен CustomTexts[CustomTextSelectedIdx]
+  //   gtkImage — выделен CustomImages[CustomImageSelectedIdx]
+  // Гизмо и UI работают через этот target — в коде не должно остаться
+  // прямых обращений CustomTexts[CustomTextSelectedIdx], кроме save/load.
+  TGizmoTargetKind = (gtkNone, gtkText, gtkImage);
+
+var
+  GizmoTargetKind: TGizmoTargetKind = gtkNone;
+
+type
   TGizmoMode = (gmTranslate, gmRotate, gmScale);
 
 const
@@ -753,9 +771,9 @@ const
   GIZMO_PICK_CENTER_R  = 14;     // px — порог попадания в центральный хэндл
   GIZMO_ARROW_LEN      = 0.06;   // длина стрелки в локальных координатах кабины
   GIZMO_ROTATE_RADIUS  = 0.05;   // радиус кругов
-  GIZMO_BOX_TRANSLATE  = 0.012;  // размер кубика на конце для translate
-  GIZMO_BOX_SCALE      = 0.020;  // больше для scale, чтоб отличать визуально
-  GIZMO_BOX_CENTER     = 0.013;  // размер центрального кубика (free-move)
+  GIZMO_BOX_TRANSLATE  = 0.006;  // размер кубика на конце для translate
+  GIZMO_BOX_SCALE      = 0.011;  // больше для scale, чтоб отличать визуально
+  GIZMO_BOX_CENTER     = 0.013;  // размер центрального кубика (free-move) — не используется
   GIZMO_RING_SAMPLES   = 32;     // точек на кольце (для пика ротации)
   // Снап-шаги (зажми Shift во время drag)
   GIZMO_SNAP_TRANSLATE = 0.005;  // 5 мм по локальной системе кабины
@@ -838,19 +856,67 @@ const
   DE_HOT_COLOR    = 40;
   DE_HOT_VISIBLE  = 41;
   DE_HOT_DELETE   = 42;
+  // Value-поля внутри ячейки (между [-] и [+]). Клик активирует text-input.
+  DE_HOT_X_VAL    = 50; DE_HOT_Y_VAL  = 51; DE_HOT_Z_VAL  = 52;
+  DE_HOT_RX_VAL   = 53; DE_HOT_RY_VAL = 54; DE_HOT_RZ_VAL = 55;
+  DE_HOT_S_VAL    = 56;
+  // Поле "Имя элемента" над index'ом — клик активирует text-input для Name.
+  DE_HOT_NAME     = 60;
   DE_HOT_BACK     = 100;
   DE_HOT_ADD      = 101;
   DE_HOT_MODE_T   = 110;  // Move / Translate
   DE_HOT_MODE_R   = 111;  // Rotate
   DE_HOT_MODE_S   = 112;  // Scale
+  // Edit mode переключатель — TEXTS vs IMAGES (см. DEEditMode).
+  DE_HOT_TAB_TEXTS  = 130;
+  DE_HOT_TAB_IMAGES = 131;
+  // Browse-кнопка внутри image-карточки — открывает GetOpenFileName
+  // и заменяет текстуру у выбранной картинки.
+  DE_HOT_IMG_BROWSE = 140;
 
   // Шаги +/− (одиночный клик)
   DE_STEP_POS    = 0.005;
   DE_STEP_ANG    = 1.0;
   DE_STEP_SCALE  = 0.001;
+  DE_STEP_SIZE   = 0.005;  // шаг W/H у картинок
+
+type
+  // Какой массив сейчас редактируется в DevEditor — тексты или картинки.
+  TDEEditMode = (demTexts, demImages);
+
+  // Что сейчас редактирует пользователь через text input (textbox-режим).
+  //   tikNone  — ничего, обычный режим
+  //   tikValue — числовое поле (X/Y/Z/RX/RY/RZ/Size); buffer — Float
+  //   tikName  — имя элемента карточки; buffer — произвольная строка
+  TDETextInputKind = (tikNone, tikValue, tikName);
 
 var
+  DEEditMode: TDEEditMode = demTexts;
+
+  // === TEXT INPUT STATE (textbox-mode) ===
+  // Активен когда пользователь кликнул на value-поле или Name. В этом режиме
+  // клавиатурный ввод идёт в DETextInputBuffer; Enter/click-outside применяют,
+  // Esc отменяет.
+  DETextInputActive: Boolean = False;
+  DETextInputKind: TDETextInputKind = tikNone;
+  DETextInputCardIdx: Integer = -1;
+  DETextInputHotspot: Integer = 0;       // для tikValue — DE_HOT_X_VAL и т.п.
+  DETextInputBuffer: string = '';
+  // True если содержимое visually «выделено» (как сразу после клика). Любой
+  // ввод символа / Backspace / paste тогда заменяет весь buffer. Снимается
+  // при первом не-навигационном keystroke, восстанавливается через Ctrl+A.
+  DETextInputAllSelected: Boolean = False;
+  DETextInputCursorBlinkStart: Cardinal = 0;
+  // last-fire-timestamps для каждого VK кода, для key-repeat (delay→rate).
+  DETextInputKeyLastFire: array[0..255] of Cardinal;
+  DETextInputKeyFirstFire: array[0..255] of Cardinal;
+
   DevEditorVisible: Boolean = False;
+  // Запоминает, в каком режиме был юзер последний раз: True = в DevEditor
+  // (зашёл через "Open Full Dev Editor" / клик «Меню разработчика»), False =
+  // в обычном меню. F12 при закрытом UI открывает запомненный режим;
+  // BACK TO MENU сбрасывает обратно в False.
+  DevEditorIsLastMode: Boolean = False;
   DevEditorScrollY: Integer = 0;             // px смещение прокрутки списка
   DevEditorMaxScroll: Integer = 0;           // вычисляется в Draw, читается в HandleClick
   DevEditorViewportTop: Integer = 0;         // вычисляется в Draw — y нач. области списка
@@ -980,6 +1046,231 @@ begin
   end;
 end;
 
+// =====================================================================
+//  GIZMO TARGET: единая точка чтения/записи трансформа выбранного объекта
+// =====================================================================
+// Идея: гизмо и UI обращаются к выбранному объекту только через эти helper'ы.
+// Они автоматически "переключают" целевой массив (CustomTexts vs CustomImages)
+// в зависимости от GizmoTargetKind. Это даёт нам один гизмо для двух типов
+// объектов без копирования всей gizmo-логики.
+
+function GT_Valid: Boolean;
+begin
+  case GizmoTargetKind of
+    gtkText:  Result := (CustomTextSelectedIdx  >= 0) and (CustomTextSelectedIdx  < Length(CustomTexts));
+    gtkImage: Result := (CustomImageSelectedIdx >= 0) and (CustomImageSelectedIdx < Length(CustomImages));
+  else
+    Result := False;
+  end;
+end;
+
+function GT_X: Single;
+begin
+  Result := 0.0;
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:  Result := CustomTexts[CustomTextSelectedIdx].X;
+    gtkImage: Result := CustomImages[CustomImageSelectedIdx].X;
+  end;
+end;
+
+procedure GT_SetX(V: Single);
+begin
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:  CustomTexts[CustomTextSelectedIdx].X := V;
+    gtkImage: CustomImages[CustomImageSelectedIdx].X := V;
+  end;
+end;
+
+function GT_Y: Single;
+begin
+  Result := 0.0;
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:  Result := CustomTexts[CustomTextSelectedIdx].Y;
+    gtkImage: Result := CustomImages[CustomImageSelectedIdx].Y;
+  end;
+end;
+
+procedure GT_SetY(V: Single);
+begin
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:  CustomTexts[CustomTextSelectedIdx].Y := V;
+    gtkImage: CustomImages[CustomImageSelectedIdx].Y := V;
+  end;
+end;
+
+function GT_Z: Single;
+begin
+  Result := 0.0;
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:  Result := CustomTexts[CustomTextSelectedIdx].Z;
+    gtkImage: Result := CustomImages[CustomImageSelectedIdx].Z;
+  end;
+end;
+
+procedure GT_SetZ(V: Single);
+begin
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:  CustomTexts[CustomTextSelectedIdx].Z := V;
+    gtkImage: CustomImages[CustomImageSelectedIdx].Z := V;
+  end;
+end;
+
+function GT_RX: Single;
+begin
+  Result := 0.0;
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:  Result := CustomTexts[CustomTextSelectedIdx].RX;
+    gtkImage: Result := CustomImages[CustomImageSelectedIdx].RX;
+  end;
+end;
+
+procedure GT_SetRX(V: Single);
+begin
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:  CustomTexts[CustomTextSelectedIdx].RX := V;
+    gtkImage: CustomImages[CustomImageSelectedIdx].RX := V;
+  end;
+end;
+
+function GT_RY: Single;
+begin
+  Result := 0.0;
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:  Result := CustomTexts[CustomTextSelectedIdx].RY;
+    gtkImage: Result := CustomImages[CustomImageSelectedIdx].RY;
+  end;
+end;
+
+procedure GT_SetRY(V: Single);
+begin
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:  CustomTexts[CustomTextSelectedIdx].RY := V;
+    gtkImage: CustomImages[CustomImageSelectedIdx].RY := V;
+  end;
+end;
+
+function GT_RZ: Single;
+begin
+  Result := 0.0;
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:  Result := CustomTexts[CustomTextSelectedIdx].RZ;
+    gtkImage: Result := CustomImages[CustomImageSelectedIdx].RZ;
+  end;
+end;
+
+procedure GT_SetRZ(V: Single);
+begin
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:  CustomTexts[CustomTextSelectedIdx].RZ := V;
+    gtkImage: CustomImages[CustomImageSelectedIdx].RZ := V;
+  end;
+end;
+
+// "Псевдо-Scale" — единый коэффициент масштаба, видимый гизмо. Для текста
+// это T.Scale напрямую. Для картинки — sqrt(W*H), что даёт «равномерный»
+// размер; SetScale тогда пропорционально мутирует W и H, сохраняя aspect.
+function GT_Scale: Single;
+begin
+  Result := 1.0;
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText: Result := CustomTexts[CustomTextSelectedIdx].Scale;
+    gtkImage:
+    begin
+      Result := Sqrt(CustomImages[CustomImageSelectedIdx].Width *
+                     CustomImages[CustomImageSelectedIdx].Height);
+      if Result < 0.0001 then Result := 0.0001;
+    end;
+  end;
+end;
+
+procedure GT_SetScale(V: Single);
+var
+  Old, K: Single;
+begin
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText: CustomTexts[CustomTextSelectedIdx].Scale := V;
+    gtkImage:
+    begin
+      Old := GT_Scale;
+      if Old < 0.0001 then Old := 0.0001;
+      K := V / Old;
+      CustomImages[CustomImageSelectedIdx].Width  := CustomImages[CustomImageSelectedIdx].Width  * K;
+      CustomImages[CustomImageSelectedIdx].Height := CustomImages[CustomImageSelectedIdx].Height * K;
+    end;
+  end;
+end;
+
+// Center-offset для гизмо. Origin = (X+HalfW, Y+HalfH) в локальной системе
+// после поворотов. Для текстов — половина ширины строки и высоты глифа,
+// для картинок — половина Width/Height.
+procedure GT_GetCenterOffset(out HalfW, HalfH: Single);
+var
+  S: string;
+  L: Integer;
+begin
+  HalfW := 0.0;
+  HalfH := 0.0;
+  if not GT_Valid then Exit;
+  case GizmoTargetKind of
+    gtkText:
+    begin
+      S := GetKlubSourceValue(CustomTexts[CustomTextSelectedIdx].Source);
+      L := Length(S); if L < 1 then L := 1;
+      // Глиф ≈ 0.55 em wide, 0.7 em tall (em = font baseline-to-baseline).
+      HalfW := L * 0.55 * 0.5 * CustomTexts[CustomTextSelectedIdx].Scale;
+      HalfH := 0.35 * CustomTexts[CustomTextSelectedIdx].Scale;
+    end;
+    gtkImage:
+    begin
+      // У картинки origin DrawPlane уже в центре — наши X/Y/Z это и есть центр.
+      // Поэтому смещение нулевое.
+      HalfW := 0.0;
+      HalfH := 0.0;
+    end;
+  end;
+end;
+
+procedure GT_SelectText(Idx: Integer);
+begin
+  CustomTextSelectedIdx := Idx;
+  CustomImageSelectedIdx := -1;
+  if (Idx >= 0) and (Idx < Length(CustomTexts)) then
+    GizmoTargetKind := gtkText
+  else
+    GizmoTargetKind := gtkNone;
+end;
+
+procedure GT_SelectImage(Idx: Integer);
+begin
+  CustomImageSelectedIdx := Idx;
+  CustomTextSelectedIdx := -1;
+  if (Idx >= 0) and (Idx < Length(CustomImages)) then
+    GizmoTargetKind := gtkImage
+  else
+    GizmoTargetKind := gtkNone;
+end;
+
+procedure GT_DeselectAll;
+begin
+  CustomTextSelectedIdx := -1;
+  CustomImageSelectedIdx := -1;
+  GizmoTargetKind := gtkNone;
+end;
+
 procedure WriteSlidersToSelected;
 begin
   if (CustomTextSelectedIdx < 0) or (CustomTextSelectedIdx >= Length(CustomTexts)) then Exit;
@@ -1089,6 +1380,22 @@ begin
   end;
 end;
 
+// Аналогичный путь для 3D-картинок (CustomImages3D). Хранятся в той же
+// per-loco директории, рядом с custom_texts.cfg, но в отдельном файле
+// custom_images.cfg — чтобы не смешивать форматы и не путать парсеры.
+function GetCustomImagesConfigPath: string;
+var
+  Folder, Num: string;
+begin
+  try
+    Num := ResolveLocoNumber;
+    Folder := ResolveLocoFolder(Num);
+    Result := 'data\' + Folder + '\' + Num + '\raildriver\custom_images.cfg';
+  except
+    Result := '';
+  end;
+end;
+
 // Создаёт директорию (со всеми родителями).
 function EnsureDirExists(const Path: string): Boolean;
 var
@@ -1121,6 +1428,7 @@ begin
       WriteLn(F, 'custom_text_count: ' + IntToStr(Length(CustomTexts)));
       for i := 0 to Length(CustomTexts) - 1 do
       begin
+        WriteLn(F, 'ct' + IntToStr(i) + '_name: '   + CustomTexts[i].Name);
         WriteLn(F, 'ct' + IntToStr(i) + '_source: ' + IntToStr(Integer(CustomTexts[i].Source)));
         WriteLn(F, 'ct' + IntToStr(i) + '_x: '      + FormatValue(CustomTexts[i].X));
         WriteLn(F, 'ct' + IntToStr(i) + '_y: '      + FormatValue(CustomTexts[i].Y));
@@ -1182,6 +1490,7 @@ begin
           SetLength(CustomTexts, CTCount);
           for CTIdx := 0 to CTCount - 1 do
           begin
+            CustomTexts[CTIdx].Name    := '';
             CustomTexts[CTIdx].Source  := ksSpeed;
             CustomTexts[CTIdx].X       := 0.0;
             CustomTexts[CTIdx].Y       := 0.0;
@@ -1207,6 +1516,7 @@ begin
             if (SrcVal >= 0) and (SrcVal < KLUB_SOURCE_COUNT) then
               CustomTexts[CTIdx].Source := TKlubSource(SrcVal);
           end
+          else if CTPrefix = 'name'    then CustomTexts[CTIdx].Name    := Value
           else if CTPrefix = 'color'   then CustomTexts[CTIdx].Color   := Cardinal(StrToIntDef(Value, $FFFFFF))
           else if CTPrefix = 'x'       then CustomTexts[CTIdx].X       := ParseFloat(Value, 0.0)
           else if CTPrefix = 'y'       then CustomTexts[CTIdx].Y       := ParseFloat(Value, 0.0)
@@ -1246,9 +1556,21 @@ begin
   if Cur = '' then Exit; // не смогли определить — пропускаем
   if Cur = LastLocoIdent then Exit;
   LastLocoIdent := Cur;
+  // Сначала сбрасываем выбор — индексы старых объектов невалидны для нового
+  // загруженного списка, и GizmoTargetKind должен начинаться с gtkNone.
+  GT_DeselectAll;
   // Пытаемся загрузить per-loco файл. Если его нет — оставим то, что было,
   // и при следующем сохранении создадим файл для этой кабины.
   LoadCustomTextsForCurrentLoco;
+  // Параллельно подгружаем 3D-картинки для этой кабины. Если файла нет —
+  // CustomImages3D просто очистит свой список (старые картинки не должны
+  // «висеть» в новой кабине — у них координаты в другой системе).
+  try
+    if not LoadCustomImagesFromFile(GetCustomImagesConfigPath) then
+      ClearAllCustomImages;
+  except
+    // Не валим CheckLoco — даже если IO упало, движок должен жить.
+  end;
 end;
 
 procedure AddCustomText;
@@ -1257,6 +1579,7 @@ var
   T: TCustomText3D;
 begin
   N := Length(CustomTexts);
+  T.Name := '';
   T.Source := ksSpeed;
   T.X := 0.0;
   T.Y := 0.0;
@@ -1269,7 +1592,7 @@ begin
   T.Color := $FFFFFF; // белый по умолчанию
   SetLength(CustomTexts, N + 1);
   CustomTexts[N] := T;
-  CustomTextSelectedIdx := N;
+  GT_SelectText(N);
   SyncSlidersFromSelected;
 end;
 
@@ -1347,6 +1670,10 @@ begin
   CustomTextsRenderedThisFrame := True;
   // Защита от любых проблем с матрицей/состоянием GL — не валим DLL.
   try
+    // 3D-картинки рисуем ДО текстов и гизмо: они визуально «фон» в кабине,
+    // а текст и гизмо должны оверлеиться поверх. CustomImages3D сам сохраняет
+    // и восстанавливает GL-state (BLEND/ALPHA_TEST/LIGHTING).
+    CustomImages3D.DrawCustomImages3D;
     DrawCustomTextsRA3;
     UpdateGizmoFrameRA3;
     DrawGizmoRA3;
@@ -1602,49 +1929,43 @@ end;
 
 procedure DrawGizmoRA3;
 var
-  T: TCustomText3D;
   V: TVertex;
   i: Integer;
   Theta, R, BoxSize: Single;
   RingV: array[0..GIZMO_RING_SAMPLES - 1] of TVertex;
-  CenterStr: string;
-  CenterLen: Integer;
   HalfWWorld, HalfHWorld: Single;
+  PosX, PosY, PosZ, RotX, RotY, RotZ: Single;
 begin
-  // ВАЖНО: гизмо рисуется всегда, когда есть выбранный текст — даже без F12-меню,
-  // чтобы можно было редактировать «как РА-3 контроллер».
-  if (CustomTextSelectedIdx < 0) or (CustomTextSelectedIdx >= Length(CustomTexts)) then
+  // ВАЖНО: гизмо рисуется всегда, когда есть выбранный объект (текст ИЛИ
+  // картинка) — даже без F12-меню, чтобы можно было редактировать прямо в кабине.
+  if not GT_Valid then
   begin
     GizmoCacheValid := False;
     Exit;
   end;
-  T := CustomTexts[CustomTextSelectedIdx];
+
+  // Снэпшот трансформа выбранного объекта (одно чтение через GT_*).
+  PosX := GT_X;  PosY := GT_Y;  PosZ := GT_Z;
+  RotX := GT_RX; RotY := GT_RY; RotZ := GT_RZ;
 
   // === ВСЁ В ОДНОМ BeginObj3D: матрица не «гуляет» между объектами. ===
   BeginObj3D;
   glDisable(GL_LIGHTING);
   glDisable(GL_DEPTH_TEST);
 
-  // ---- Origin гизмо = визуальный центр текста ----
-  // Берём текущее значение источника (а не последний кадр), чтобы центр
-  // двигался при изменении длины строки. Эвристика на ширину/высоту глифа:
-  //   глиф ≈ 0.55 em wide, 0.7 em tall (em = font baseline-to-baseline ~1).
-  // После Scale3D в DrawCustomTextsRA3 это превращается в локальные единицы кабины.
-  // Здесь Scale3D не применяем (гизмо не должен дрейфовать в размере вместе
-  // с текстом), а сразу даём оффсет в world-units.
-  CenterStr := GetKlubSourceValue(T.Source);
-  CenterLen := Length(CenterStr);
-  if CenterLen < 1 then CenterLen := 1;
-  HalfWWorld := CenterLen * 0.55 * 0.5 * T.Scale; // half width в world-units
-  HalfHWorld := 0.35 * T.Scale;                   // half height (≈ cap-height/2)
+  // ---- Origin гизмо = визуальный центр объекта ----
+  // GT_GetCenterOffset возвращает half-width / half-height в локальных
+  // world-units. Для текста — на основе текущей строки и Scale, для
+  // картинки — 0 (DrawPlane уже центрирует quad на (X,Y,Z)).
+  GT_GetCenterOffset(HalfWWorld, HalfHWorld);
 
   // Матричный трюк: T(anchor) * R * T(local_offset) * R^-1.
   // → origin сдвинут на R * (HalfW, HalfH, 0), а оси остаются мировыми XYZ.
   // Это сохраняет совместимость с математикой drag (она в world-XYZ).
-  Position3D(T.X, T.Y, T.Z);
-  RotateX(T.RX); RotateY(T.RY); RotateZ(T.RZ);
+  Position3D(PosX, PosY, PosZ);
+  RotateX(RotX); RotateY(RotY); RotateZ(RotZ);
   glTranslatef(HalfWWorld, HalfHWorld, 0);
-  RotateZ(-T.RZ); RotateY(-T.RY); RotateX(-T.RX);
+  RotateZ(-RotZ); RotateY(-RotY); RotateX(-RotX);
 
   SetTexture(0);
 
@@ -1736,18 +2057,9 @@ begin
         DrawCube(BoxSize, BoxSize, BoxSize);
     glPopMatrix;
 
-    // Центральный «свободный» хэндл — только в режиме translate.
-    // В scale он избыточен (скейл уже uniform по всем осям).
-    if GizmoMode = gmTranslate then
-    begin
-      Color3D(GizmoAxisColor(GIZMO_AXIS_VIEW), 255, False, 0.0);
-      glPushMatrix;
-        if (GizmoActiveAxis = GIZMO_AXIS_VIEW) or (HoveredGizmoAxis = GIZMO_AXIS_VIEW) then
-          DrawCube(GIZMO_BOX_CENTER * 1.35, GIZMO_BOX_CENTER * 1.35, GIZMO_BOX_CENTER * 1.35)
-        else
-          DrawCube(GIZMO_BOX_CENTER, GIZMO_BOX_CENTER, GIZMO_BOX_CENTER);
-      glPopMatrix;
-    end;
+    // Центральный «свободный» хэндл убран — он перекрывал сам редактируемый
+    // текстовый элемент. Free-move через GIZMO_AXIS_VIEW тоже отключён в
+    // PickGizmoAxis ниже.
   end
   else // gmRotate
   begin
@@ -1860,22 +2172,13 @@ end;
 // Rotate — пик по ближайшей точке кольца (32 семпла на каждое).
 function PickGizmoAxis(MX, MY: Integer): Integer;
 var
-  i, j, d, bestD, best, dCenter: Integer;
+  i, j, d, bestD, best: Integer;
 begin
   Result := GIZMO_AXIS_NONE;
   if not GizmoCacheValid then Exit;
 
-  // Центр имеет приоритет — он внутри пересечения всех осей и должен
-  // быть кликабельным даже если пиксель формально ближе к началу оси.
-  if GizmoMode = gmTranslate then
-  begin
-    dCenter := PointDistSq(GizmoOriginScreen, MX, MY);
-    if dCenter <= GIZMO_PICK_CENTER_R * GIZMO_PICK_CENTER_R then
-    begin
-      Result := GIZMO_AXIS_VIEW;
-      Exit;
-    end;
-  end;
+  // Центральный хэндл (free-move, GIZMO_AXIS_VIEW) отключён — он перекрывал
+  // сам редактируемый текстовый элемент. Перемещение делается осями XYZ.
 
   best := GIZMO_AXIS_NONE;
   bestD := GIZMO_PICK_RADIUS * GIZMO_PICK_RADIUS;
@@ -1911,11 +2214,8 @@ begin
 end;
 
 procedure GizmoStartDrag(MX, MY, AxisIdx: Integer);
-var
-  Idx: Integer;
 begin
-  Idx := CustomTextSelectedIdx;
-  if (Idx < 0) or (Idx >= Length(CustomTexts)) then Exit;
+  if not GT_Valid then Exit;
 
   GizmoDragging := True;
   GizmoActiveAxis := AxisIdx;
@@ -1923,34 +2223,35 @@ begin
   GizmoDragMouseStartY := MY;
 
   // Полный снимок трансформа на начало drag — чтобы Esc мог откатить всё.
-  GizmoCancelX     := CustomTexts[Idx].X;
-  GizmoCancelY     := CustomTexts[Idx].Y;
-  GizmoCancelZ     := CustomTexts[Idx].Z;
-  GizmoCancelRX    := CustomTexts[Idx].RX;
-  GizmoCancelRY    := CustomTexts[Idx].RY;
-  GizmoCancelRZ    := CustomTexts[Idx].RZ;
-  GizmoCancelScale := CustomTexts[Idx].Scale;
+  // Через GT_* — работает и с текстами, и с картинками.
+  GizmoCancelX     := GT_X;
+  GizmoCancelY     := GT_Y;
+  GizmoCancelZ     := GT_Z;
+  GizmoCancelRX    := GT_RX;
+  GizmoCancelRY    := GT_RY;
+  GizmoCancelRZ    := GT_RZ;
+  GizmoCancelScale := GT_Scale;
 
   if GizmoMode = gmTranslate then
   begin
     // X/Y/Z по обычной оси либо по центру (free-move) — и в том и в другом
     // случае запоминаем стартовые позиции по всем трём осям.
-    GizmoDragValueStart[0] := CustomTexts[Idx].X;
-    GizmoDragValueStart[1] := CustomTexts[Idx].Y;
-    GizmoDragValueStart[2] := CustomTexts[Idx].Z;
+    GizmoDragValueStart[0] := GT_X;
+    GizmoDragValueStart[1] := GT_Y;
+    GizmoDragValueStart[2] := GT_Z;
   end
   else if GizmoMode = gmRotate then
   begin
-    GizmoDragValueStart[0] := CustomTexts[Idx].RX;
-    GizmoDragValueStart[1] := CustomTexts[Idx].RY;
-    GizmoDragValueStart[2] := CustomTexts[Idx].RZ;
+    GizmoDragValueStart[0] := GT_RX;
+    GizmoDragValueStart[1] := GT_RY;
+    GizmoDragValueStart[2] := GT_RZ;
     // Инициализация angular tracking: запоминаем угол от центра гизмо до курсора.
     GizmoRotStartAngle := ArcTan2(MY - GizmoOriginScreen.Y, MX - GizmoOriginScreen.X);
     GizmoRotPrevAngle := GizmoRotStartAngle;
     GizmoRotAccum := 0.0;
   end
   else // gmScale
-    GizmoDragScaleStart := CustomTexts[Idx].Scale;
+    GizmoDragScaleStart := GT_Scale;
 end;
 
 // Возвращает мировой сдвиг по оси axis_idx (0/1/2) для текущего курсора.
@@ -1978,9 +2279,8 @@ end;
 
 procedure GizmoApplyDrag(MX, MY: Integer);
 var
-  Idx: Integer;
   DX, DY: Integer;
-  WorldDelta, AngleDelta, ScaleFactor: Single;
+  WorldDelta, AngleDelta, ScaleFactor, NewScale: Single;
   AxisVecX, AxisVecY, AxisLenSq, DotI, PixelsAlongAxis: Single;
   // Для view-handle (free-2D translate): выбираем 2 наиболее «экранных» оси
   // (с наибольшей длиной screen-проекции), решаем 2x2 систему, третья = 0.
@@ -1991,8 +2291,7 @@ var
   DeltaA, DeltaB: Single;
   DAxis: array[0..2] of Single;
 begin
-  Idx := CustomTextSelectedIdx;
-  if (GizmoActiveAxis = GIZMO_AXIS_NONE) or (Idx < 0) or (Idx >= Length(CustomTexts)) then Exit;
+  if (GizmoActiveAxis = GIZMO_AXIS_NONE) or (not GT_Valid) then Exit;
   if not GizmoCacheValid then Exit;
 
   DX := MX - GizmoDragMouseStartX;
@@ -2053,17 +2352,17 @@ begin
           end;
           DAxis[AxA] := DeltaA; DAxis[AxB] := DeltaB; DAxis[AxSkip] := 0;
         end;
-        CustomTexts[Idx].X := GizmoDragValueStart[0] + DAxis[0];
-        CustomTexts[Idx].Y := GizmoDragValueStart[1] + DAxis[1];
-        CustomTexts[Idx].Z := GizmoDragValueStart[2] + DAxis[2];
+        GT_SetX(GizmoDragValueStart[0] + DAxis[0]);
+        GT_SetY(GizmoDragValueStart[1] + DAxis[1]);
+        GT_SetZ(GizmoDragValueStart[2] + DAxis[2]);
       end
       else
       begin
         WorldDelta := GizmoTranslateDelta(GizmoActiveAxis, DX, DY);
         case GizmoActiveAxis of
-          GIZMO_AXIS_X: CustomTexts[Idx].X := GizmoDragValueStart[0] + WorldDelta;
-          GIZMO_AXIS_Y: CustomTexts[Idx].Y := GizmoDragValueStart[1] + WorldDelta;
-          GIZMO_AXIS_Z: CustomTexts[Idx].Z := GizmoDragValueStart[2] + WorldDelta;
+          GIZMO_AXIS_X: GT_SetX(GizmoDragValueStart[0] + WorldDelta);
+          GIZMO_AXIS_Y: GT_SetY(GizmoDragValueStart[1] + WorldDelta);
+          GIZMO_AXIS_Z: GT_SetZ(GizmoDragValueStart[2] + WorldDelta);
         end;
       end;
     end;
@@ -2088,9 +2387,9 @@ begin
       // кольцу — RY. Это даёт ожидаемое визуальное поведение для текстов
       // с базовым RX = -90 (когда текст лежит на полу кабины).
       case GizmoActiveAxis of
-        GIZMO_AXIS_X: CustomTexts[Idx].RX := GizmoDragValueStart[0] + AngleDelta;
-        GIZMO_AXIS_Y: CustomTexts[Idx].RZ := GizmoDragValueStart[2] + AngleDelta;
-        GIZMO_AXIS_Z: CustomTexts[Idx].RY := GizmoDragValueStart[1] + AngleDelta;
+        GIZMO_AXIS_X: GT_SetRX(GizmoDragValueStart[0] + AngleDelta);
+        GIZMO_AXIS_Y: GT_SetRZ(GizmoDragValueStart[2] + AngleDelta);
+        GIZMO_AXIS_Z: GT_SetRY(GizmoDragValueStart[1] + AngleDelta);
       end;
     end;
     gmScale:
@@ -2122,31 +2421,33 @@ begin
       if GizmoShiftHeld then
         ScaleFactor := GizmoSnap(ScaleFactor, GIZMO_SNAP_SCALE);
       if ScaleFactor < 0.05 then ScaleFactor := 0.05;
-      CustomTexts[Idx].Scale := GizmoDragScaleStart * ScaleFactor;
-      if CustomTexts[Idx].Scale < 0.0005 then CustomTexts[Idx].Scale := 0.0005;
+      NewScale := GizmoDragScaleStart * ScaleFactor;
+      if NewScale < 0.0005 then NewScale := 0.0005;
+      GT_SetScale(NewScale);
     end;
   end;
-  SyncSlidersFromSelected;
+  // Слайдеры в Locomotive окне есть только для текстов; если выбран текст —
+  // зеркалим. Для картинок UI пока через карточки в DevEditor (нет слайдеров).
+  if GizmoTargetKind = gtkText then
+    SyncSlidersFromSelected;
 end;
 
 // Откат drag'а — восстанавливаем все поля по снэпшоту, который сделали
 // в GizmoStartDrag. Зовётся из UpdateGizmoFrameRA3 при нажатии Esc.
 procedure GizmoCancelDrag;
-var
-  Idx: Integer;
 begin
   if not GizmoDragging then Exit;
-  Idx := CustomTextSelectedIdx;
-  if (Idx >= 0) and (Idx < Length(CustomTexts)) then
+  if GT_Valid then
   begin
-    CustomTexts[Idx].X     := GizmoCancelX;
-    CustomTexts[Idx].Y     := GizmoCancelY;
-    CustomTexts[Idx].Z     := GizmoCancelZ;
-    CustomTexts[Idx].RX    := GizmoCancelRX;
-    CustomTexts[Idx].RY    := GizmoCancelRY;
-    CustomTexts[Idx].RZ    := GizmoCancelRZ;
-    CustomTexts[Idx].Scale := GizmoCancelScale;
-    SyncSlidersFromSelected;
+    GT_SetX(GizmoCancelX);
+    GT_SetY(GizmoCancelY);
+    GT_SetZ(GizmoCancelZ);
+    GT_SetRX(GizmoCancelRX);
+    GT_SetRY(GizmoCancelRY);
+    GT_SetRZ(GizmoCancelRZ);
+    GT_SetScale(GizmoCancelScale);
+    if GizmoTargetKind = gtkText then
+      SyncSlidersFromSelected;
   end;
   GizmoDragging := False;
   GizmoActiveAxis := GIZMO_AXIS_NONE;
@@ -2161,8 +2462,8 @@ var
   MX, MY: Integer;
   LMB, EscNow: Boolean;
 begin
-  // Нет выбранного текста — погасить всё.
-  if (CustomTextSelectedIdx < 0) or (CustomTextSelectedIdx >= Length(CustomTexts)) then
+  // Нет выбранного объекта (текст или картинка) — погасить всё.
+  if not GT_Valid then
   begin
     HoveredGizmoAxis := GIZMO_AXIS_NONE;
     if GizmoDragging then
@@ -2212,15 +2513,15 @@ begin
     end;
   end;
 
-  // Продолжение drag'а — каждый тик пересчитываем + сохраняем (фиксит дрифт от
-  // LoadConfigThrottled, который иначе восстанавливал бы старые значения).
+  // Продолжение drag'а — каждый тик пересчитываем трансформ, НО НЕ пишем
+  // на диск (это давало 60fps × 3 файла = заметные лаги при перетаскивании).
+  // Дрифт от LoadConfigThrottled парируется через тот же GizmoDragging флаг —
+  // сама функция LoadConfigThrottled рано выходит во время drag (см. её код).
   if GizmoDragging and LMB then
-  begin
     GizmoApplyDrag(MX, MY);
-    SaveConfig;
-  end;
 
-  // Falling edge → конец drag'а.
+  // Falling edge → конец drag'а. Один SaveConfig сейчас фиксирует итоговый
+  // трансформ на диск.
   if GizmoDragging and (not LMB) then
   begin
     GizmoDragging := False;
@@ -2770,6 +3071,7 @@ begin
           // Заполняем дефолтами на случай неполного конфига:
           for CTIdx := 0 to CTCount - 1 do
           begin
+            CustomTexts[CTIdx].Name    := '';
             CustomTexts[CTIdx].Source  := ksSpeed;
             CustomTexts[CTIdx].X       := 0.0;
             CustomTexts[CTIdx].Y       := 0.0;
@@ -2792,6 +3094,7 @@ begin
             if (SrcVal >= 0) and (SrcVal < KLUB_SOURCE_COUNT) then
               CustomTexts[CTIdx].Source := TKlubSource(SrcVal);
           end
+          else if CTPrefix = 'name'    then CustomTexts[CTIdx].Name    := Value
           else if CTPrefix = 'color'   then CustomTexts[CTIdx].Color   := Cardinal(StrToIntDef(Value, $FFFFFF))
           else if CTPrefix = 'x'       then CustomTexts[CTIdx].X       := ParseFloat(Value, 0.0)
           else if CTPrefix = 'y'       then CustomTexts[CTIdx].Y       := ParseFloat(Value, 0.0)
@@ -2829,8 +3132,18 @@ procedure LoadConfigThrottled;
 var
   CurrentTime: Cardinal;
 begin
+  // Во время gizmo-drag'а НЕ читаем конфиг. Иначе очередной throttle-tick
+  // прочитал бы старые значения с диска и затёр бы то, что пользователь
+  // активно тянет мышкой (drag живёт только в RAM до falling edge ЛКМ).
+  if GizmoDragging then Exit;
+
+  // Аналогично — не читаем во время auto-repeat +/− кнопок в DevEditor:
+  // их шаги пишутся сразу в массив, а LoadConfig их прочитает обратно с диска
+  // (старое значение!) и съест приращение.
+  if DevEditorBtnHeldHotspot <> DE_HOT_NONE then Exit;
+
   CurrentTime := GetTickCount;
-  
+
   if (CurrentTime - LastConfigReadTime) >= ConfigReadInterval then
   begin
     LoadConfig;
@@ -2911,6 +3224,7 @@ begin
     WriteLn(F, 'custom_text_count: ' + IntToStr(Length(CustomTexts)));
     for I_SAVE := 0 to Length(CustomTexts) - 1 do
     begin
+      WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_name: '   + CustomTexts[I_SAVE].Name);
       WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_source: ' + IntToStr(Integer(CustomTexts[I_SAVE].Source)));
       WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_x: ' + FormatValue(CustomTexts[I_SAVE].X));
       WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_y: ' + FormatValue(CustomTexts[I_SAVE].Y));
@@ -2942,6 +3256,13 @@ begin
     SaveCustomTextsForCurrentLoco;
   except
     // Не валим SaveConfig из-за per-loco файла.
+  end;
+
+  // Аналогично — сохраняем 3D-картинки в custom_images.cfg.
+  try
+    SaveCustomImagesToFile(GetCustomImagesConfigPath);
+  except
+    // Не валим SaveConfig.
   end;
 end;
 
@@ -3443,7 +3764,11 @@ begin
   
   Settings.MaxVisibleDistanceSlider.Value := 1200;
   Settings.MaxVisibleDistanceSlider.MinValue := 800;
-  Settings.MaxVisibleDistanceSlider.MaxValue := 1600;
+  // Расширили потолок до 6000м: бустер патчит обе fcomp-инструкции culling'а
+  // по $4942CC (700м), плюс перезаписывает константы для проводов / дальних
+  // моделей / светофоров. Реально 6000м не «купол» с одного фрейма даст
+  // — упрётся ещё в фог/skybox, если есть. Юзер сам подберёт значение.
+  Settings.MaxVisibleDistanceSlider.MaxValue := 6000;
   Settings.MaxVisibleDistanceSlider.HoverProgress := 0.0;
   
   // Слайдер угла обзора
@@ -4663,6 +4988,26 @@ begin
   // Продолжаем рисовать во время анимации закрытия, пока альфа окон не угаснет
   AnyWindowVisible := (RenderWindow.Alpha > 0.01) or (WorldWindow.Alpha > 0.01) or
                       (LocomotiveWindow.Alpha > 0.01) or (MenuWindow.Alpha > 0.01);
+
+  // ZDS-Booster: per-frame sync patch'а игрового hover-обработчика
+  // ($743B9E call). ApplyMenuPatch вызывается ТОЛЬКО когда любая наша UI
+  // на экране (F12-окна ИЛИ DevEditor); RemoveMenuPatch — когда всё закрыто,
+  // чтобы игровой курсор/look-around в кабине работали штатно.
+  //
+  // Зачем нужно: кроме ToggleMenu есть пути (BACK TO MENU, Open Full Dev
+  // Editor, F12-в-DevEditor) где UI открывается без вызова ApplyMenuPatch.
+  // Без sync'а игровой обработчик продолжает крутиться поверх DevEditor и
+  // падает в EAccessViolation $00721DA2 (hit-test loop с null'овыми
+  // глобалами **[0x74b2a8] / *[0x74b198]).
+  if (MenuVisible or DevEditorVisible or AnyWindowVisible) then
+  begin
+    if not MenuCallPatched then ApplyMenuPatch;
+  end
+  else
+  begin
+    if MenuCallPatched then RemoveMenuPatch;
+  end;
+
   // Dev Editor живёт независимо от MenuVisible — его собственный тумблер.
   if (not MenuVisible) and (not AnyWindowVisible) and (not DevEditorVisible) then Exit;
 
@@ -4715,22 +5060,39 @@ var
   SliderDirty: Boolean = False;
   LastSliderSaveTime: Cardinal = 0;
 
-// Оптимизированная функция перетаскивания слайдера
+// Старт drag'а — фиксируем якорь курсора и текущее value слайдера.
+// Вызывается со всех HandleClick-сайтов вместо «голого» IsDragging := True;
+// благодаря этому HandleSliderDrag дальше работает в относительном режиме
+// (без рывка значения к точке клика).
+procedure StartSliderDrag(var Slider: TSlider; X: Integer);
+begin
+  Slider.IsDragging     := True;
+  Slider.DragStartX     := X;
+  Slider.DragStartValue := Slider.Value;
+end;
+
+// Оптимизированная функция перетаскивания слайдера.
+// Relative-mode: значение меняется на (X - DragStartX) / SLIDER_WIDTH * range,
+// поэтому клик в любой части слота НЕ сдвигает элемент — ползёт только
+// после реального движения мыши. Это убирает «прыжок» позиции CustomText
+// при клике по слайдеру X/Y/Z.
 procedure HandleSliderDrag(X: Integer; var Slider: TSlider; SliderX: Integer);
 var
-  NewProgress: Single;
-  OldValue: Single;
+  Delta, Range, NewValue, OldValue: Single;
   CurrentTime: Cardinal;
 begin
   if not Slider.IsDragging then Exit;
 
   OldValue := Slider.Value;
 
-  NewProgress := (X - SliderX) / SLIDER_WIDTH;
-  if NewProgress < 0 then NewProgress := 0;
-  if NewProgress > 1 then NewProgress := 1;
+  Range := Slider.MaxValue - Slider.MinValue;
+  Delta := (X - Slider.DragStartX) / SLIDER_WIDTH * Range;
+  NewValue := Slider.DragStartValue + Delta;
 
-  Slider.Value := Slider.MinValue + NewProgress * (Slider.MaxValue - Slider.MinValue);
+  if NewValue < Slider.MinValue then NewValue := Slider.MinValue;
+  if NewValue > Slider.MaxValue then NewValue := Slider.MaxValue;
+
+  Slider.Value := NewValue;
 
   if Abs(Slider.Value - OldValue) > 0.001 then
   begin
@@ -4928,6 +5290,7 @@ begin
   begin
     DevEditorVisible := True;
     DevEditorScrollY := 0;
+    DevEditorIsLastMode := True;
     Exit;
   end;
   Inc(CurY, 26 + 8);
@@ -4946,7 +5309,7 @@ begin
   begin
     if InRect(X, Y, ContentX - 4, CurY, 196, 20) then
     begin
-      CustomTextSelectedIdx := i;
+      GT_SelectText(i);
       SyncSlidersFromSelected;
       Exit;
     end;
@@ -4992,26 +5355,28 @@ begin
   Inc(CurY, DEV_EDITOR_VIS_H);
 
   // 7 слайдеров. Клик в любую часть слота инициирует drag.
+  // Через StartSliderDrag, чтобы значение НЕ прыгало к месту клика —
+  // далее HandleSliderDrag работает relative от (X, Slider.Value).
   if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
-  begin CustomXSlider.IsDragging := True; Exit; end;
+  begin StartSliderDrag(CustomXSlider, X); Exit; end;
   Inc(CurY, DEV_EDITOR_SLIDER_H);
   if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
-  begin CustomYSlider.IsDragging := True; Exit; end;
+  begin StartSliderDrag(CustomYSlider, X); Exit; end;
   Inc(CurY, DEV_EDITOR_SLIDER_H);
   if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
-  begin CustomZSlider.IsDragging := True; Exit; end;
+  begin StartSliderDrag(CustomZSlider, X); Exit; end;
   Inc(CurY, DEV_EDITOR_SLIDER_H);
   if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
-  begin CustomRXSlider.IsDragging := True; Exit; end;
+  begin StartSliderDrag(CustomRXSlider, X); Exit; end;
   Inc(CurY, DEV_EDITOR_SLIDER_H);
   if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
-  begin CustomRYSlider.IsDragging := True; Exit; end;
+  begin StartSliderDrag(CustomRYSlider, X); Exit; end;
   Inc(CurY, DEV_EDITOR_SLIDER_H);
   if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
-  begin CustomRZSlider.IsDragging := True; Exit; end;
+  begin StartSliderDrag(CustomRZSlider, X); Exit; end;
   Inc(CurY, DEV_EDITOR_SLIDER_H);
   if InRect(X, Y, ContentX, CurY + 15, SLIDER_WIDTH + 30, 30) then
-  begin CustomScaleSlider.IsDragging := True; Exit; end;
+  begin StartSliderDrag(CustomScaleSlider, X); Exit; end;
   Inc(CurY, DEV_EDITOR_SLIDER_H);
 
   // Delete
@@ -5146,12 +5511,12 @@ begin
       begin
         if InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 15, SLIDER_WIDTH + 30, 30) then
         begin
-          Settings.BasespeedSlider.IsDragging := True;
+          StartSliderDrag(Settings.BasespeedSlider, X);
           Exit;
         end;
         if InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 65, SLIDER_WIDTH + 30, 30) then
         begin
-          Settings.FastspeedSlider.IsDragging := True;
+          StartSliderDrag(Settings.FastspeedSlider, X);
           Exit;
         end;
       end;
@@ -5201,7 +5566,7 @@ begin
       // Клик по слайдеру StepForward
       if (SectionHeight > 40) and InRect(X, Y, RenderWindow.X + MARGIN + 16, MainCameraSectionY + 15, SLIDER_WIDTH + 30, 30) then
       begin
-        Settings.StepForwardSlider.IsDragging := True;
+        StartSliderDrag(Settings.StepForwardSlider, X);
         Exit;
       end;
       
@@ -5222,7 +5587,7 @@ begin
       // Клик по слайдеру угла обзора
       if (SectionHeight > 110) and Settings.NewViewAngle and InRect(X, Y, RenderWindow.X + MARGIN + 16, MainCameraSectionY + 85, SLIDER_WIDTH + 30, 30) then
       begin
-        Settings.ViewAngleSlider.IsDragging := True;
+        StartSliderDrag(Settings.ViewAngleSlider, X);
         Exit;
       end;
       
@@ -5243,7 +5608,7 @@ begin
       // Слайдер чувствительности камеры
       if (SectionHeight > 170) and Settings.CameraSensitivity and InRect(X, Y, RenderWindow.X + MARGIN + 16, MainCameraSectionY + 155, SLIDER_WIDTH + 30, 30) then
       begin
-        Settings.CameraSensitivitySlider.IsDragging := True;
+        StartSliderDrag(Settings.CameraSensitivitySlider, X);
         Exit;
       end;
       
@@ -5361,7 +5726,7 @@ begin
         // Слайдер дальности
         if InRect(X, Y, WorldWindow.X + MARGIN + 16, MaxVisibleDistanceSectionY + 15, SLIDER_WIDTH + 30, 30) then
         begin
-          Settings.MaxVisibleDistanceSlider.IsDragging := True;
+          StartSliderDrag(Settings.MaxVisibleDistanceSlider, X);
           Exit;
         end;
         
@@ -5466,6 +5831,7 @@ begin
       Settings.DeveloperSection.Expanded := False;
       DevEditorVisible := True;
       DevEditorScrollY := 0;
+      DevEditorIsLastMode := True;
       SaveConfig;
       Exit;
     end;
@@ -5569,13 +5935,32 @@ procedure ToggleMenu; stdcall;
 var
   CenterX, CenterY: Integer;
 begin
-  MenuVisible := not MenuVisible;
+  // === F12-toggle ===
+  // UI полностью закрыт И последним режимом был DevEditor → открываем
+  // редактор резко (он сам так устроен).
+  if (not MenuVisible) and (not DevEditorVisible) and DevEditorIsLastMode then
+  begin
+    MenuVisible := True; // нужен для CheckLocoChange/LoadConfig
+    DevEditorVisible := True;
+    ShowCursor(True);
+    LoadConfigForced;
+    LastFrameTime := GetTickCount;
+    // Сразу применяем меню-патч (та же логика что в ветке ниже когда
+    // MenuVisible переключается в True). Без этого первый кадр после
+    // открытия DevEditor через F12 крутит игровой hover-handler с
+    // неинициализированными структурами → EAccessViolation $00721DA2.
+    ApplyMenuPatch;
+    Exit;
+  end;
 
-  // F12 открывает обычное меню (4 окна). Dev Editor включается только из
-  // секции «Меню разработчика → Open Full Dev Editor». При закрытии меню
-  // редактор тоже закрываем — чтобы не остался поверх кабины.
-  if not MenuVisible then
+  // Если открыт DevEditor — закрываем его. Окна обычного меню (которые были
+  // под ним) уйдут через анимацию закрытия в else-ветке ниже. Флаг
+  // DevEditorIsLastMode не трогаем — он остаётся True, чтобы следующий F12
+  // открыл DevEditor обратно.
+  if DevEditorVisible then
     DevEditorVisible := False;
+
+  MenuVisible := not MenuVisible;
 
   if MenuVisible then
   begin
@@ -5708,7 +6093,7 @@ begin
     MenuWindow.TargetRotation := 25.0 * PI / 180.0;
     MenuWindow.TargetTranslateY := -250.0;
     MenuWindow.TargetShadowIntensity := 0.0;
-    
+
     RemoveMenuPatch;
   end;
 end;
@@ -5789,24 +6174,40 @@ var
   Steps: array[0..6] of Integer;
   StepHotMinus: array[0..6] of Integer;
   StepHotPlus:  array[0..6] of Integer;
+  StepHotVal:   array[0..6] of Integer;
 begin
   Result := DE_HOT_NONE;
-  // Все интерактивные элементы лежат в одной горизонтальной полосе на CardY+30,
-  // высотой DE_BTN_SMALL (22 px). Над ними — column-labels.
   CellY := CardY + 30;
 
-  // Source-combobox
-  if DEInRect(MX, MY, CardX + DE_IDX_W, CellY, DE_SOURCE_W, DE_BTN_SMALL) then
-  begin Result := DE_HOT_SOURCE; Exit; end;
+  // Поле "Name" — над index'ом, в верхней полосе карточки. Высота ~18px.
+  // Хитбокс шире чем сам текст (от CardX до начала value-strip), чтобы было
+  // удобно попадать мышью.
+  if DEInRect(MX, MY, CardX + 4, CardY + 4, DE_IDX_W + DE_SOURCE_W - 4, 20) then
+  begin
+    Result := DE_HOT_NAME;
+    Exit;
+  end;
 
-  // Семь -/value/+ ячеек по списку
-  Steps[0] := DE_HOT_X_MINUS;  StepHotMinus[0] := DE_HOT_X_MINUS;  StepHotPlus[0] := DE_HOT_X_PLUS;
-  Steps[1] := DE_HOT_Y_MINUS;  StepHotMinus[1] := DE_HOT_Y_MINUS;  StepHotPlus[1] := DE_HOT_Y_PLUS;
-  Steps[2] := DE_HOT_Z_MINUS;  StepHotMinus[2] := DE_HOT_Z_MINUS;  StepHotPlus[2] := DE_HOT_Z_PLUS;
-  Steps[3] := DE_HOT_RX_MINUS; StepHotMinus[3] := DE_HOT_RX_MINUS; StepHotPlus[3] := DE_HOT_RX_PLUS;
-  Steps[4] := DE_HOT_RY_MINUS; StepHotMinus[4] := DE_HOT_RY_MINUS; StepHotPlus[4] := DE_HOT_RY_PLUS;
-  Steps[5] := DE_HOT_RZ_MINUS; StepHotMinus[5] := DE_HOT_RZ_MINUS; StepHotPlus[5] := DE_HOT_RZ_PLUS;
-  Steps[6] := DE_HOT_S_MINUS;  StepHotMinus[6] := DE_HOT_S_MINUS;  StepHotPlus[6] := DE_HOT_S_PLUS;
+  // Source-combobox / Path-display.
+  // В режиме images клик по path не открывает combobox, выделяет карточку.
+  if DEInRect(MX, MY, CardX + DE_IDX_W, CellY, DE_SOURCE_W, DE_BTN_SMALL) then
+  begin
+    if DEEditMode = demImages then
+      Result := DE_HOT_NONE  // path не интерактивен; выделение через клик "по пустому"
+    else
+      Result := DE_HOT_SOURCE;
+    Exit;
+  end;
+
+  // Семь -/value/+ ячеек по списку. Value-rect между [-] и [+] —
+  // отдельный hotspot активирует text-input.
+  Steps[0] := DE_HOT_X_MINUS;  StepHotMinus[0] := DE_HOT_X_MINUS;  StepHotPlus[0] := DE_HOT_X_PLUS;  StepHotVal[0] := DE_HOT_X_VAL;
+  Steps[1] := DE_HOT_Y_MINUS;  StepHotMinus[1] := DE_HOT_Y_MINUS;  StepHotPlus[1] := DE_HOT_Y_PLUS;  StepHotVal[1] := DE_HOT_Y_VAL;
+  Steps[2] := DE_HOT_Z_MINUS;  StepHotMinus[2] := DE_HOT_Z_MINUS;  StepHotPlus[2] := DE_HOT_Z_PLUS;  StepHotVal[2] := DE_HOT_Z_VAL;
+  Steps[3] := DE_HOT_RX_MINUS; StepHotMinus[3] := DE_HOT_RX_MINUS; StepHotPlus[3] := DE_HOT_RX_PLUS; StepHotVal[3] := DE_HOT_RX_VAL;
+  Steps[4] := DE_HOT_RY_MINUS; StepHotMinus[4] := DE_HOT_RY_MINUS; StepHotPlus[4] := DE_HOT_RY_PLUS; StepHotVal[4] := DE_HOT_RY_VAL;
+  Steps[5] := DE_HOT_RZ_MINUS; StepHotMinus[5] := DE_HOT_RZ_MINUS; StepHotPlus[5] := DE_HOT_RZ_PLUS; StepHotVal[5] := DE_HOT_RZ_VAL;
+  Steps[6] := DE_HOT_S_MINUS;  StepHotMinus[6] := DE_HOT_S_MINUS;  StepHotPlus[6] := DE_HOT_S_PLUS;  StepHotVal[6] := DE_HOT_S_VAL;
 
   CellX := CardX + DE_IDX_W + DE_SOURCE_W + 8;
   for i := 0 to 6 do
@@ -5818,12 +6219,21 @@ begin
     if DEInRect(MX, MY, CellX + DE_BTN_SMALL + 2 + DE_VAL_W + 2, CellY,
       DE_BTN_SMALL, DE_BTN_SMALL) then
     begin Result := StepHotPlus[i]; Exit; end;
+    // VALUE — между ними. Активирует text-input.
+    if DEInRect(MX, MY, CellX + DE_BTN_SMALL + 2, CellY, DE_VAL_W, DE_BTN_SMALL) then
+    begin Result := StepHotVal[i]; Exit; end;
     Inc(CellX, DE_CELL_W);
   end;
 
-  // Color swatch — по той же горизонтальной полосе.
+  // Color swatch / Browse-кнопка — по той же горизонтальной полосе.
   if DEInRect(MX, MY, CellX, CellY, DE_SWATCH_W - 8, DE_BTN_SMALL) then
-  begin Result := DE_HOT_COLOR; Exit; end;
+  begin
+    if DEEditMode = demImages then
+      Result := DE_HOT_IMG_BROWSE
+    else
+      Result := DE_HOT_COLOR;
+    Exit;
+  end;
   Inc(CellX, DE_SWATCH_W);
 
   // Visible
@@ -5880,6 +6290,484 @@ begin
   end;
 end;
 
+// =====================================================================
+//  TEXT-INPUT helpers (textbox-режим в DevEditor)
+// =====================================================================
+
+// Конвертация VK-кода (0..255) в ANSI-символ с учётом текущей раскладки
+// и состояния SHIFT/CapsLock. #0 если клавиша не даёт printable-символа.
+function DEVKToChar(VK: Integer): AnsiChar;
+var
+  KbState: TKeyboardState;
+  Buf: array[0..2] of AnsiChar;
+  Res: Integer;
+begin
+  Result := #0;
+  if not GetKeyboardState(KbState) then Exit;
+  Res := ToAscii(VK, MapVirtualKey(VK, 0), KbState, @Buf, 0);
+  if Res = 1 then Result := Buf[0];
+end;
+
+// True если в этом тике (с учётом delay+rate) клавиша должна "выстрелить".
+// Поведение: первый press → fire сразу, +350мс → начать repeat, потом каждые 50мс.
+function DEKeyShouldFire(VK: Integer): Boolean;
+var
+  Now_, FirstFire, LastFire: Cardinal;
+  IsDown: Boolean;
+begin
+  Result := False;
+  IsDown := (GetAsyncKeyState(VK) and $8000) <> 0;
+  FirstFire := DETextInputKeyFirstFire[VK];
+  LastFire  := DETextInputKeyLastFire[VK];
+  if not IsDown then
+  begin
+    DETextInputKeyFirstFire[VK] := 0;
+    DETextInputKeyLastFire[VK] := 0;
+    Exit;
+  end;
+  Now_ := GetTickCount;
+  // Только что нажали — fire сразу.
+  if FirstFire = 0 then
+  begin
+    DETextInputKeyFirstFire[VK] := Now_;
+    DETextInputKeyLastFire[VK] := Now_;
+    Result := True;
+    Exit;
+  end;
+  // Repeat: после задержки 350мс — каждые 50мс.
+  if (Now_ - FirstFire > 350) and (Now_ - LastFire > 50) then
+  begin
+    DETextInputKeyLastFire[VK] := Now_;
+    Result := True;
+  end;
+end;
+
+// Чтение строки из системного clipboard (CF_TEXT, ANSI).
+function DEClipboardGet: string;
+var
+  H: THandle;
+  P: PAnsiChar;
+begin
+  Result := '';
+  if not OpenClipboard(0) then Exit;
+  try
+    H := GetClipboardData(CF_TEXT);
+    if H = 0 then Exit;
+    P := GlobalLock(H);
+    if P = nil then Exit;
+    try
+      Result := string(P);
+    finally
+      GlobalUnlock(H);
+    end;
+  finally
+    CloseClipboard;
+  end;
+end;
+
+// Запись строки в clipboard (CF_TEXT, ANSI).
+procedure DEClipboardSet(const S: string);
+var
+  H: THandle;
+  P: PAnsiChar;
+  L: Integer;
+begin
+  if not OpenClipboard(0) then Exit;
+  try
+    EmptyClipboard;
+    L := Length(S);
+    H := GlobalAlloc(GMEM_MOVEABLE, L + 1);
+    if H = 0 then Exit;
+    P := GlobalLock(H);
+    if P = nil then Exit;
+    if L > 0 then Move(PAnsiChar(AnsiString(S))^, P^, L);
+    P[L] := #0;
+    GlobalUnlock(H);
+    SetClipboardData(CF_TEXT, H);
+  finally
+    CloseClipboard;
+  end;
+end;
+
+// Открыть text-input на конкретной карточке/поле. Buffer заполняем
+// текущим значением — пользователь может стирать или редактировать.
+// При активации содержимое сразу «выделено» (AllSelected = True), как в обычном
+// textbox: первый ввод символа заменяет всё, Ctrl+C копирует целиком.
+procedure DETextInputBegin(Kind: TDETextInputKind; CardIdx, Hotspot: Integer);
+var
+  V: Single;
+begin
+  DETextInputActive := True;
+  DETextInputKind := Kind;
+  DETextInputCardIdx := CardIdx;
+  DETextInputHotspot := Hotspot;
+  DETextInputAllSelected := True;
+  DETextInputCursorBlinkStart := GetTickCount;
+  FillChar(DETextInputKeyFirstFire, SizeOf(DETextInputKeyFirstFire), 0);
+  FillChar(DETextInputKeyLastFire,  SizeOf(DETextInputKeyLastFire),  0);
+  case Kind of
+    tikValue:
+    begin
+      V := 0.0;
+      // Достаём текущее значение в зависимости от поля + EditMode.
+      if DEEditMode = demImages then
+      begin
+        if (CardIdx >= 0) and (CardIdx < Length(CustomImages)) then
+          case Hotspot of
+            DE_HOT_X_VAL:  V := CustomImages[CardIdx].X;
+            DE_HOT_Y_VAL:  V := CustomImages[CardIdx].Y;
+            DE_HOT_Z_VAL:  V := CustomImages[CardIdx].Z;
+            DE_HOT_RX_VAL: V := CustomImages[CardIdx].RX;
+            DE_HOT_RY_VAL: V := CustomImages[CardIdx].RY;
+            DE_HOT_RZ_VAL: V := CustomImages[CardIdx].RZ;
+            DE_HOT_S_VAL:  V := Sqrt(CustomImages[CardIdx].Width * CustomImages[CardIdx].Height);
+          end;
+      end
+      else
+      begin
+        if (CardIdx >= 0) and (CardIdx < Length(CustomTexts)) then
+          case Hotspot of
+            DE_HOT_X_VAL:  V := CustomTexts[CardIdx].X;
+            DE_HOT_Y_VAL:  V := CustomTexts[CardIdx].Y;
+            DE_HOT_Z_VAL:  V := CustomTexts[CardIdx].Z;
+            DE_HOT_RX_VAL: V := CustomTexts[CardIdx].RX;
+            DE_HOT_RY_VAL: V := CustomTexts[CardIdx].RY;
+            DE_HOT_RZ_VAL: V := CustomTexts[CardIdx].RZ;
+            DE_HOT_S_VAL:  V := CustomTexts[CardIdx].Scale;
+          end;
+      end;
+      DETextInputBuffer := FormatGizmoFloat(V, 6);
+      // FormatGizmoFloat может оставить trailing zeros — это нормально, пользователь сам обрежет.
+    end;
+    tikName:
+    begin
+      if DEEditMode = demImages then
+      begin
+        if (CardIdx >= 0) and (CardIdx < Length(CustomImages)) then
+          DETextInputBuffer := CustomImages[CardIdx].Name
+        else
+          DETextInputBuffer := '';
+      end
+      else
+      begin
+        if (CardIdx >= 0) and (CardIdx < Length(CustomTexts)) then
+          DETextInputBuffer := CustomTexts[CardIdx].Name
+        else
+          DETextInputBuffer := '';
+      end;
+    end;
+  end;
+end;
+
+// Парсит DETextInputBuffer как Float (с точкой/запятой), возвращает True
+// если успешно. Дефолт = 0.0.
+function DEParseInputFloat(out V: Single): Boolean;
+var
+  S: string;
+  Code: Integer;
+begin
+  S := StringReplace(Trim(DETextInputBuffer), ',', '.', [rfReplaceAll]);
+  if S = '' then begin V := 0.0; Result := True; Exit; end;
+  Val(S, V, Code);
+  Result := (Code = 0);
+  if not Result then V := 0.0;
+end;
+
+// Применяет содержимое buffer'а к выбранному полю и закрывает text-input.
+procedure DETextInputCommit;
+var
+  V, K, OldSize: Single;
+begin
+  if not DETextInputActive then Exit;
+  case DETextInputKind of
+    tikValue:
+    if DEParseInputFloat(V) then
+    begin
+      if DEEditMode = demImages then
+      begin
+        if (DETextInputCardIdx >= 0) and (DETextInputCardIdx < Length(CustomImages)) then
+          case DETextInputHotspot of
+            DE_HOT_X_VAL:  CustomImages[DETextInputCardIdx].X  := V;
+            DE_HOT_Y_VAL:  CustomImages[DETextInputCardIdx].Y  := V;
+            DE_HOT_Z_VAL:  CustomImages[DETextInputCardIdx].Z  := V;
+            DE_HOT_RX_VAL: CustomImages[DETextInputCardIdx].RX := V;
+            DE_HOT_RY_VAL: CustomImages[DETextInputCardIdx].RY := V;
+            DE_HOT_RZ_VAL: CustomImages[DETextInputCardIdx].RZ := V;
+            DE_HOT_S_VAL:
+            begin
+              // Size = sqrt(W*H); пропорционально мутируем W и H.
+              OldSize := Sqrt(CustomImages[DETextInputCardIdx].Width *
+                              CustomImages[DETextInputCardIdx].Height);
+              if OldSize < 0.0001 then OldSize := 0.0001;
+              if V < 0.001 then V := 0.001;
+              K := V / OldSize;
+              CustomImages[DETextInputCardIdx].Width  := CustomImages[DETextInputCardIdx].Width  * K;
+              CustomImages[DETextInputCardIdx].Height := CustomImages[DETextInputCardIdx].Height * K;
+            end;
+          end;
+      end
+      else
+      begin
+        if (DETextInputCardIdx >= 0) and (DETextInputCardIdx < Length(CustomTexts)) then
+          case DETextInputHotspot of
+            DE_HOT_X_VAL:  CustomTexts[DETextInputCardIdx].X     := V;
+            DE_HOT_Y_VAL:  CustomTexts[DETextInputCardIdx].Y     := V;
+            DE_HOT_Z_VAL:  CustomTexts[DETextInputCardIdx].Z     := V;
+            DE_HOT_RX_VAL: CustomTexts[DETextInputCardIdx].RX    := V;
+            DE_HOT_RY_VAL: CustomTexts[DETextInputCardIdx].RY    := V;
+            DE_HOT_RZ_VAL: CustomTexts[DETextInputCardIdx].RZ    := V;
+            DE_HOT_S_VAL:
+            begin
+              if V < 0.0005 then V := 0.0005;
+              CustomTexts[DETextInputCardIdx].Scale := V;
+            end;
+          end;
+        // Слайдеры в Locomotive окне зеркалят выбранный текст —
+        // обновим если пользователь редактировал именно его.
+        if DETextInputCardIdx = CustomTextSelectedIdx then
+          SyncSlidersFromSelected;
+      end;
+    end;
+    tikName:
+    begin
+      if DEEditMode = demImages then
+      begin
+        if (DETextInputCardIdx >= 0) and (DETextInputCardIdx < Length(CustomImages)) then
+          CustomImages[DETextInputCardIdx].Name := DETextInputBuffer;
+      end
+      else
+      begin
+        if (DETextInputCardIdx >= 0) and (DETextInputCardIdx < Length(CustomTexts)) then
+          CustomTexts[DETextInputCardIdx].Name := DETextInputBuffer;
+      end;
+    end;
+  end;
+  DETextInputActive := False;
+  DETextInputBuffer := '';
+  SaveConfig;
+end;
+
+// Закрыть text-input без применения.
+procedure DETextInputCancel;
+begin
+  DETextInputActive := False;
+  DETextInputBuffer := '';
+end;
+
+// Per-frame обработка клавиатуры в textbox-режиме. Зовётся из UpdateDevEditorPerFrame.
+procedure DEProcessTextInputKeys;
+var
+  c: AnsiChar;
+  vk: Integer;
+  CtrlHeld: Boolean;
+  CharsAllowed: Boolean;
+begin
+  if not DETextInputActive then Exit;
+  CtrlHeld := (GetAsyncKeyState(VK_CONTROL) and $8000) <> 0;
+
+  // Enter — apply; Esc — cancel; Tab — apply (и закрыть, чтобы пользователь
+  // мог быстро перейти в следующее поле кликом).
+  if DEKeyShouldFire(VK_RETURN) then
+  begin
+    DETextInputCommit;
+    Exit;
+  end;
+  if DEKeyShouldFire(VK_ESCAPE) then
+  begin
+    DETextInputCancel;
+    Exit;
+  end;
+  if DEKeyShouldFire(VK_TAB) then
+  begin
+    DETextInputCommit;
+    Exit;
+  end;
+
+  // BackSpace — удалить последний символ. Для упрощения курсор всегда
+  // в конце строки (без LEFT/RIGHT/HOME/END).
+  if DEKeyShouldFire(VK_BACK) then
+  begin
+    if DETextInputAllSelected then
+    begin
+      // «Выделено» — просто чистим всё.
+      DETextInputBuffer := '';
+      DETextInputAllSelected := False;
+    end
+    else if Length(DETextInputBuffer) > 0 then
+      DETextInputBuffer := Copy(DETextInputBuffer, 1, Length(DETextInputBuffer) - 1);
+    Exit;
+  end;
+
+  // Delete — то же что Backspace для нашего упрощённого редактора.
+  if DEKeyShouldFire(VK_DELETE) then
+  begin
+    if DETextInputAllSelected then
+    begin
+      DETextInputBuffer := '';
+      DETextInputAllSelected := False;
+    end;
+    Exit;
+  end;
+
+  // Ctrl+C — копировать всё (selection или весь buffer — у нас одно и то же).
+  if CtrlHeld and DEKeyShouldFire(Ord('C')) then
+  begin
+    DEClipboardSet(DETextInputBuffer);
+    // Selection остаётся, чтобы можно было сразу нажать Ctrl+V в другом поле.
+    Exit;
+  end;
+  // Ctrl+V — вставить. Если выделено — заменяет; иначе append в конец.
+  if CtrlHeld and DEKeyShouldFire(Ord('V')) then
+  begin
+    if DETextInputAllSelected then
+    begin
+      DETextInputBuffer := DEClipboardGet;
+      DETextInputAllSelected := False;
+    end
+    else
+      DETextInputBuffer := DETextInputBuffer + DEClipboardGet;
+    Exit;
+  end;
+  // Ctrl+X — вырезать (copy + clear).
+  if CtrlHeld and DEKeyShouldFire(Ord('X')) then
+  begin
+    DEClipboardSet(DETextInputBuffer);
+    DETextInputBuffer := '';
+    DETextInputAllSelected := False;
+    Exit;
+  end;
+  // Ctrl+A — re-select все. Не очищает (clipboard потом возьмёт всё).
+  if CtrlHeld and DEKeyShouldFire(Ord('A')) then
+  begin
+    DETextInputAllSelected := True;
+    Exit;
+  end;
+
+  // Обычные printable-клавиши. Идём по диапазону 0..255 VK-кодов и берём
+  // те, что дают printable char через ToAscii. Это honors раскладку и SHIFT.
+  // Ctrl-комбинации уже обработаны выше — здесь их пропускаем.
+  if CtrlHeld then Exit;
+
+  for vk := 32 to 222 do
+  begin
+    if DEKeyShouldFire(vk) then
+    begin
+      c := DEVKToChar(vk);
+      if c = #0 then Continue;
+      // Для tikValue фильтруем — допускаем только цифры, точку/запятую, минус.
+      CharsAllowed := False;
+      case DETextInputKind of
+        tikValue:
+          CharsAllowed := (c in ['0'..'9', '.', ',', '-', '+']);
+        tikName:
+          // Имя — любой printable-символ, но не управляющие.
+          CharsAllowed := (Ord(c) >= 32) and (Ord(c) <> 127);
+      end;
+      if CharsAllowed then
+      begin
+        // Если был выделен весь buffer — первый ввод заменяет (как в обычном textbox).
+        if DETextInputAllSelected then
+        begin
+          DETextInputBuffer := '';
+          DETextInputAllSelected := False;
+        end;
+        DETextInputBuffer := DETextInputBuffer + string(c);
+      end;
+    end;
+  end;
+end;
+
+// =====================================================================
+//  IMAGE-CARD helpers (DevEditor режим Images)
+// =====================================================================
+
+// Применить +/- шаг к полю image-карточки. CardIdx = индекс в CustomImages.
+procedure DEApplyStepImage(CardIdx, Hotspot, Sign: Integer);
+begin
+  if (CardIdx < 0) or (CardIdx >= Length(CustomImages)) then Exit;
+  case Hotspot of
+    DE_HOT_X_MINUS, DE_HOT_X_PLUS:   CustomImages[CardIdx].X      := CustomImages[CardIdx].X      + Sign * DE_STEP_POS;
+    DE_HOT_Y_MINUS, DE_HOT_Y_PLUS:   CustomImages[CardIdx].Y      := CustomImages[CardIdx].Y      + Sign * DE_STEP_POS;
+    DE_HOT_Z_MINUS, DE_HOT_Z_PLUS:   CustomImages[CardIdx].Z      := CustomImages[CardIdx].Z      + Sign * DE_STEP_POS;
+    DE_HOT_RX_MINUS, DE_HOT_RX_PLUS: CustomImages[CardIdx].RX     := CustomImages[CardIdx].RX     + Sign * DE_STEP_ANG;
+    DE_HOT_RY_MINUS, DE_HOT_RY_PLUS: CustomImages[CardIdx].RY     := CustomImages[CardIdx].RY     + Sign * DE_STEP_ANG;
+    DE_HOT_RZ_MINUS, DE_HOT_RZ_PLUS: CustomImages[CardIdx].RZ     := CustomImages[CardIdx].RZ     + Sign * DE_STEP_ANG;
+    // S-кнопки в режиме images переинтерпретируются: одновременно меняют W и H
+    // пропорционально (uniform scale). Если нужен раздельный edit — пользователь
+    // использует gizmo + scale-mode либо правит custom_images.cfg вручную.
+    DE_HOT_S_MINUS, DE_HOT_S_PLUS:
+    begin
+      CustomImages[CardIdx].Width  := CustomImages[CardIdx].Width  + Sign * DE_STEP_SIZE;
+      CustomImages[CardIdx].Height := CustomImages[CardIdx].Height + Sign * DE_STEP_SIZE;
+      if CustomImages[CardIdx].Width  < 0.005 then CustomImages[CardIdx].Width  := 0.005;
+      if CustomImages[CardIdx].Height < 0.005 then CustomImages[CardIdx].Height := 0.005;
+    end;
+  end;
+end;
+
+// Открывает GetOpenFileName-диалог Windows, возвращает выбранный путь.
+// Поддерживаемые расширения зеркалят LoadTextureFromFile (BMP/JPG/TGA + O3TC).
+function BrowseForImageFile(out FilePath: string): Boolean;
+var
+  Ofn: TOpenFilename;
+  Buf: array[0..MAX_PATH] of Char;
+begin
+  Result := False;
+  FillChar(Ofn, SizeOf(Ofn), 0);
+  FillChar(Buf, SizeOf(Buf), 0);
+  Ofn.lStructSize := SizeOf(Ofn);
+  // hWnd: 0 = topmost dialog. У DLL нет main-window'а, и так нормально.
+  Ofn.hwndOwner   := 0;
+  Ofn.lpstrFilter :=
+    'Images (*.bmp;*.jpg;*.tga;*.o3tc)' + #0 + '*.bmp;*.jpg;*.tga;*.o3tc' + #0 +
+    'All files (*.*)' + #0 + '*.*' + #0#0;
+  Ofn.lpstrFile     := Buf;
+  Ofn.nMaxFile      := MAX_PATH;
+  Ofn.lpstrTitle    := 'ZDS-Booster: pick a 3D image texture';
+  Ofn.Flags         := OFN_FILEMUSTEXIST or OFN_PATHMUSTEXIST or OFN_HIDEREADONLY;
+  if GetOpenFileName(Ofn) then
+  begin
+    FilePath := string(Buf);
+    Result := True;
+  end;
+end;
+
+// Удобный helper: добавить новую картинку и сразу открыть Browse-диалог
+// для выбора файла. Если диалог отменили — картинка всё равно добавлена,
+// но без текстуры (можно потом нажать Browse в её карточке).
+procedure AddCustomImageAndBrowse;
+var
+  P: string;
+  N: Integer;
+begin
+  AddCustomImage; // CustomImages3D
+  N := Length(CustomImages) - 1;
+  if (N < 0) then Exit;
+  if BrowseForImageFile(P) then
+  begin
+    // SetSelectedImageTexturePath работает с текущим CustomImageSelectedIdx,
+    // но AddCustomImage уже выставил его в N — так что просто зовём.
+    SetSelectedImageTexturePath(P);
+  end;
+  // Активируем гизмо для новой картинки.
+  GT_SelectImage(N);
+  SaveConfig;
+end;
+
+// Открыть диалог выбора файла и заменить текстуру у текущей выделенной картинки.
+// Если выделена не картинка — ничего не делает.
+procedure DoBrowseForSelectedImage;
+var
+  P: string;
+begin
+  if (CustomImageSelectedIdx < 0) or (CustomImageSelectedIdx >= Length(CustomImages)) then Exit;
+  if BrowseForImageFile(P) then
+  begin
+    SetSelectedImageTexturePath(P);
+    SaveConfig;
+  end;
+end;
+
 procedure DrawDevEditor;
 var
   ScrW, ScrH: Integer;
@@ -5908,9 +6796,9 @@ begin
 
   Begin2D;
   try
-    // Полупрозрачный фон, чтобы кабину было слегка видно — но достаточно тёмно
-    // для контраста с UI.
-    DrawRectangle2D(0, 0, ScrW, ScrH, COLOR_BACKGROUND, 230, True);
+    // Полупрозрачный фон, чтобы кабину было хорошо видно сквозь редактор.
+    // Alpha 130 — UI ещё контрастно читается, но 3D-сцена просвечивает на ~50%.
+    DrawRectangle2D(0, 0, ScrW, ScrH, COLOR_BACKGROUND, 130, True);
 
     // === HEADER ===
     HeaderY := DE_PAD_Y;
@@ -5944,15 +6832,19 @@ begin
     DrawRectangle2D(DE_PAD_X, ToolbarY, ScrW - 2 * DE_PAD_X, DE_TOOLBAR_H,
       COLOR_BORDER, 240, False);
 
-    // [+ Add Text] кнопка — текст поднят на 3 px.
+    // [+ Add Text] / [+ Add Image] — зависит от EditMode. Visual position та же.
     if DevEditorHoveredHotspot = DE_HOT_ADD then
       DrawStyledRect(DE_PAD_X + 12, ToolbarY + 10, 110, 24,
         COLOR_ACCENT, 255, True, COLOR_ACCENT)
     else
       DrawStyledRect(DE_PAD_X + 12, ToolbarY + 10, 110, 24,
         COLOR_PRIMARY, 255, True, COLOR_PRIMARY_VARIANT);
-    DrawText2D(0, DE_PAD_X + 28, ToolbarY + 13, '+ Add Text',
-      COLOR_ON_PRIMARY, 255, 0.65);
+    if DEEditMode = demImages then
+      DrawText2D(0, DE_PAD_X + 28, ToolbarY + 13, '+ Add Image',
+        COLOR_ON_PRIMARY, 255, 0.65)
+    else
+      DrawText2D(0, DE_PAD_X + 28, ToolbarY + 13, '+ Add Text',
+        COLOR_ON_PRIMARY, 255, 0.65);
 
     // === Mode selector: [Move XYZ] [Rotate XYZ] [Scale] ===
     // Сразу после Add Text. Меняет глобальный GizmoMode — при выбранной
@@ -5999,15 +6891,60 @@ begin
     DrawText2D(0, DE_PAD_X + 401, ToolbarY + 13,
       'Scale', COLOR_ON_PRIMARY, 255, 0.6);
 
-    // Counter (сдвинут вправо за mode-кнопки).
-    if (CustomTextSelectedIdx >= 0) and (CustomTextSelectedIdx < Length(CustomTexts)) then
-      ValStr := '#' + IntToStr(CustomTextSelectedIdx)
+    // === Edit Mode tabs: [TEXTS] [IMAGES] ===
+    // Положение справа от mode-кнопок. Позиция зеркалит Mode-кнопки выше.
+    DrawText2D(0, DE_PAD_X + 460, ToolbarY + 13,
+      'Edit:', COLOR_BORDER_LIGHT, 220, 0.55);
+
+    // Таб TEXTS
+    if DEEditMode = demTexts then
+      DrawStyledRect(DE_PAD_X + 500, ToolbarY + 10, 70, 24,
+        COLOR_PRIMARY, 255, True, COLOR_PRIMARY_VARIANT)
+    else if DevEditorHoveredHotspot = DE_HOT_TAB_TEXTS then
+      DrawStyledRect(DE_PAD_X + 500, ToolbarY + 10, 70, 24,
+        COLOR_ACCENT, 255, True, COLOR_ACCENT)
     else
-      ValStr := '—';
-    DrawText2D(0, DE_PAD_X + 470, ToolbarY + 13,
-      'Total: ' + IntToStr(Length(CustomTexts)) +
-      '   |   Sel: ' + ValStr,
-      COLOR_ON_SURFACE, 220, 0.6);
+      DrawStyledRect(DE_PAD_X + 500, ToolbarY + 10, 70, 24,
+        COLOR_SURFACE_VARIANT, 255, True, COLOR_BORDER);
+    DrawText2D(0, DE_PAD_X + 514, ToolbarY + 13,
+      'TEXTS', COLOR_ON_PRIMARY, 255, 0.6);
+
+    // Таб IMAGES
+    if DEEditMode = demImages then
+      DrawStyledRect(DE_PAD_X + 574, ToolbarY + 10, 80, 24,
+        COLOR_PRIMARY, 255, True, COLOR_PRIMARY_VARIANT)
+    else if DevEditorHoveredHotspot = DE_HOT_TAB_IMAGES then
+      DrawStyledRect(DE_PAD_X + 574, ToolbarY + 10, 80, 24,
+        COLOR_ACCENT, 255, True, COLOR_ACCENT)
+    else
+      DrawStyledRect(DE_PAD_X + 574, ToolbarY + 10, 80, 24,
+        COLOR_SURFACE_VARIANT, 255, True, COLOR_BORDER);
+    DrawText2D(0, DE_PAD_X + 586, ToolbarY + 13,
+      'IMAGES', COLOR_ON_PRIMARY, 255, 0.6);
+
+    // Counter (Total / Sel) — переключается по EditMode.
+    if DEEditMode = demImages then
+    begin
+      if (CustomImageSelectedIdx >= 0) and (CustomImageSelectedIdx < Length(CustomImages)) then
+        ValStr := '#' + IntToStr(CustomImageSelectedIdx)
+      else
+        ValStr := '—';
+      DrawText2D(0, DE_PAD_X + 670, ToolbarY + 13,
+        'Total: ' + IntToStr(Length(CustomImages)) +
+        '   |   Sel: ' + ValStr,
+        COLOR_ON_SURFACE, 220, 0.6);
+    end
+    else
+    begin
+      if (CustomTextSelectedIdx >= 0) and (CustomTextSelectedIdx < Length(CustomTexts)) then
+        ValStr := '#' + IntToStr(CustomTextSelectedIdx)
+      else
+        ValStr := '—';
+      DrawText2D(0, DE_PAD_X + 670, ToolbarY + 13,
+        'Total: ' + IntToStr(Length(CustomTexts)) +
+        '   |   Sel: ' + ValStr,
+        COLOR_ON_SURFACE, 220, 0.6);
+    end;
 
     // Подсказка справа — короткая, чтобы не упиралась в кнопки.
     DrawText2D(0, ScrW - DE_PAD_X - 280, ToolbarY + 13,
@@ -6030,8 +6967,11 @@ begin
     CardW := ScrW - 2 * DE_PAD_X - 16 - DE_SCROLLBAR_W - 4;
     CardInnerW := CardW;
 
-    // Высота всего контента и ограничение скролла
-    ContentH := Length(CustomTexts) * (DE_CARD_H + DE_CARD_GAP);
+    // Высота всего контента и ограничение скролла — зависит от EditMode.
+    if DEEditMode = demImages then
+      ContentH := Length(CustomImages) * (DE_CARD_H + DE_CARD_GAP)
+    else
+      ContentH := Length(CustomTexts) * (DE_CARD_H + DE_CARD_GAP);
     if ContentH > (ListBottom - ListY - 8) then
       DevEditorMaxScroll := ContentH - (ListBottom - ListY - 8)
     else
@@ -6039,7 +6979,146 @@ begin
     if DevEditorScrollY > DevEditorMaxScroll then DevEditorScrollY := DevEditorMaxScroll;
     if DevEditorScrollY < 0 then DevEditorScrollY := 0;
 
-    // Карточки
+    // ===== IMAGES BRANCH ============================================
+    // Упрощённый список картинок: index + truncated path + 7 пар +/- (X,Y,Z,
+    // RX,RY,RZ,Size) + Browse + Visible + Delete. Все hot-spot'ы и handlers
+    // используются те же DE_HOT_*; в HandleDevEditorClick делается switch
+    // по EditMode для выбора целевого массива.
+    if DEEditMode = demImages then
+    begin
+      for i := 0 to Length(CustomImages) - 1 do
+      begin
+        CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+        if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
+
+        IsSel := (i = CustomImageSelectedIdx);
+        IsHover := (i = DevEditorHoveredCard);
+
+        if IsSel then
+        begin
+          CardBg := COLOR_PRIMARY_VARIANT;
+          CardBorder := COLOR_ACCENT;
+        end
+        else if IsHover then
+        begin
+          CardBg := COLOR_SURFACE_VARIANT;
+          CardBorder := COLOR_BORDER_LIGHT;
+        end
+        else
+        begin
+          CardBg := COLOR_SURFACE;
+          CardBorder := COLOR_BORDER;
+        end;
+        DrawRectangle2D(CardX, CardY, CardInnerW, DE_CARD_H, CardBg, 240, True);
+        DrawRectangle2D(CardX, CardY, CardInnerW, DE_CARD_H, CardBorder, 240, False);
+
+        // Index label + name
+        DrawText2D(0, CardX + 10, CardY + 30, '#' + IntToStr(i),
+          COLOR_ACCENT, 255, 0.7);
+        if CustomImages[i].Name <> '' then
+          DrawText2D(0, CardX + 10, CardY + 6,
+            CustomImages[i].Name, COLOR_ON_SURFACE, 255, 0.55)
+        else
+          DrawText2D(0, CardX + 10, CardY + 6,
+            'Name', COLOR_BORDER_LIGHT, 180, 0.5);
+
+        // Path (place of "Source"). truncated до DE_SOURCE_W в пикселях.
+        DEDrawHdrLabel(CardX + DE_IDX_W + DE_SOURCE_W div 2, CardY + 13,
+          'Path', 240);
+        DrawStyledRect(CardX + DE_IDX_W, CardY + 30, DE_SOURCE_W, DE_BTN_SMALL,
+          COLOR_SURFACE_VARIANT, 240, True, COLOR_BORDER);
+        ValStr := ExtractFileName(CustomImages[i].TexturePath);
+        if ValStr = '' then ValStr := '(no texture — click Browse)';
+        // 26 символов ≈ влезает в DE_SOURCE_W при scale 0.55.
+        if Length(ValStr) > 26 then ValStr := '…' + Copy(ValStr, Length(ValStr) - 24, 25);
+        DrawText2D(0, CardX + DE_IDX_W + 8, CardY + 30,
+          ValStr, COLOR_ON_SURFACE, 240, 0.55);
+
+        // Семь -/value/+ ячеек — те же hotspot ID, но DEApplyStepImage интерпретирует
+        // S как W/H (uniform).
+        CellX := CardX + DE_IDX_W + DE_SOURCE_W + 12;
+        // X
+        HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_X_MINUS);
+        HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_X_PLUS);
+        ValStr := FormatGizmoFloat(CustomImages[i].X, 3);
+        DEDrawValueCell(CellX, CardY + 30, 'X', ValStr, 240, HotMinus, HotPlus);
+        Inc(CellX, DE_CELL_W);
+        // Y
+        HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_Y_MINUS);
+        HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_Y_PLUS);
+        ValStr := FormatGizmoFloat(CustomImages[i].Y, 3);
+        DEDrawValueCell(CellX, CardY + 30, 'Y', ValStr, 240, HotMinus, HotPlus);
+        Inc(CellX, DE_CELL_W);
+        // Z
+        HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_Z_MINUS);
+        HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_Z_PLUS);
+        ValStr := FormatGizmoFloat(CustomImages[i].Z, 3);
+        DEDrawValueCell(CellX, CardY + 30, 'Z', ValStr, 240, HotMinus, HotPlus);
+        Inc(CellX, DE_CELL_W);
+        // RX
+        HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_RX_MINUS);
+        HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_RX_PLUS);
+        ValStr := FormatGizmoFloat(CustomImages[i].RX, 1);
+        DEDrawValueCell(CellX, CardY + 30, 'RX', ValStr, 240, HotMinus, HotPlus);
+        Inc(CellX, DE_CELL_W);
+        // RY
+        HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_RY_MINUS);
+        HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_RY_PLUS);
+        ValStr := FormatGizmoFloat(CustomImages[i].RY, 1);
+        DEDrawValueCell(CellX, CardY + 30, 'RY', ValStr, 240, HotMinus, HotPlus);
+        Inc(CellX, DE_CELL_W);
+        // RZ
+        HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_RZ_MINUS);
+        HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_RZ_PLUS);
+        ValStr := FormatGizmoFloat(CustomImages[i].RZ, 1);
+        DEDrawValueCell(CellX, CardY + 30, 'RZ', ValStr, 240, HotMinus, HotPlus);
+        Inc(CellX, DE_CELL_W);
+        // Size = sqrt(W*H) — uniform handle. +/- меняет W и H пропорционально.
+        HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_S_MINUS);
+        HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_S_PLUS);
+        ValStr := FormatGizmoFloat(Sqrt(CustomImages[i].Width * CustomImages[i].Height), 3);
+        DEDrawValueCell(CellX, CardY + 30, 'Size', ValStr, 240, HotMinus, HotPlus);
+        Inc(CellX, DE_CELL_W);
+
+        // Browse-кнопка (на месте Color swatch у текстов).
+        DEDrawHdrLabel(CellX + (DE_SWATCH_W - 8) div 2, CardY + 13, 'File', 240);
+        if IsHover and (DevEditorHoveredHotspot = DE_HOT_IMG_BROWSE) then
+          DrawStyledRect(CellX, CardY + 30, DE_SWATCH_W - 8, DE_BTN_SMALL,
+            COLOR_ACCENT, 255, True, COLOR_ACCENT)
+        else
+          DrawStyledRect(CellX, CardY + 30, DE_SWATCH_W - 8, DE_BTN_SMALL,
+            COLOR_PRIMARY, 255, True, COLOR_PRIMARY_VARIANT);
+        DrawText2D(0, CellX + 6, CardY + 30 + 1, 'Browse',
+          COLOR_ON_PRIMARY, 255, 0.55);
+        Inc(CellX, DE_SWATCH_W);
+
+        // Visible checkbox
+        DEDrawHdrLabel(CellX + DE_BTN_SMALL div 2, CardY + 13, 'Vis', 240);
+        if CustomImages[i].Visible then
+          DrawStyledRect(CellX, CardY + 30, DE_BTN_SMALL, DE_BTN_SMALL,
+            COLOR_ACCENT, 255, True, COLOR_ACCENT)
+        else
+          DrawStyledRect(CellX, CardY + 30, DE_BTN_SMALL, DE_BTN_SMALL,
+            COLOR_SURFACE_VARIANT, 255, True, COLOR_BORDER);
+        if CustomImages[i].Visible then
+          DrawText2D(0, CellX + 6, CardY + 30 + 1, 'V',
+            COLOR_ON_PRIMARY, 255, 0.65);
+        Inc(CellX, DE_VISIBLE_W);
+
+        // Delete button
+        DEDrawHdrLabel(CellX + (DE_DELETE_W - 4) div 2, CardY + 13, 'Del', 240);
+        if IsHover and (DevEditorHoveredHotspot = DE_HOT_DELETE) then
+          DrawStyledRect(CellX, CardY + 30, DE_DELETE_W - 4, DE_BTN_SMALL,
+            COLOR_ACCENT, 255, True, COLOR_ACCENT)
+        else
+          DrawStyledRect(CellX, CardY + 30, DE_DELETE_W - 4, DE_BTN_SMALL,
+            COLOR_SURFACE_VARIANT, 255, True, COLOR_BORDER);
+        DrawText2D(0, CellX + 8, CardY + 30 + 1, 'X',
+          COLOR_ON_SURFACE, 255, 0.65);
+      end;
+    end
+    else
+    // Карточки (TEXTS)
     for i := 0 to Length(CustomTexts) - 1 do
     begin
       CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
@@ -6071,9 +7150,18 @@ begin
       // Все интерактивные элементы — на горизонтальной полосе CardY+30, h=22.
       // Над ними — column-labels (X/Y/Z/...) на высоте CardY+13 (на 3 px выше).
 
-      // Index label (#N) — отцентрирован вертикально по полосе controls (-3 px).
+      // Index label (#N) и имя элемента над ним. Имя редактируется через
+      // text-input (клик по «Name»-строке внутри карточки активирует ввод).
       DrawText2D(0, CardX + 10, CardY + 30,
         '#' + IntToStr(i), COLOR_ACCENT, 255, 0.7);
+      // «Имя» — над Index label'ом (выше column-labels). Пустое поле
+      // подсказывает «Name» серым; задание имени — белым.
+      if CustomTexts[i].Name <> '' then
+        DrawText2D(0, CardX + 10, CardY + 6,
+          CustomTexts[i].Name, COLOR_ON_SURFACE, 255, 0.55)
+      else
+        DrawText2D(0, CardX + 10, CardY + 6,
+          'Name', COLOR_BORDER_LIGHT, 180, 0.5);
 
       // "Source" заголовок над combobox'ом — поднят на 3 px.
       DEDrawHdrLabel(CardX + DE_IDX_W + DE_SOURCE_W div 2, CardY + 13,
@@ -6253,6 +7341,79 @@ begin
               COLOR_ACCENT, 255, False);
         end;
     end;
+
+    // === TEXT INPUT OVERLAY ===
+    // Если активен text-input — рисуем поверх редактируемого поля
+    // (value-cell или Name-rect) рамку, содержимое buffer'а и мигающий курсор.
+    if DETextInputActive and (DETextInputCardIdx >= 0) then
+    begin
+      // Определяем CardY с учётом scroll и того, какой массив редактируется.
+      Idx := DETextInputCardIdx;
+      if DEEditMode = demImages then
+      begin
+        if Idx >= Length(CustomImages) then DETextInputActive := False;
+      end
+      else
+      begin
+        if Idx >= Length(CustomTexts) then DETextInputActive := False;
+      end;
+      if DETextInputActive then
+      begin
+        CardY := ListY + 6 + Idx * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+        // Координаты редактируемого rect зависят от Hotspot.
+        case DETextInputKind of
+          tikValue:
+          begin
+            // Поле value: ячейка номер k (0..6) для X/Y/Z/RX/RY/RZ/S.
+            k := DETextInputHotspot - DE_HOT_X_VAL; // 0..6
+            if (k < 0) or (k > 6) then k := 0;
+            CellX := CardX + DE_IDX_W + DE_SOURCE_W + 8 + k * DE_CELL_W
+                     + DE_BTN_SMALL + 2;
+            // Если выделен весь buffer — фон голубой (как Windows-style highlight),
+            // иначе тёмный (обычное editing).
+            if DETextInputAllSelected then
+              DrawRectangle2D(CellX, CardY + 30, DE_VAL_W, DE_BTN_SMALL,
+                COLOR_PRIMARY, 255, True)
+            else
+              DrawRectangle2D(CellX, CardY + 30, DE_VAL_W, DE_BTN_SMALL,
+                COLOR_BACKGROUND, 255, True);
+            // Толстая accent-рамка — индикатор активного редактирования.
+            DrawRectangle2D(CellX - 1, CardY + 30 - 1, DE_VAL_W + 2, DE_BTN_SMALL + 2,
+              COLOR_ACCENT, 255, False);
+            DrawRectangle2D(CellX, CardY + 30, DE_VAL_W, DE_BTN_SMALL,
+              COLOR_ACCENT, 255, False);
+            // Текст buffer'а. При выделении он на синем — белый текст хорошо виден.
+            DrawText2D(0, CellX + 4, CardY + 30 + 2,
+              DETextInputBuffer, COLOR_ON_SURFACE, 255, 0.6);
+            // Мигающий курсор виден только когда selection снят.
+            if (not DETextInputAllSelected) and
+               (((GetTickCount - DETextInputCursorBlinkStart) mod 1000) < 530) then
+              DrawText2D(0, CellX + 4 + Length(DETextInputBuffer) * 7, CardY + 30 + 2,
+                '|', COLOR_ACCENT, 255, 0.6);
+          end;
+          tikName:
+          begin
+            // Name-rect: верхняя полоса карточки.
+            if DETextInputAllSelected then
+              DrawRectangle2D(CardX + 4, CardY + 4, DE_IDX_W + DE_SOURCE_W - 4, 20,
+                COLOR_PRIMARY, 255, True)
+            else
+              DrawRectangle2D(CardX + 4, CardY + 4, DE_IDX_W + DE_SOURCE_W - 4, 20,
+                COLOR_BACKGROUND, 255, True);
+            DrawRectangle2D(CardX + 3, CardY + 3, DE_IDX_W + DE_SOURCE_W - 2, 22,
+              COLOR_ACCENT, 255, False);
+            DrawRectangle2D(CardX + 4, CardY + 4, DE_IDX_W + DE_SOURCE_W - 4, 20,
+              COLOR_ACCENT, 255, False);
+            DrawText2D(0, CardX + 8, CardY + 6,
+              DETextInputBuffer, COLOR_ON_SURFACE, 255, 0.55);
+            if (not DETextInputAllSelected) and
+               (((GetTickCount - DETextInputCursorBlinkStart) mod 1000) < 530) then
+              DrawText2D(0, CardX + 8 + Length(DETextInputBuffer) * 6, CardY + 6,
+                '|', COLOR_ACCENT, 255, 0.55);
+          end;
+        end;
+      end;
+    end;
   finally
     End2D;
   end;
@@ -6281,6 +7442,11 @@ var
   ScrollbarX, ScrollbarTop, ScrollbarHandleH, ScrollbarHandleY: Integer;
   ContentH, VisibleH: Integer;
 begin
+  // Любой клик мыши при активном text-input — сначала применяет текущее
+  // значение buffer'а (commit) и закрывает input. Дальше обычная обработка
+  // клика — пользователь может, например, кликнуть в другое поле.
+  if DETextInputActive then
+    DETextInputCommit;
   if not DevEditorVisible then Exit;
   ScrW := InitResX;
   ScrH := InitResY;
@@ -6353,19 +7519,28 @@ begin
     Exit;
   end;
 
-  // 3) Header buttons
+  // 3) Header — кнопка "< BACK TO MENU"
+  // Возвращаемся в обычное меню (4 окна) и запоминаем, что юзер теперь в нём
+  // (DevEditorIsLastMode := False), чтобы F12 дальше тоглил обычное меню.
   if DEInRect(MX, MY, DE_PAD_X + 12, HeaderY + 12, 110, DE_HEADER_H - 24) then
   begin
     DevEditorVisible := False;
     DevEditorScrollY := 0;
+    DevEditorIsLastMode := False;
+    MenuVisible := True;
     Exit;
   end;
 
-  // 4) Toolbar — Add Text
+  // 4) Toolbar — Add Text / Add Image (зависит от DEEditMode)
   if DEInRect(MX, MY, DE_PAD_X + 12, ToolbarY + 10, 110, 24) then
   begin
-    AddCustomText;
-    SaveConfig;
+    if DEEditMode = demImages then
+      AddCustomImageAndBrowse  // открывает GetOpenFileName и активирует gizmo
+    else
+    begin
+      AddCustomText;
+      SaveConfig;
+    end;
     Exit;
   end;
 
@@ -6386,6 +7561,22 @@ begin
   begin
     GizmoMode := gmScale;
     SaveConfig;
+    Exit;
+  end;
+
+  // 4c) Toolbar — Edit Mode tabs (TEXTS / IMAGES)
+  if DEInRect(MX, MY, DE_PAD_X + 500, ToolbarY + 10, 70, 24) then
+  begin
+    DEEditMode := demTexts;
+    GT_DeselectAll; // сбрасываем выбор, чтобы гизмо не "висел" в воздухе
+    DevEditorScrollY := 0;
+    Exit;
+  end;
+  if DEInRect(MX, MY, DE_PAD_X + 574, ToolbarY + 10, 80, 24) then
+  begin
+    DEEditMode := demImages;
+    GT_DeselectAll;
+    DevEditorScrollY := 0;
     Exit;
   end;
 
@@ -6418,30 +7609,56 @@ begin
     end;
   end;
 
-  // 6) Карточки — селект + хотспоты
+  // 6) Карточки — селект + хотспоты. Цикл / выбор зависят от DEEditMode.
   if (MY < ListY) or (MY > ListBottom) then Exit;
   HitCard := -1;
   HitHotspot := DE_HOT_NONE;
-  for i := 0 to Length(CustomTexts) - 1 do
+  if DEEditMode = demImages then
   begin
-    CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
-    if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
-    if DEInRect(MX, MY, CardX, CardY, CardW, DE_CARD_H) then
+    for i := 0 to Length(CustomImages) - 1 do
     begin
-      HitCard := i;
-      HitHotspot := DEHotspotAtPoint(MX, MY, CardX, CardY, CardW);
-      Break;
+      CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+      if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
+      if DEInRect(MX, MY, CardX, CardY, CardW, DE_CARD_H) then
+      begin
+        HitCard := i;
+        HitHotspot := DEHotspotAtPoint(MX, MY, CardX, CardY, CardW);
+        Break;
+      end;
+    end;
+  end
+  else
+  begin
+    for i := 0 to Length(CustomTexts) - 1 do
+    begin
+      CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+      if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
+      if DEInRect(MX, MY, CardX, CardY, CardW, DE_CARD_H) then
+      begin
+        HitCard := i;
+        HitHotspot := DEHotspotAtPoint(MX, MY, CardX, CardY, CardW);
+        Break;
+      end;
     end;
   end;
   if HitCard < 0 then Exit;
 
-  // Любой клик внутри карточки выделяет её, плюс выполняет hotspot-действие.
-  CustomTextSelectedIdx := HitCard;
-  SyncSlidersFromSelected;
+  // Выделяем — это активирует гизмо в кабине (через GT_*).
+  if DEEditMode = demImages then
+    GT_SelectImage(HitCard)
+  else
+  begin
+    GT_SelectText(HitCard);
+    SyncSlidersFromSelected;
+  end;
 
+  // Hotspot-действия. Большинство хотспотов общие, но Source/Color работают
+  // только для текстов; Browse — только для картинок; Visible/Delete/+−
+  // делегируются в правильную ветку по EditMode.
   case HitHotspot of
     DE_HOT_SOURCE:
     begin
+      // только для текстов (DEHotspotAtPoint в режиме images возвращает NONE)
       DevEditorComboboxOpen := True;
       DevEditorComboboxCardIdx := HitCard;
     end;
@@ -6453,7 +7670,10 @@ begin
     DE_HOT_RZ_MINUS, DE_HOT_RZ_PLUS,
     DE_HOT_S_MINUS, DE_HOT_S_PLUS:
     begin
-      DEApplyStep(HitCard, HitHotspot, DEHotspotSign(HitHotspot));
+      if DEEditMode = demImages then
+        DEApplyStepImage(HitCard, HitHotspot, DEHotspotSign(HitHotspot))
+      else
+        DEApplyStep(HitCard, HitHotspot, DEHotspotSign(HitHotspot));
       // Запускаем auto-repeat — продолжается, пока ЛКМ зажата.
       DevEditorBtnHeldHotspot := HitHotspot;
       DevEditorBtnHeldCardIdx := HitCard;
@@ -6466,15 +7686,40 @@ begin
       DevEditorColorPickerOpen := True;
       DevEditorColorPickerCardIdx := HitCard;
     end;
+    DE_HOT_IMG_BROWSE:
+    begin
+      // Browse-кнопка в image-карточке — открыть диалог и заменить путь.
+      // SetSelectedImageTexturePath работает с CustomImageSelectedIdx,
+      // который мы только что выставили в GT_SelectImage(HitCard) выше.
+      DoBrowseForSelectedImage;
+    end;
+    // === Text-input mode (textbox-редактирование значения / имени) ===
+    DE_HOT_X_VAL, DE_HOT_Y_VAL, DE_HOT_Z_VAL,
+    DE_HOT_RX_VAL, DE_HOT_RY_VAL, DE_HOT_RZ_VAL,
+    DE_HOT_S_VAL:
+      DETextInputBegin(tikValue, HitCard, HitHotspot);
+    DE_HOT_NAME:
+      DETextInputBegin(tikName, HitCard, HitHotspot);
     DE_HOT_VISIBLE:
     begin
-      CustomTexts[HitCard].Visible := not CustomTexts[HitCard].Visible;
+      if DEEditMode = demImages then
+        CustomImages[HitCard].Visible := not CustomImages[HitCard].Visible
+      else
+        CustomTexts[HitCard].Visible := not CustomTexts[HitCard].Visible;
       SaveConfig;
     end;
     DE_HOT_DELETE:
     begin
-      CustomTextSelectedIdx := HitCard;
-      DeleteSelectedCustomText;
+      if DEEditMode = demImages then
+      begin
+        GT_SelectImage(HitCard);
+        DeleteSelectedCustomImage;
+      end
+      else
+      begin
+        GT_SelectText(HitCard);
+        DeleteSelectedCustomText;
+      end;
       SaveConfig;
     end;
   end;
@@ -6503,8 +7748,18 @@ begin
   begin
     DevEditorHoveredCard := -1;
     DevEditorHoveredHotspot := DE_HOT_NONE;
+    // Если редактор закрыли через F12 — text-input тоже погасить, чтобы не
+    // зависал в фоне.
+    if DETextInputActive then
+      DETextInputCancel;
     Exit;
   end;
+
+  // === Text-input режим: клавиатура направляется в DETextInputBuffer. ===
+  // Hover/scroll/auto-repeat внутри редактора всё ещё работают, но keyboard-input
+  // имеет приоритет и обрабатывается первым.
+  if DETextInputActive then
+    DEProcessTextInputKeys;
   MX := Round(MoveXcoord);
   MY := Round(MoveYcoord);
   ScrW := InitResX;
@@ -6544,22 +7799,50 @@ begin
     DevEditorHoveredHotspot := DE_HOT_MODE_S;
     DevEditorHoveredCard := -1;
   end
+  // Hover на Edit-mode tabs (TEXTS / IMAGES)
+  else if DEInRect(MX, MY, DE_PAD_X + 500, ToolbarY + 10, 70, 24) then
+  begin
+    DevEditorHoveredHotspot := DE_HOT_TAB_TEXTS;
+    DevEditorHoveredCard := -1;
+  end
+  else if DEInRect(MX, MY, DE_PAD_X + 574, ToolbarY + 10, 80, 24) then
+  begin
+    DevEditorHoveredHotspot := DE_HOT_TAB_IMAGES;
+    DevEditorHoveredCard := -1;
+  end
   else
   begin
-    // Hover на карточках
+    // Hover на карточках — итерируем по соответствующему массиву.
     DevEditorHoveredCard := -1;
     DevEditorHoveredHotspot := DE_HOT_NONE;
     if (MY >= ListY) and (MY <= ListBottom) then
     begin
-      for i := 0 to Length(CustomTexts) - 1 do
+      if DEEditMode = demImages then
       begin
-        CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
-        if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
-        if DEInRect(MX, MY, CardX, CardY, CardW, DE_CARD_H) then
+        for i := 0 to Length(CustomImages) - 1 do
         begin
-          DevEditorHoveredCard := i;
-          DevEditorHoveredHotspot := DEHotspotAtPoint(MX, MY, CardX, CardY, CardW);
-          Break;
+          CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+          if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
+          if DEInRect(MX, MY, CardX, CardY, CardW, DE_CARD_H) then
+          begin
+            DevEditorHoveredCard := i;
+            DevEditorHoveredHotspot := DEHotspotAtPoint(MX, MY, CardX, CardY, CardW);
+            Break;
+          end;
+        end;
+      end
+      else
+      begin
+        for i := 0 to Length(CustomTexts) - 1 do
+        begin
+          CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+          if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
+          if DEInRect(MX, MY, CardX, CardY, CardW, DE_CARD_H) then
+          begin
+            DevEditorHoveredCard := i;
+            DevEditorHoveredHotspot := DEHotspotAtPoint(MX, MY, CardX, CardY, CardW);
+            Break;
+          end;
         end;
       end;
     end;
@@ -6609,8 +7892,13 @@ begin
       begin
         if TickNow - DevEditorBtnLastFireTime > DE_AUTO_REPEAT_RATE then
         begin
-          DEApplyStep(DevEditorBtnHeldCardIdx, DevEditorBtnHeldHotspot,
-            DEHotspotSign(DevEditorBtnHeldHotspot));
+          // В режиме images используем DEApplyStepImage (W/H для S-кнопок).
+          if DEEditMode = demImages then
+            DEApplyStepImage(DevEditorBtnHeldCardIdx, DevEditorBtnHeldHotspot,
+              DEHotspotSign(DevEditorBtnHeldHotspot))
+          else
+            DEApplyStep(DevEditorBtnHeldCardIdx, DevEditorBtnHeldHotspot,
+              DEHotspotSign(DevEditorBtnHeldHotspot));
           DevEditorBtnLastFireTime := TickNow;
         end;
       end;

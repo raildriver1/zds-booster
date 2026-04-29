@@ -929,13 +929,19 @@ begin
       v5 := 0.0;
     end;
     
-    // Проверяем флаг освещения
+    // ZDS-Booster: расширяем sky.dmd сферу так чтобы она перекрывала
+    // увеличенный zFar (мы патчили его до 8000м в DomePatch).
+    // Без этого за оригинальной сферой неба видно белое (clearColor).
+    // Scale3D — мультипликативный поверх original game size, а не absolute,
+    // поэтому 6.0 = "в 6 раз больше штатного" (~ покрывает 8000м-горизонт).
     try
       lightingCheck := PByte(Pointer($090043A4))^;
       if lightingCheck = 0 then
-        Scale3D(1.2);
+        Scale3D(4.0)
+      else
+        Scale3D(4.0);
     except
-      Scale3D(1.2);
+      Scale3D(4.0);
     end;
     
     // Читаем текущий час и минуты
@@ -1407,6 +1413,58 @@ begin
   end;
 end;
 
+// === ПАТЧ КУПОЛА: всегда применяется ===
+// Игра в Launcher.exe+$00723B17 пушит хардкод 1500.0 (zFar) перед
+// gluPerspective. Это и есть невидимый купол. Патч 4 байт по $00723B18
+// перенаправляет zFar на ZFAR_TARGET_M метров.
+// НЕ зависит от Config_MaxDistance — купол должен сниматься всегда.
+procedure ApplyDomePatch(StateChanged: Boolean);
+const
+  // 8000м с запасом под слайдер 6000м.
+  ZFAR_TARGET_M = 8000.0;
+var
+  ZFarBuf: Double;
+  ZFarHigh: Cardinal;
+  InstructionAddress: PByte;
+  OldProtect: DWORD;
+  CurHighDWord: Cardinal;
+begin
+  try
+    ZFarBuf := ZFAR_TARGET_M;
+    // Верхние 4 байта double. На x86 little-endian double = [low_dw][high_dw].
+    ZFarHigh := PCardinal(Cardinal(@ZFarBuf) + 4)^;
+
+    InstructionAddress := Pointer($00723B18);
+    // Сначала проверим что там лежит — если уже нужное значение, не трогаем
+    // (это дёшево, в логе шуму меньше).
+    try
+      CurHighDWord := PCardinal(InstructionAddress)^;
+    except
+      CurHighDWord := 0;
+    end;
+    if CurHighDWord = ZFarHigh then Exit;
+
+    if VirtualProtect(InstructionAddress, 4, PAGE_EXECUTE_READWRITE, @OldProtect) then
+    begin
+      PCardinal(InstructionAddress)^ := ZFarHigh;
+      FlushInstructionCache(GetCurrentProcess, InstructionAddress, 4);
+      VirtualProtect(InstructionAddress, 4, OldProtect, @OldProtect);
+      AddToLogFile(EngineLog,
+        'DomePatch: $00723B18 ' + IntToHex(CurHighDWord, 8) +
+        ' -> ' + IntToHex(ZFarHigh, 8) + ' (zFar=' + FloatToStr(ZFarBuf) + 'm)');
+    end
+    else
+    begin
+      AddToLogFile(EngineLog,
+        'DomePatch: VirtualProtect FAILED for $00723B18: ' +
+        SysErrorMessage(GetLastError));
+    end;
+  except
+    on E: Exception do
+      AddToLogFile(EngineLog, 'DomePatch: исключение - ' + E.Message);
+  end;
+end;
+
 procedure ApplyMaxVisibleDistance; stdcall;
 var
   PatchValue: Single;
@@ -1416,6 +1474,11 @@ var
   StateChanged: Boolean;
   OriginalValue: Integer;
 begin
+
+  // ВАЖНО: купол снимаем ВСЕГДА, до проверки Config_MaxDistance.
+  // Без этого патча даже при выключенном MaxVisibleDistance юзер видит
+  // купол 1500м, а наш ApplyMaxVisibleDistance просто тогда не запускался.
+  ApplyDomePatch(False);
 
   // ===== ВСЕГДА УСТАНАВЛИВАЕМ 800 ПО УМОЛЧАНИЮ =====
   try
@@ -1467,7 +1530,9 @@ begin
       PatchAddress := Pointer($00791DD8);
       PatchAddress^ := PatchValue;
 
-      // Патчим инструкцию
+      // Патчим ПЕРВУЮ инструкцию культинга — fcomp [0x4942CC] по $492258.
+      // Перенаправляем чтение float'а с оригинальной константы 700.0 на наш
+      // буфер $00791DD8 куда записан maxvisibledistance.
       InstructionAddress := Pointer($492258);
 
       if VirtualProtect(InstructionAddress, 6, PAGE_EXECUTE_READWRITE, @OldProtect) then
@@ -1481,6 +1546,25 @@ begin
         VirtualProtect(Pointer($492258), 6, OldProtect, @OldProtect);
       end;
 
+      // Патчим ВТОРУЮ инструкцию культинга — fcomp [0x4942CC] по $492076.
+      // Без этого патча оставался «купол» 700м: один из двух fcomp всё равно
+      // сравнивал дистанцию с оригинальным 700.0 и резал рендер.
+      // Дизасм игры:  fld [ebp-0x18]; fcomp [0x4942cc]; ja skip
+      // Дублируем тот же D8 1D D8 1D 79 00, что и для $492258.
+      InstructionAddress := Pointer($492076);
+
+      if VirtualProtect(InstructionAddress, 6, PAGE_EXECUTE_READWRITE, @OldProtect) then
+      begin
+        InstructionAddress^ := $D8;
+        Inc(InstructionAddress);
+        InstructionAddress^ := $1D;
+        Inc(InstructionAddress);
+        PDWORD(InstructionAddress)^ := $00791DD8;
+
+        VirtualProtect(Pointer($492076), 6, OldProtect, @OldProtect);
+      end;
+
+      // Купол уже сняли в ApplyDomePatch выше — здесь повторять не надо.
       if StateChanged then
         AddToLogFile(EngineLog, 'MaxVisibleDistance установлена: ' + IntToStr(Config_MaxVisibleDistance));
         
@@ -1505,7 +1589,10 @@ begin
         PatchAddress := Pointer($00791DD8);
         PatchAddress^ := PatchValue;
 
-        // Восстанавливаем оригинальный адрес в инструкции
+        // Восстанавливаем оригинальный адрес в инструкциях.
+        // Оригинал: fcomp dword ptr [0x4942CC] = 700.0f.
+        // (В предыдущей версии тут была опечатка $00942CC без ведущего 4 —
+        //  она писала битый адрес и игра бы крашилась при выключении.)
         InstructionAddress := Pointer($492258);
 
         if VirtualProtect(InstructionAddress, 6, PAGE_EXECUTE_READWRITE, @OldProtect) then
@@ -1514,9 +1601,24 @@ begin
           Inc(InstructionAddress);
           InstructionAddress^ := $1D;
           Inc(InstructionAddress);
-          PDWORD(InstructionAddress)^ := $00942CC; // восстанавливаем оригинальный адрес
+          PDWORD(InstructionAddress)^ := $004942CC; // оригинальная константа 700.0f
 
           VirtualProtect(Pointer($492258), 6, OldProtect, @OldProtect);
+        end;
+
+        // И вторая fcomp-инструкция — её мы тоже теперь патчим, так что
+        // при выключении должна вернуться к оригинальному [0x4942CC].
+        InstructionAddress := Pointer($492076);
+
+        if VirtualProtect(InstructionAddress, 6, PAGE_EXECUTE_READWRITE, @OldProtect) then
+        begin
+          InstructionAddress^ := $D8;
+          Inc(InstructionAddress);
+          InstructionAddress^ := $1D;
+          Inc(InstructionAddress);
+          PDWORD(InstructionAddress)^ := $004942CC;
+
+          VirtualProtect(Pointer($492076), 6, OldProtect, @OldProtect);
         end;
 
         AddToLogFile(EngineLog, 'MaxVisibleDistance отключена, восстановлено: 800');
@@ -12054,4 +12156,3 @@ begin
 end;
 
 end.
-

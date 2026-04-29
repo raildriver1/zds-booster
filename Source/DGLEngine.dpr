@@ -48,7 +48,8 @@ uses
   SystemTime in 'Modules\SystemTime.pas',
   RA3Patches in 'Modules\RA3Patches.pas',
   CameraResetPatch in 'Modules\CameraResetPatch.pas',
-  FreecamWorldAnchor in 'Modules\FreecamWorldAnchor.pas';
+  FreecamWorldAnchor in 'Modules\FreecamWorldAnchor.pas',
+  CustomImages3D in 'Modules\CustomImages3D.pas';
 
 //Function needed for engine header
 function DLL_ver : byte; stdcall;
