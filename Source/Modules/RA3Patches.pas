@@ -31,6 +31,19 @@
 // Никаких NOP-патчей по машинному коду — только запись в data, через         //
 // IsBadReadPtr/IsBadWritePtr защиту: пока симулятор не загрузил трассу,     //
 // ничего не делаем (no-op), как только адреса валидны — патч применяется.   //
+//                                                                            //
+// 3. Опциональный NOP-патч клавиш Launcher.exe (по умолчанию ВЫКЛЮЧЕН).      //
+//    `call sub_62C404` по адресу 0x007246D5 — это вызов оригинального       //
+//    хендлера клавиш ZDsim (V/O/P/T/Y/Space/B/W/S/A/D), который пишет в     //
+//    глобалы $091D5B05/06/07, $090043B0/B1, $007499D8/DC, $0538BFD6 и т.д. //
+//    NopOriginalKeyHandler заменяет 5 байт `E8 ?? ?? ?? ??` на пять         //
+//    `90 90 90 90 90`, чтобы booster мог самостоятельно реализовать          //
+//    клавиши с расширенной логикой (как в реальной maisvendoo/ra3 DLL).     //
+//    ВНИМАНИЕ: после NOP'а ВСЕ оригинальные клавиши перестают работать —   //
+//    их обработчики (контроллер машиниста, реверс, песок, тифон, двери,    //
+//    ВУ, пантограф) надо заранее реализовать в booster, иначе игра будет   //
+//    неуправляема. По этой причине эта функция НЕ ВЫЗЫВАЕТСЯ из            //
+//    ApplyRA3PerFrame — её нужно осознанно дёрнуть из своего кода.         //
 //----------------------------------------------------------------------------//
 unit RA3Patches;
 
@@ -39,6 +52,15 @@ interface
 uses Windows, SysUtils, EngineUtils, DrawFunc3D;
 
 procedure ApplyRA3PerFrame;
+
+// Опциональный NOP-патч оригинального вызова обработчика клавиш
+// `call sub_62C404` по адресу 0x007246D5. Возвращает True если патч
+// был применён в этот вызов (или уже был применён ранее), False —
+// если VirtualProtect не сработал. Идемпотентен.
+function NopOriginalKeyHandler: Boolean;
+function IsOriginalKeyHandlerNopped: Boolean;
+// Восстанавливает оригинальные 5 байт `call sub_62C404` (если был патч).
+function RestoreOriginalKeyHandler: Boolean;
 
 implementation
 
@@ -132,6 +154,99 @@ procedure ApplyRA3PerFrame;
 begin
   TryZeroBlock;        // every frame — игра постоянно пишет туда биндинги
   LockCameraPosition;  // anchor когда freecam OFF, edge-trigger при on/off
+end;
+
+// ===========================================================================
+// Опциональный NOP-патч `call sub_62C404` (оригинальный хендлер клавиш).
+//
+// В Launcher.exe по адресу 0x007246D5 лежит инструкция `E8 rel32` (5 байт),
+// вызывающая оригинальную процедуру обработки клавиш. По спецификации она
+// читает GetAsyncKeyState(VK) и пишет в глобальные переменные. Если её
+// занопить, ZDsim перестанет реагировать на V/O/P/T/Y/Space/B/W/S/A/D
+// и эту логику нужно реализовать в booster (см. RA3.pas).
+// ===========================================================================
+const
+  ADDR_KEYHANDLER_CALL: Cardinal = $007246D5;
+  KEYHANDLER_CALL_LEN  = 5;
+
+var
+  KeyHandlerNopped:    Boolean = False;
+  KeyHandlerSavedBytes: array[0..KEYHANDLER_CALL_LEN - 1] of Byte;
+
+function IsOriginalKeyHandlerNopped: Boolean;
+begin
+  Result := KeyHandlerNopped;
+end;
+
+function NopOriginalKeyHandler: Boolean;
+var
+  target: Pointer;
+  oldProtect, dummy: DWORD;
+  i: Integer;
+begin
+  if KeyHandlerNopped then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  Result := False;
+  target := Pointer(ADDR_KEYHANDLER_CALL);
+
+  // Защита: если адрес недоступен или это не E8-call — выходим.
+  if IsBadReadPtr(target, KEYHANDLER_CALL_LEN) then Exit;
+  if PByte(target)^ <> $E8 then
+  begin
+    AddToLogFile(RA3_LOG, Format(
+      'RA3Patches: NopOriginalKeyHandler: at $%x expected E8 call, got $%x — abort',
+      [ADDR_KEYHANDLER_CALL, PByte(target)^]));
+    Exit;
+  end;
+
+  if not VirtualProtect(target, KEYHANDLER_CALL_LEN,
+                        PAGE_EXECUTE_READWRITE, oldProtect) then Exit;
+
+  // Сохраняем оригинал и забиваем NOP'ами.
+  for i := 0 to KEYHANDLER_CALL_LEN - 1 do
+    KeyHandlerSavedBytes[i] := PByte(Cardinal(target) + Cardinal(i))^;
+  for i := 0 to KEYHANDLER_CALL_LEN - 1 do
+    PByte(Cardinal(target) + Cardinal(i))^ := $90;
+
+  VirtualProtect(target, KEYHANDLER_CALL_LEN, oldProtect, dummy);
+  FlushInstructionCache(GetCurrentProcess, target, KEYHANDLER_CALL_LEN);
+
+  KeyHandlerNopped := True;
+  AddToLogFile(RA3_LOG, Format(
+    'RA3Patches: original key handler call NOP-patched at $%x (5 bytes)',
+    [ADDR_KEYHANDLER_CALL]));
+  Result := True;
+end;
+
+function RestoreOriginalKeyHandler: Boolean;
+var
+  target: Pointer;
+  oldProtect, dummy: DWORD;
+  i: Integer;
+begin
+  Result := False;
+  if not KeyHandlerNopped then Exit;
+
+  target := Pointer(ADDR_KEYHANDLER_CALL);
+  if IsBadReadPtr(target, KEYHANDLER_CALL_LEN) then Exit;
+  if not VirtualProtect(target, KEYHANDLER_CALL_LEN,
+                        PAGE_EXECUTE_READWRITE, oldProtect) then Exit;
+
+  for i := 0 to KEYHANDLER_CALL_LEN - 1 do
+    PByte(Cardinal(target) + Cardinal(i))^ := KeyHandlerSavedBytes[i];
+
+  VirtualProtect(target, KEYHANDLER_CALL_LEN, oldProtect, dummy);
+  FlushInstructionCache(GetCurrentProcess, target, KEYHANDLER_CALL_LEN);
+
+  KeyHandlerNopped := False;
+  AddToLogFile(RA3_LOG, Format(
+    'RA3Patches: original key handler call RESTORED at $%x',
+    [ADDR_KEYHANDLER_CALL]));
+  Result := True;
 end;
 
 end.

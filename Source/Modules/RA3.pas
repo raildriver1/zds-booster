@@ -25,7 +25,7 @@ var
 implementation
 
 uses
-  OpenGL, Windows, SysUtils, Classes, Variables, EngineUtils, DrawFunc3D, Advanced3D, Textures, KlubData, CheatMenu, RA3Physics;
+  OpenGL, Windows, SysUtils, Classes, MMSystem, Variables, EngineUtils, DrawFunc3D, Advanced3D, Textures, KlubData, CheatMenu, RA3Physics, RA3HintOverlay;
 
 
 const
@@ -129,6 +129,15 @@ var
   LastTState: Boolean = False;
   LastYState: Boolean = False;
   LeftDoorsOpen: Boolean = False;
+
+  // ── ЗАПУСК ДИЗЕЛЕЙ (клавиша K, двойное нажатие за 5 сек) ─────────────
+  // Стейт-машина имитирует кнопку "СТАРТ" реального РА-3: чтобы случайным
+  // нажатием не запустить дизель — нужно нажать дважды за 5 секунд.
+  // Пока дизели не запущены — тяга заблокирована (ClearVirtualController).
+  // Состояние сбрасывается при выходе из РА-3 (в DrawRA3 при !IsRA3Active).
+  RA3DieselsRunning:    Boolean  = False;     // True = дизели работают, тяга разрешена
+  LastKState:           Boolean  = False;     // Edge detection для клавиши K
+  RA3LastKPressTime:    Cardinal = 0;         // timeGetTime первого нажатия (0 = нет ожидания второго)
   LeftDoorOffset: Single = 0;
   LeftForwardOffset: Single = 0;
   DoorForwardOffset: Single = 0;
@@ -2663,6 +2672,54 @@ end;
 var
   RA3_PrevActive: Boolean = False;
 
+const
+  K_DOUBLE_PRESS_WINDOW_MS: Cardinal = 5000;  // 5 сек между нажатиями K
+
+// Обновляет стейт-машину запуска дизелей (клавиша K, двойное нажатие).
+//   * Одиночное K, дизели остановлены — запоминаем время нажатия.
+//   * Повторное K в пределах 5 сек — запускаем дизели.
+//   * Shift+K когда дизели работают — остановка.
+//   * По истечении 5 сек без второго нажатия — сброс ожидания.
+procedure UpdateDieselStartState;
+var
+  kNow: Boolean;
+  nowMs: Cardinal;
+begin
+  kNow := IsKeyDown(Ord('K'));
+  nowMs := timeGetTime;
+
+  if kNow and not LastKState then
+  begin
+    if RA3DieselsRunning then
+    begin
+      // Shift+K — остановка дизелей.
+      if IsKeyDown(VK_SHIFT) then
+      begin
+        RA3DieselsRunning := False;
+        RA3LastKPressTime := 0;
+      end;
+    end
+    else
+    begin
+      // Двойное нажатие в окне 5 сек.
+      if (RA3LastKPressTime <> 0) and
+         (nowMs - RA3LastKPressTime <= K_DOUBLE_PRESS_WINDOW_MS) then
+      begin
+        RA3DieselsRunning := True;
+        RA3LastKPressTime := 0;
+      end
+      else
+        RA3LastKPressTime := nowMs;
+    end;
+  end;
+  LastKState := kNow;
+
+  // Сброс ожидания второго нажатия по таймауту.
+  if (RA3LastKPressTime <> 0) and
+     (nowMs - RA3LastKPressTime > K_DOUBLE_PRESS_WINDOW_MS) then
+    RA3LastKPressTime := 0;
+end;
+
 procedure DrawRA3;
 var
   tNow, yNow: Boolean;
@@ -2672,7 +2729,18 @@ begin
   justEntered := isActive and not RA3_PrevActive;
   RA3_PrevActive := isActive;
 
-  if not isActive then Exit;
+  // При выходе из РА-3 — сбрасываем флаги запуска, чтобы при следующем
+  // выборе РА-3 игрок снова должен был запустить дизели.
+  if not isActive then
+  begin
+    if RA3DieselsRunning or (RA3LastKPressTime <> 0) then
+    begin
+      RA3DieselsRunning := False;
+      RA3LastKPressTime := 0;
+      LastKState := False;
+    end;
+    Exit;
+  end;
 
   // ── АВТОИНИЦИАЛИЗАЦИЯ ПРИ ВХОДЕ В РА-3 ───────────────────────────────
   if justEntered then
@@ -2693,17 +2761,29 @@ begin
   InitRA3;
   UpdateHover;
 
-  // ── ПЕРЕДАЧА RRS-STATE В ФИЗИКУ ─────────────────────────────────────
-  // Физика РА-3 получает значение НАПРЯМУЮ из RRS state-машины
-  // (mode_pos + trac_level/brake_level), минуя byte-контроллер ZDsim.
-  // GetRRSHandlePos = handle_pos ∈ [-1.1, +1.0] — тождество RRS
-  // TracController::getHandlePosition(). Умножаем на 5 чтобы попасть в
-  // [-5.5, +5.0] — формат VirtualCtrlValue в RA3Physics (там MapController
-  // делит обратно на 5 → trac_level/brake_level в [0..1]).
-  //
-  // Условие "только если ControllerAngle > 0.5" больше не нужно: при
-  // mode_pos=0 GetRRSHandlePos=0, что эквивалентно нейтрали в физике.
-  if IsRA3BoosterActive then
+  // ── КЛАВИША K — СТАРТ ДИЗЕЛЕЙ (двойное нажатие за 5 сек) ────────────────
+  // Обновляем ДО отправки контроллера в физику — чтобы в том же кадре
+  // применилась блокировка тяги.
+  UpdateDieselStartState;
+
+  // ── ПОДСКАЗКИ В ПРАВОМ НИЖНЕМ УГЛУ ──────────────────────────
+  // Собираем подсказки по всем заблокированным функциям. Рисуем позже
+  // в конце этой процедуры — поверх всех 3D-элементов.
+  ResetHints;
+  if not RA3DieselsRunning then
+  begin
+    if RA3LastKPressTime <> 0 then
+      AddHint('Нажмите K ещё раз — Запуск дизелей')
+    else
+      AddHint('Нажмите K дважды (за 5 сек) — Запуск дизелей');
+  end;
+
+  // ── ПЕРЕДАЧА RRS-STATE В ФИЗИКУ ─────────────────────────────────
+  // При остановленных дизелях — блокируем тягу независимо от того
+  // включён бустер или нет — игрок должен сначала запустить дизель.
+  if not RA3DieselsRunning then
+    ClearVirtualController
+  else if IsRA3BoosterActive then
     SetVirtualController(GetRRSHandlePos * 5.0)
   else
     ClearVirtualController;
@@ -2743,6 +2823,9 @@ begin
   // per-frame дедуплексом — её же зовут хуки для других локомотивов
   // (HookKLUB / DrawKPD3 / DrawBLOCK), и за кадр случится только один рендер.
   RenderCustomTextsAndGizmoForFrame;
+
+  // Оверлей-подсказки рисуем ПОСЛЕДНИМИ, чтобы были поверх всего.
+  RenderHints;
 end;
 
 procedure ApplyRA3BlockTransform(x, y, z, AngZ: Single);
