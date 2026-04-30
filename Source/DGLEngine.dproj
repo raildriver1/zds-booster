@@ -67,6 +67,7 @@
     <DCCReference Include="Modules\KlubData.pas" />
     <DCCReference Include="Modules\Net.pas" />
     <DCCReference Include="Modules\RA3.pas" />
+    <DCCReference Include="Modules\RA3HintOverlay.pas" />
     <DCCReference Include="Modules\RA3Physics.pas" />
     <DCCReference Include="Modules\Sound.pas" />
     <DCCReference Include="Modules\Textures.pas" />
