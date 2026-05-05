@@ -349,20 +349,22 @@ const
   CORNER_RADIUS = 12.0;
   DRAG_EXPANSION = 25.0; // Расширение окна при перетаскивании
 
-  // Современные цвета
-  COLOR_BACKGROUND = $1A1A1A;
-  COLOR_SURFACE = $2A2A2A;
-  COLOR_SURFACE_VARIANT = $343434;
-  COLOR_PRIMARY = $0078D4;
-  COLOR_PRIMARY_VARIANT = $005A9E;
-  COLOR_ACCENT = $00BCF2;
-  COLOR_ON_SURFACE = $E1E1E1;
-  COLOR_ON_PRIMARY = $FFFFFF;
-  COLOR_BORDER = $404040;
-  COLOR_BORDER_LIGHT = $505050;
-  COLOR_SUCCESS = $16C60C;
-  COLOR_WARNING = $FF8C00;
+  // Apple Dark Mode palette
+  COLOR_BACKGROUND = $1C1C1E;      // systemBackground (dark)
+  COLOR_SURFACE = $2C2C2E;         // secondarySystemBackground
+  COLOR_SURFACE_VARIANT = $3A3A3C; // tertiarySystemBackground
+  COLOR_PRIMARY = $0A84FF;         // systemBlue
+  COLOR_PRIMARY_VARIANT = $0064D2; // systemBlue (darker)
+  COLOR_ACCENT = $34C759;          // systemGreen (toggle ON)
+  COLOR_ON_SURFACE = $F5F5F7;      // label (primary text)
+  COLOR_ON_PRIMARY = $FFFFFF;      // white
+  COLOR_BORDER = $38383A;          // separator
+  COLOR_BORDER_LIGHT = $48484A;    // separator (opaque)
+  COLOR_SUCCESS = $30D158;         // systemGreen
+  COLOR_WARNING = $FF9F0A;         // systemOrange
   COLOR_SHADOW = $000000;
+  COLOR_TOGGLE_OFF = $636366;      // systemGray (toggle track OFF)
+  COLOR_SECONDARY_LABEL = $8E8E93; // secondaryLabel
 
 // === МАССИВЫ ТЕКСТОВ ДЛЯ РАЗНЫХ ЯЗЫКОВ ===
 type
@@ -718,9 +720,9 @@ end;
 // Современная отрисовка текста с тенью
 procedure DrawModernText(X, Y: Integer; Text: string; Color: Integer; Alpha: Integer = 255; Size: Single = 0.8);
 begin
-  // Тень
-  DrawText2D(0, X + 1, Y + 1, Text, COLOR_SHADOW, Alpha div 4, Size);
-  // Основной текст
+  // Subtle text shadow (Apple-style: barely visible, just for readability)
+  DrawText2D(0, X, Y + 1, Text, COLOR_SHADOW, Alpha div 6, Size);
+  // Main text
   DrawText2D(0, X, Y, Text, Color, Alpha, Size);
 end;
 
@@ -734,19 +736,20 @@ begin
   DrawRectangle2D(X, Y, Width, Height, BorderColor, Alpha div 2, False);
 end;
 
-// Отрисовка тени
+// Apple-style soft multi-layer shadow (diffused, larger spread)
 procedure DrawShadow(X, Y, Width, Height: Integer; Alpha: Integer; Intensity: Single = 1.0);
 var
-  ShadowOffset: Integer;
-  ShadowAlpha: Integer;
   i: Integer;
+  LayerAlpha: Integer;
+  Spread: Integer;
 begin
-  ShadowOffset := Round(6 * Intensity);
-  
-  for i := 0 to Round(4 * Intensity) do
+  // Multiple layers with increasing spread and decreasing opacity
+  for i := 1 to 5 do
   begin
-    ShadowAlpha := Round(Alpha * Intensity / (8 + i * 2));
-    DrawRectangle2D(X + ShadowOffset + i, Y + ShadowOffset + i, Width, Height, COLOR_SHADOW, ShadowAlpha, True);
+    Spread := Round(i * 3 * Intensity);
+    LayerAlpha := Round(Alpha * Intensity / (4 + i * 3));
+    if LayerAlpha > 0 then
+      DrawRectangle2D(X - Spread div 3, Y + Spread, Width + Spread, Height + Spread div 2, COLOR_SHADOW, LayerAlpha, True);
   end;
 end;
 
@@ -4058,29 +4061,29 @@ begin
   MenuWindow.SpawnDelay := 0.3;
 end;
 
-// Современная кнопка развертывания
+// Apple-style chevron button (▸ collapsed / ▾ expanded)
 procedure DrawModernExpandButton(X, Y: Integer; Expanded: Boolean; Alpha: Integer; HoverProgress: Single = 0.0);
 var
   CenterX, CenterY: Integer;
-  ButtonColor: Integer;
   IconColor: Integer;
-  Size: Integer;
 begin
   CenterX := X + BUTTON_SIZE div 2;
   CenterY := Y + BUTTON_SIZE div 2;
-  Size := Round(10 + HoverProgress * 2);
-  
-  ButtonColor := LerpColor(COLOR_SURFACE_VARIANT, COLOR_PRIMARY, HoverProgress);
-  IconColor := LerpColor(COLOR_ON_SURFACE, COLOR_ON_PRIMARY, HoverProgress);
-  
-  // Фон кнопки
-  DrawCircle2D_Fill(CenterX, CenterY, Size, ButtonColor, Alpha);
-  DrawCircle2D(CenterX, CenterY, Size, COLOR_BORDER_LIGHT, Alpha div 3);
-  
-  // Иконка
-  DrawLine2D(CenterX - 5, CenterY, CenterX + 5, CenterY, IconColor, Alpha, 2.0);
-  if not Expanded then
-    DrawLine2D(CenterX, CenterY - 5, CenterX, CenterY + 5, IconColor, Alpha, 2.0);
+
+  IconColor := LerpColor(COLOR_SECONDARY_LABEL, COLOR_PRIMARY, HoverProgress);
+
+  if Expanded then
+  begin
+    // Chevron down: ▾
+    DrawLine2D(CenterX - 5, CenterY - 2, CenterX, CenterY + 3, IconColor, Alpha, 2.0, True);
+    DrawLine2D(CenterX, CenterY + 3, CenterX + 5, CenterY - 2, IconColor, Alpha, 2.0, True);
+  end
+  else
+  begin
+    // Chevron right: ▸
+    DrawLine2D(CenterX - 2, CenterY - 5, CenterX + 3, CenterY, IconColor, Alpha, 2.0, True);
+    DrawLine2D(CenterX + 3, CenterY, CenterX - 2, CenterY + 5, IconColor, Alpha, 2.0, True);
+  end;
 end;
 
 // Универсальный hover-detection. Возвращает 1.0 если курсор находится
@@ -4164,41 +4167,48 @@ begin
   end;
 end;
 
-// Современный чекбокс
+// Apple-style rounded checkbox (filled circle when checked)
 procedure DrawModernCheckbox(X, Y: Integer; Text: string; Checked: Boolean; Alpha: Integer; HoverProgress: Single = 0.0);
 var
-  BgColor, BorderColor, TextColor, CheckColor: Integer;
+  CX, CY, R: Integer;
+  BgColor, CheckColor, TextColor: Integer;
 begin
+  R := 9;
+  CX := X + R;
+  CY := Y + R;
+
   if Checked then
   begin
-    BgColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, HoverProgress);
-    BorderColor := BgColor;
-    TextColor := COLOR_ON_SURFACE;
+    BgColor := LerpColor(COLOR_PRIMARY, $0A94FF, HoverProgress);
     CheckColor := COLOR_ON_PRIMARY;
+    TextColor := COLOR_ON_SURFACE;
   end
   else
   begin
-    BgColor := LerpColor(COLOR_SURFACE, COLOR_SURFACE_VARIANT, HoverProgress);
-    BorderColor := LerpColor(COLOR_BORDER, COLOR_BORDER_LIGHT, HoverProgress);
-    TextColor := COLOR_ON_SURFACE;
+    BgColor := COLOR_SURFACE;
     CheckColor := COLOR_ON_PRIMARY;
+    TextColor := LerpColor(COLOR_ON_SURFACE, COLOR_ON_PRIMARY, HoverProgress * 0.3);
   end;
-  
-  // Фон чекбокса
-  DrawStyledRect(X, Y, CHECKBOX_SIZE, CHECKBOX_SIZE, BgColor, Alpha, True, BorderColor);
-  
-  // Галочка
+
   if Checked then
   begin
-    DrawLine2D(X + 4, Y + 9, X + 7, Y + 12, CheckColor, Alpha, 2.0);
-    DrawLine2D(X + 7, Y + 12, X + 13, Y + 6, CheckColor, Alpha, 2.0);
+    // Filled blue circle
+    DrawCircle2D_Fill(CX, CY, R, BgColor, Alpha);
+    // Checkmark
+    DrawLine2D(CX - 4, CY, CX - 1, CY + 3, CheckColor, Alpha, 2.0, True);
+    DrawLine2D(CX - 1, CY + 3, CX + 4, CY - 3, CheckColor, Alpha, 2.0, True);
+  end
+  else
+  begin
+    // Empty circle with border
+    DrawCircle2D(CX, CY, R, LerpColor(COLOR_BORDER_LIGHT, COLOR_PRIMARY, HoverProgress), Alpha);
   end;
-  
-  // Текст
-  DrawModernText(X + CHECKBOX_SIZE + 10, Y - 1, Text, TextColor, Alpha, 0.75);
+
+  // Text label
+  DrawModernText(X + R * 2 + 10, Y - 1, Text, TextColor, Alpha, 0.75);
 end;
 
-// Современный слайдер
+// Apple-style slider (thin track, large rounded thumb with shadow)
 procedure DrawModernSlider(X, Y: Integer; var Slider: TSlider; Text: string; Alpha: Integer; WinScale: Single = 1.0);
 var
   Progress: Single;
@@ -4207,95 +4217,217 @@ var
   TrackColor, ActiveColor, ThumbColor: Integer;
   ThumbSize: Integer;
   ScaledWidth: Integer;
+  TrackY, TrackH: Integer;
 begin
   if Alpha <= 0 then Exit;
-  
+
   ScaledWidth := Round(SLIDER_WIDTH * WinScale);
   Progress := (Slider.Value - Slider.MinValue) / (Slider.MaxValue - Slider.MinValue);
   SliderX := X + Round(Progress * ScaledWidth);
-  
+
   ValueText := FormatValue(Slider.Value);
-  
-  // Цвета в зависимости от состояния
+
+  // Colors
   TrackColor := COLOR_SURFACE_VARIANT;
-  ActiveColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, Slider.HoverProgress);
-  ThumbColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, Slider.HoverProgress);
-  ThumbSize := Round(8 + Slider.HoverProgress * 3);
-  
-  // Заголовок и значение
-  DrawModernText(X, Y - 22, Text + ': ' + ValueText, COLOR_ON_SURFACE, Alpha, 0.7);
-  
-  // Трек слайдера
-  DrawStyledRect(X, Y + 8, ScaledWidth, 6, TrackColor, Alpha, True, COLOR_BORDER);
-  
-  // Активная часть
-  if Progress > 0 then
-    DrawStyledRect(X, Y + 8, Round(Progress * ScaledWidth), 6, ActiveColor, Alpha, True, ActiveColor);
-  
-  // Ползунок
-  DrawCircle2D_Fill(SliderX, Y + 11, ThumbSize + 2, COLOR_SURFACE, Alpha);
-  DrawCircle2D_Fill(SliderX, Y + 11, ThumbSize, ThumbColor, Alpha);
-  DrawCircle2D(SliderX, Y + 11, ThumbSize + 1, COLOR_BORDER_LIGHT, Alpha div 3);
+  ActiveColor := COLOR_PRIMARY;
+  ThumbColor := COLOR_ON_PRIMARY;
+  ThumbSize := Round(9 + Slider.HoverProgress * 2);
+
+  // Label + value (secondary label color for value)
+  DrawModernText(X, Y - 22, Text, COLOR_ON_SURFACE, Alpha, 0.7);
+  DrawModernText(X + Round(ScaledWidth * 0.7), Y - 22, ValueText, COLOR_SECONDARY_LABEL, Alpha, 0.65);
+
+  // Thin track (4px height, centered)
+  TrackH := 4;
+  TrackY := Y + 10 - TrackH div 2;
+
+  // Inactive track (full width, pill-shaped with circles on ends)
+  DrawCircle2D_Fill(X + 2, TrackY + TrackH div 2, TrackH div 2, TrackColor, Alpha);
+  DrawCircle2D_Fill(X + ScaledWidth - 2, TrackY + TrackH div 2, TrackH div 2, TrackColor, Alpha);
+  DrawRectangle2D(X + 2, TrackY, ScaledWidth - 4, TrackH, TrackColor, Alpha, True);
+
+  // Active track (left part, pill-shaped)
+  if Progress > 0.01 then
+  begin
+    DrawCircle2D_Fill(X + 2, TrackY + TrackH div 2, TrackH div 2, ActiveColor, Alpha);
+    DrawCircle2D_Fill(SliderX, TrackY + TrackH div 2, TrackH div 2, ActiveColor, Alpha);
+    if SliderX - X > 4 then
+      DrawRectangle2D(X + 2, TrackY, SliderX - X - 2, TrackH, ActiveColor, Alpha, True);
+  end;
+
+  // Thumb: shadow + white circle
+  DrawCircle2D_Fill(SliderX + 1, Y + 11, ThumbSize, COLOR_SHADOW, Alpha div 5);
+  DrawCircle2D_Fill(SliderX, Y + 10, ThumbSize, ThumbColor, Alpha);
+  DrawCircle2D(SliderX, Y + 10, ThumbSize, COLOR_BORDER, Alpha div 4);
 end;
 
-// Современная кнопка переключения
+// iOS-style pill toggle switch
+procedure DrawPillToggle(X, Y: Integer; Enabled: Boolean; Alpha: Integer; HoverProgress: Single = 0.0);
+var
+  TrackW, TrackH, TrackR: Integer;
+  TrackColor, ThumbColor: Integer;
+  ThumbX, ThumbY, ThumbR: Integer;
+  TrackAlpha: Integer;
+begin
+  TrackW := 44;
+  TrackH := 26;
+  TrackR := TrackH div 2;  // полностью скруглённые концы
+  ThumbR := 10;
+
+  // Track color: green when ON, gray when OFF
+  if Enabled then
+    TrackColor := LerpColor(COLOR_ACCENT, $30DB5B, HoverProgress)
+  else
+    TrackColor := LerpColor(COLOR_TOGGLE_OFF, COLOR_BORDER_LIGHT, HoverProgress);
+  ThumbColor := COLOR_ON_PRIMARY;
+  TrackAlpha := Round(Alpha * (0.85 + 0.15 * HoverProgress));
+
+  // Draw pill track: left circle + rect + right circle
+  DrawCircle2D_Fill(X + TrackR, Y + TrackR, TrackR, TrackColor, TrackAlpha);
+  DrawCircle2D_Fill(X + TrackW - TrackR, Y + TrackR, TrackR, TrackColor, TrackAlpha);
+  DrawRectangle2D(X + TrackR, Y, TrackW - TrackH, TrackH, TrackColor, TrackAlpha, True);
+
+  // Thumb position: left when OFF, right when ON
+  if Enabled then
+    ThumbX := X + TrackW - TrackR
+  else
+    ThumbX := X + TrackR;
+  ThumbY := Y + TrackR;
+
+  // Thumb shadow + circle
+  DrawCircle2D_Fill(ThumbX + 1, ThumbY + 1, ThumbR, COLOR_SHADOW, Alpha div 6);
+  DrawCircle2D_Fill(ThumbX, ThumbY, ThumbR, ThumbColor, Alpha);
+end;
+
+// Apple-style toggle row: text + pill switch + optional chevron
 procedure DrawModernToggle(X, Y: Integer; Text: string; Enabled: Boolean; Alpha: Integer; HasExpandButton: Boolean = False; ExpandButtonX: Integer = 0; Expanded: Boolean = False; HoverProgress: Single = 0.0);
 var
-  BgColor, BorderColor, TextColor: Integer;
-  TextX: Integer;
+  TextColor: Integer;
+  RowAlpha: Integer;
 begin
-  if Enabled then
-  begin
-    BgColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, HoverProgress);
-    BorderColor := BgColor;
-    TextColor := COLOR_ON_PRIMARY;
-  end
+  // Subtle row background on hover
+  RowAlpha := Round(Alpha * HoverProgress * 0.08);
+  if RowAlpha > 0 then
+    DrawRectangle2D(X, Y, 240, ITEM_HEIGHT, COLOR_ON_SURFACE, RowAlpha, True);
+
+  // Text label (left side)
+  TextColor := LerpColor(COLOR_ON_SURFACE, COLOR_ON_PRIMARY, HoverProgress * 0.3);
+  DrawModernText(X + 4, Y + 6, Text, TextColor, Alpha, 0.8);
+
+  // iOS pill toggle (right side, before expand button)
+  if HasExpandButton then
+    DrawPillToggle(X + 155, Y + 3, Enabled, Alpha, HoverProgress)
   else
-  begin
-    BgColor := LerpColor(COLOR_SURFACE, COLOR_SURFACE_VARIANT, HoverProgress);
-    BorderColor := LerpColor(COLOR_BORDER, COLOR_BORDER_LIGHT, HoverProgress);
-    TextColor := LerpColor(COLOR_ON_SURFACE, COLOR_ON_SURFACE, HoverProgress);
-  end;
-  
-  // Фон кнопки
-  DrawStyledRect(X, Y, 240, ITEM_HEIGHT, BgColor, Alpha, True, BorderColor);
-  
-  // Текст
-  TextX := X + 16;
-  DrawModernText(TextX, Y + 6, Text, TextColor, Alpha, 0.8);
-  
-  // Кнопка развертывания
+    DrawPillToggle(X + 185, Y + 3, Enabled, Alpha, HoverProgress);
+
+  // Chevron expand button
   if HasExpandButton then
     DrawModernExpandButton(ExpandButtonX, Y + 6, Expanded, Alpha, HoverProgress);
 end;
 
-// Современная кнопка языка
+// Apple-style segmented control button (pill-shaped)
 procedure DrawModernLanguageButton(X, Y, Width, Height: Integer; Text: string; Alpha: Integer; Selected: Boolean = False; HoverProgress: Single = 0.0);
 var
-  BgColor, BorderColor, TextColor: Integer;
+  BgColor, TextColor: Integer;
   TextWidth, TextX: Integer;
+  R: Integer;
 begin
+  R := Height div 2;
+
   if Selected then
   begin
-    BgColor := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, HoverProgress);
-    BorderColor := BgColor;
+    BgColor := COLOR_PRIMARY;
     TextColor := COLOR_ON_PRIMARY;
   end
   else
   begin
     BgColor := LerpColor(COLOR_SURFACE, COLOR_SURFACE_VARIANT, HoverProgress);
-    BorderColor := LerpColor(COLOR_BORDER, COLOR_BORDER_LIGHT, HoverProgress);
-    TextColor := COLOR_ON_SURFACE;
+    TextColor := LerpColor(COLOR_SECONDARY_LABEL, COLOR_ON_SURFACE, HoverProgress);
   end;
-  
-  // Фон кнопки
-  DrawStyledRect(X, Y, Width, Height, BgColor, Alpha, True, BorderColor);
-  
-  // Центрированный текст
+
+  // Pill-shaped background: two semicircles + rectangle
+  DrawCircle2D_Fill(X + R, Y + R, R, BgColor, Alpha);
+  DrawCircle2D_Fill(X + Width - R, Y + R, R, BgColor, Alpha);
+  DrawRectangle2D(X + R, Y, Width - Height, Height, BgColor, Alpha, True);
+
+  // Outline when not selected
+  if not Selected then
+  begin
+    DrawCircle2D(X + R, Y + R, R, COLOR_BORDER, Alpha div 2);
+    DrawCircle2D(X + Width - R, Y + R, R, COLOR_BORDER, Alpha div 2);
+  end;
+
+  // Centered text
   TextWidth := Length(Text) * 8;
   TextX := X + (Width - TextWidth) div 2;
-  
   DrawModernText(TextX, Y + (Height - 20) div 2, Text, TextColor, Alpha, 0.75);
+end;
+
+// === HEADER ICONS (SF Symbols style, drawn with GL primitives) ===
+// WindowType: 0=RENDER(camera), 1=WORLD(globe), 2=LOCOMOTIVE(gauge), 3=MENU(gear)
+procedure DrawWindowIcon(X, Y, Size: Integer; WindowType: Integer; Color: Integer; Alpha: Integer);
+var
+  CX, CY, R: Integer;
+  i: Integer;
+  Angle: Single;
+begin
+  CX := X + Size div 2;
+  CY := Y + Size div 2;
+  R := Size div 2 - 2;
+
+  case WindowType of
+    0: // Camera / lens icon
+    begin
+      DrawCircle2D(CX, CY, R, Color, Alpha);
+      DrawCircle2D(CX, CY, R - 4, Color, Alpha);
+      DrawCircle2D_Fill(CX, CY, 3, Color, Alpha);
+      // Small dot top-right (flash indicator)
+      DrawCircle2D_Fill(CX + R - 2, CY - R + 2, 2, Color, Alpha);
+    end;
+    1: // Globe icon
+    begin
+      DrawCircle2D(CX, CY, R, Color, Alpha);
+      // Horizontal line
+      DrawLine2D(CX - R, CY, CX + R, CY, Color, Alpha, 1.0, True);
+      // Vertical ellipse (meridian) - approximate with lines
+      DrawLine2D(CX, CY - R, CX - 3, CY - R div 2, Color, Alpha, 1.0, True);
+      DrawLine2D(CX - 3, CY - R div 2, CX - 3, CY + R div 2, Color, Alpha, 1.0, True);
+      DrawLine2D(CX - 3, CY + R div 2, CX, CY + R, Color, Alpha, 1.0, True);
+      DrawLine2D(CX, CY - R, CX + 3, CY - R div 2, Color, Alpha, 1.0, True);
+      DrawLine2D(CX + 3, CY - R div 2, CX + 3, CY + R div 2, Color, Alpha, 1.0, True);
+      DrawLine2D(CX + 3, CY + R div 2, CX, CY + R, Color, Alpha, 1.0, True);
+    end;
+    2: // Speed gauge / train
+    begin
+      // Arc (top half of circle)
+      DrawCircle2D(CX, CY, R, Color, Alpha);
+      // Needle pointing upper-right
+      DrawLine2D(CX, CY, CX + R - 3, CY - R + 4, Color, Alpha, 2.0, True);
+      // Center dot
+      DrawCircle2D_Fill(CX, CY, 3, Color, Alpha);
+      // Small tick marks
+      DrawLine2D(CX - R + 1, CY, CX - R + 4, CY, Color, Alpha, 1.5, True);
+      DrawLine2D(CX + R - 1, CY, CX + R - 4, CY, Color, Alpha, 1.5, True);
+      DrawLine2D(CX, CY - R + 1, CX, CY - R + 4, Color, Alpha, 1.5, True);
+    end;
+    3: // Gear / settings icon
+    begin
+      DrawCircle2D(CX, CY, R - 3, Color, Alpha);
+      DrawCircle2D(CX, CY, R - 6, COLOR_BACKGROUND, Alpha);
+      // 6 gear teeth (small lines radiating out)
+      for i := 0 to 5 do
+      begin
+        Angle := i * (PI / 3);
+        DrawLine2D(
+          CX + Round((R - 4) * cos(Angle)),
+          CY + Round((R - 4) * sin(Angle)),
+          CX + Round((R) * cos(Angle)),
+          CY + Round((R) * sin(Angle)),
+          Color, Alpha, 2.5, True);
+      end;
+      DrawCircle2D_Fill(CX, CY, 3, Color, Alpha);
+    end;
+  end;
 end;
 
 // Главная функция отрисовки окна с transform эффектами
@@ -4316,8 +4448,8 @@ function SK_ALS: string;         begin try Result := IntToStr(GetALS); except Re
 
 procedure DrawDevRow(X, Y: Integer; const Caption, Value: string; Alpha: Integer; WinScale: Single);
 begin
-  DrawModernText(X, Y, Caption, COLOR_ON_SURFACE, Alpha, 0.65 * WinScale);
-  DrawModernText(X + Round(90 * WinScale), Y, Value, COLOR_ACCENT, Alpha, 0.65 * WinScale);
+  DrawModernText(X, Y, Caption, COLOR_SECONDARY_LABEL, Alpha, 0.65 * WinScale);
+  DrawModernText(X + Round(90 * WinScale), Y, Value, COLOR_PRIMARY, Alpha, 0.65 * WinScale);
 end;
 
 // === Высота Developer-секции ===
@@ -4562,9 +4694,9 @@ begin
   // --- Кнопка Open Dev Editor (фуллскрин) ---
   if CurY > MaxY then Exit;
   DrawStyledRect(X, CurY, Round(190 * WinScale), Round(26 * WinScale),
-    COLOR_ACCENT, Alpha, True, COLOR_PRIMARY_VARIANT);
+    COLOR_PRIMARY, Alpha, True, COLOR_PRIMARY_VARIANT);
   DrawModernText(X + Round(20 * WinScale), CurY + Round(6 * WinScale),
-    'Open Full Dev Editor →', COLOR_ON_PRIMARY, Alpha, 0.7);
+    'Open Full Dev Editor', COLOR_ON_PRIMARY, Alpha, 0.7);
   Inc(CurY, Round((26 + 8) * WinScale));
 
   // --- Заголовок Custom Texts + кнопка [+ Add] ---
@@ -4685,7 +4817,7 @@ var
   ScaledWidth, ScaledHeight: Integer;
   ScaledX, ScaledY: Integer;
   OffsetX, OffsetY: Integer;
-  HeaderGradientStart, HeaderGradientEnd: Integer;
+  HeaderGradientStart: Integer;
   bilIdx: Integer;
   // Transform координаты
   TransformX1, TransformY1, TransformX2, TransformY2: Integer;
@@ -4820,21 +4952,27 @@ begin
   // === СОВРЕМЕННАЯ ТЕНЬ ===
   DrawShadow(ScaledX, ScaledY, ScaledWidth, ScaledHeight, Round(Win.ShadowIntensity * Alpha), Win.ShadowIntensity);
   
-//  // === ГРАДИЕНТНЫЙ ЗАГОЛОВОК ===
-  HeaderGradientStart := LerpColor(COLOR_PRIMARY, COLOR_ACCENT, 0.3);
-  HeaderGradientEnd := LerpColor(COLOR_PRIMARY_VARIANT, COLOR_PRIMARY, 0.2);
-  
-  // Основной фон заголовка
-  DrawStyledRect(ScaledX, ScaledY, ScaledWidth, Round(HEADER_HEIGHT * Win.Scale), HeaderGradientStart, Alpha, True, COLOR_BORDER_LIGHT);
-  
-  // Имитация градиента через несколько слоев
-  //DrawStyledRect(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale) - 8, ScaledWidth, 8, HeaderGradientEnd, Alpha div 2, True, 0);
+  // === macOS-STYLE HEADER (subtle, translucent) ===
+  HeaderGradientStart := LerpColor(COLOR_SURFACE_VARIANT, COLOR_SURFACE, 0.5);
 
-  // Текст заголовка
-  DrawModernText(ScaledX + Round(16 * Win.Scale), ScaledY + Round(12 * Win.Scale), Win.Title, COLOR_ON_PRIMARY, Alpha, 0.9);
+  // Header background — frosted dark, no harsh borders
+  DrawRectangle2D(ScaledX, ScaledY, ScaledWidth, Round(HEADER_HEIGHT * Win.Scale), HeaderGradientStart, Round(Alpha * 0.92), True);
+  // Thin bottom separator
+  DrawLine2D(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale),
+             ScaledX + ScaledWidth, ScaledY + Round(HEADER_HEIGHT * Win.Scale),
+             COLOR_BORDER, Alpha div 2, 1.0, False);
+
+  // Window icon (left)
+  DrawWindowIcon(ScaledX + Round(10 * Win.Scale), ScaledY + Round(9 * Win.Scale),
+    Round(24 * Win.Scale), WindowType, COLOR_PRIMARY, Alpha);
+
+  // Title text (after icon)
+  DrawModernText(ScaledX + Round(38 * Win.Scale), ScaledY + Round(12 * Win.Scale), Win.Title, COLOR_ON_SURFACE, Alpha, 0.85);
   
-  // === ТЕЛО ОКНА ===
-  DrawStyledRect(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale), ScaledWidth, ScaledHeight - Round(HEADER_HEIGHT * Win.Scale), COLOR_BACKGROUND, Alpha, True, COLOR_BORDER);
+  // === ТЕЛО ОКНА (translucent, minimal border) ===
+  DrawRectangle2D(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale), ScaledWidth, ScaledHeight - Round(HEADER_HEIGHT * Win.Scale), COLOR_BACKGROUND, Round(Alpha * 0.88), True);
+  // Subtle outer frame (entire window)
+  DrawRectangle2D(ScaledX, ScaledY, ScaledWidth, ScaledHeight, COLOR_BORDER, Alpha div 3, False);
   
   ContentY := ScaledY + Round(HEADER_HEIGHT * Win.Scale) + Round(MARGIN * Win.Scale);
   
@@ -4854,8 +4992,8 @@ begin
       begin
         SectionHeight := Round(160 * Settings.FreecamSection.AnimProgress * Win.Scale);
 
-        DrawStyledRect(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
-          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+        DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
 
         if SectionHeight > Round(40 * Win.Scale) then
         begin
@@ -4899,8 +5037,8 @@ begin
       begin
         SectionHeight := Round(200 * Settings.MainCameraSection.AnimProgress * Win.Scale);
 
-        DrawStyledRect(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
-          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+        DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
 
         if SectionHeight > Round(40 * Win.Scale) then
         begin
@@ -4958,8 +5096,8 @@ begin
       begin
         SectionHeight := Round(GetPostFXContentHeight * Settings.PostFXSection.AnimProgress * Win.Scale);
 
-        DrawStyledRect(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
-          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+        DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
 
         if SectionHeight > Round(POSTFX_PAD_TOP * Win.Scale) then
           DrawPostFXToggles(
@@ -4984,8 +5122,8 @@ begin
         if Settings.FreecamCollisionEnabled then
           SectionHeight := SectionHeight + Round(30 * Settings.FreeWalkSection.AnimProgress * Win.Scale);
 
-        DrawStyledRect(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
-          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+        DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
 
         // Коллизия DMD checkbox
         if SectionHeight > Round(10 * Win.Scale) then
@@ -5042,8 +5180,8 @@ begin
       begin
         SectionHeight := Round(180 * Settings.MaxVisibleDistanceSection.AnimProgress * Win.Scale);
 
-        DrawStyledRect(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
-          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+        DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
 
         if SectionHeight > Round(40 * Win.Scale) then
         begin
@@ -5162,37 +5300,33 @@ begin
   glPopMatrix;
 end;
 
-// Современная информационная панель
+// Apple-style floating info bar (pill-shaped, translucent)
 procedure DrawModernInfoBar;
 var
   Alpha, BarWidth, BarHeight, BarX, BarY: Integer;
   InfoText: string;
-  GradientColor1, GradientColor2: Integer;
+  R: Integer;
 begin
-  Alpha := Round(RenderWindow.Alpha * 200); // Немного прозрачнее чем окна
+  Alpha := Round(RenderWindow.Alpha * 180);
   if Alpha <= 0 then Exit;
-  
+
   InfoText := GetText('InfoText');
-  BarWidth := 400;
-  BarHeight := 38;
+  BarWidth := 380;
+  BarHeight := 34;
   BarX := 16;
   BarY := InitResY - BarHeight - 16;
-  
-  GradientColor1 := COLOR_SURFACE;
-  GradientColor2 := COLOR_SURFACE_VARIANT;
-  
-  // Тень
-  DrawShadow(BarX, BarY, BarWidth, BarHeight, Alpha div 2, 0.6);
-  
-  // Основной фон с градиентом
-  DrawStyledRect(BarX, BarY, BarWidth, BarHeight, GradientColor1, Alpha, True, COLOR_BORDER_LIGHT);
-  DrawStyledRect(BarX, BarY + BarHeight - 8, BarWidth, 8, GradientColor2, Alpha div 2, True, 0);
-  
-  // Иконка (простая точка)
-  DrawCircle2D_Fill(BarX + 16, BarY + BarHeight div 2, 5, COLOR_ACCENT, Alpha);
-  
-  // Текст
-  DrawModernText(BarX + 32, BarY + 9, InfoText, COLOR_ON_SURFACE, Alpha, 0.8);
+  R := BarHeight div 2;
+
+  // Pill-shaped background (frosted dark)
+  DrawCircle2D_Fill(BarX + R, BarY + R, R, COLOR_SURFACE_VARIANT, Round(Alpha * 0.85));
+  DrawCircle2D_Fill(BarX + BarWidth - R, BarY + R, R, COLOR_SURFACE_VARIANT, Round(Alpha * 0.85));
+  DrawRectangle2D(BarX + R, BarY, BarWidth - BarHeight, BarHeight, COLOR_SURFACE_VARIANT, Round(Alpha * 0.85), True);
+
+  // Accent dot
+  DrawCircle2D_Fill(BarX + 18, BarY + BarHeight div 2, 4, COLOR_PRIMARY, Alpha);
+
+  // Text
+  DrawModernText(BarX + 30, BarY + 8, InfoText, COLOR_ON_SURFACE, Round(Alpha * 0.9), 0.75);
 end;
 
 procedure DrawCheatMenu; stdcall;
