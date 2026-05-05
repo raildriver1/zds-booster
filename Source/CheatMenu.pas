@@ -3967,8 +3967,8 @@ begin
   RenderWindow.Title := GetText('RenderTitle');
   RenderWindow.X := 50;
   RenderWindow.Y := 50;
-  RenderWindow.Width := 280;
-  RenderWindow.OriginalWidth := 280;
+  RenderWindow.Width := 310;
+  RenderWindow.OriginalWidth := 310;
   RenderWindow.Height := 120;
   RenderWindow.Alpha := 0.0;
   RenderWindow.TargetAlpha := 1.0;
@@ -3991,8 +3991,8 @@ begin
   WorldWindow.Title := GetText('WorldTitle');
   WorldWindow.X := 350;
   WorldWindow.Y := 50;
-  WorldWindow.Width := 280;
-  WorldWindow.OriginalWidth := 280;
+  WorldWindow.Width := 310;
+  WorldWindow.OriginalWidth := 310;
   WorldWindow.Height := 170;
   WorldWindow.Alpha := 0.0;
   WorldWindow.TargetAlpha := 1.0;
@@ -4015,8 +4015,8 @@ begin
   LocomotiveWindow.Title := GetText('LocomotiveTitle');
   LocomotiveWindow.X := 650;
   LocomotiveWindow.Y := 50;
-  LocomotiveWindow.Width := 280;
-  LocomotiveWindow.OriginalWidth := 280;
+  LocomotiveWindow.Width := 310;
+  LocomotiveWindow.OriginalWidth := 310;
   LocomotiveWindow.Height := 100;
   LocomotiveWindow.Alpha := 0.0;
   LocomotiveWindow.TargetAlpha := 1.0;
@@ -4308,21 +4308,21 @@ begin
   // Subtle row background on hover
   RowAlpha := Round(Alpha * HoverProgress * 0.08);
   if RowAlpha > 0 then
-    DrawRectangle2D(X, Y, 240, ITEM_HEIGHT, COLOR_ON_SURFACE, RowAlpha, True);
+    DrawRectangle2D(X, Y, 260, ITEM_HEIGHT, COLOR_ON_SURFACE, RowAlpha, True);
 
   // Text label (left side)
   TextColor := LerpColor(COLOR_ON_SURFACE, COLOR_ON_PRIMARY, HoverProgress * 0.3);
-  DrawModernText(X + 4, Y + 6, Text, TextColor, Alpha, 0.8);
+  DrawModernText(X + 4, Y + 6, Text, TextColor, Alpha, 0.75);
 
-  // iOS pill toggle (right side, before expand button)
+  // iOS pill toggle (right side)
   if HasExpandButton then
-    DrawPillToggle(X + 155, Y + 3, Enabled, Alpha, HoverProgress)
+    DrawPillToggle(X + 185, Y + 3, Enabled, Alpha, HoverProgress)
   else
-    DrawPillToggle(X + 185, Y + 3, Enabled, Alpha, HoverProgress);
+    DrawPillToggle(X + 210, Y + 3, Enabled, Alpha, HoverProgress);
 
   // Chevron expand button
   if HasExpandButton then
-    DrawModernExpandButton(ExpandButtonX, Y + 6, Expanded, Alpha, HoverProgress);
+    DrawModernExpandButton(ExpandButtonX, Y + 4, Expanded, Alpha, HoverProgress);
 end;
 
 // Apple-style segmented control button (pill-shaped)
@@ -4489,7 +4489,7 @@ const
   POSTFX_TOGGLE_COUNT = 9;
   POSTFX_INNER_X    = MARGIN;       // inner toggles aligned with the header
   POSTFX_BG_X       = MARGIN - 4;   // background panel — slight outset
-  POSTFX_BG_W       = 240 + 24;     // wide enough to wrap the toggles
+  POSTFX_BG_W       = 270 + 24;     // wide enough to wrap the toggles
 
 function GetPostFXContentHeight: Integer;
 begin
@@ -4847,7 +4847,7 @@ begin
     begin
       TotalHeight := TotalHeight + ITEM_HEIGHT;
       if Settings.FreecamSection.AnimProgress > 0.01 then
-        TotalHeight := TotalHeight + Round(160 * Settings.FreecamSection.AnimProgress) + MARGIN;
+        TotalHeight := TotalHeight + Round(170 * Settings.FreecamSection.AnimProgress) + MARGIN;
       
       TotalHeight := TotalHeight + ITEM_HEIGHT;
       if Settings.MainCameraSection.AnimProgress > 0.01 then
@@ -4969,8 +4969,8 @@ begin
   // Title text (after icon)
   DrawModernText(ScaledX + Round(38 * Win.Scale), ScaledY + Round(12 * Win.Scale), Win.Title, COLOR_ON_SURFACE, Alpha, 0.85);
   
-  // === ТЕЛО ОКНА (translucent, minimal border) ===
-  DrawRectangle2D(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale), ScaledWidth, ScaledHeight - Round(HEADER_HEIGHT * Win.Scale), COLOR_BACKGROUND, Round(Alpha * 0.88), True);
+  // === ТЕЛО ОКНА (solid, minimal border) ===
+  DrawRectangle2D(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale), ScaledWidth, ScaledHeight - Round(HEADER_HEIGHT * Win.Scale), COLOR_BACKGROUND, Alpha, True);
   // Subtle outer frame (entire window)
   DrawRectangle2D(ScaledX, ScaledY, ScaledWidth, ScaledHeight, COLOR_BORDER, Alpha div 3, False);
   
@@ -4980,9 +4980,9 @@ begin
     0: // RENDER окно
     begin
       // Freecam
-      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      ExpandButtonX := ScaledX + Round(250 * Win.Scale);
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FreeCameraText'), Settings.Freecam, Alpha, True, ExpandButtonX, Settings.FreecamSection.Expanded,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
       // Freecam секция. Контент сдвинут на CONTENT_TEXT_INSET (= 16)
@@ -4990,45 +4990,45 @@ begin
       // header'а (у DrawModernToggle тоже +16 px паддинг до текста).
       if Settings.FreecamSection.AnimProgress > 0.01 then
       begin
-        SectionHeight := Round(160 * Settings.FreecamSection.AnimProgress * Win.Scale);
+        SectionHeight := Round(170 * Settings.FreecamSection.AnimProgress * Win.Scale);
 
         DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
           Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
 
-        if SectionHeight > Round(40 * Win.Scale) then
+        if SectionHeight > Round(50 * Win.Scale) then
         begin
-          // Базовая скорость
+          // Базовая скорость (offset 35 so label at Y-22 = 13px from top)
           Settings.BasespeedSlider.HoverProgress :=
-            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round((25 - 22) * Win.Scale),
+            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round((35 - 22) * Win.Scale),
                      Round((SLIDER_WIDTH + 30) * Win.Scale), Round(40 * Win.Scale));
-          DrawModernSlider(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.BasespeedSlider, GetText('BaseSpeedText'), Alpha, Win.Scale);
+          DrawModernSlider(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(35 * Win.Scale), Settings.BasespeedSlider, GetText('BaseSpeedText'), Alpha, Win.Scale);
 
           // Быстрая скорость
           Settings.FastspeedSlider.HoverProgress :=
-            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round((75 - 22) * Win.Scale),
+            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round((85 - 22) * Win.Scale),
                      Round((SLIDER_WIDTH + 30) * Win.Scale), Round(40 * Win.Scale));
-          DrawModernSlider(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(75 * Win.Scale), Settings.FastspeedSlider, GetText('FastSpeedText'), Alpha, Win.Scale);
+          DrawModernSlider(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(85 * Win.Scale), Settings.FastspeedSlider, GetText('FastSpeedText'), Alpha, Win.Scale);
         end;
 
         // Комбобокс управления: WASD / Стрелочки (с hover)
-        if SectionHeight > Round(120 * Win.Scale) then
+        if SectionHeight > Round(130 * Win.Scale) then
         begin
-          if HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(115 * Win.Scale),
+          if HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(125 * Win.Scale),
                       Round(200 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)) > 0.5 then
-            DrawText2D(0, ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(120 * Win.Scale),
+            DrawText2D(0, ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(130 * Win.Scale),
               '< ' + FreecamControlNames[Settings.FreecamControlMode] + ' >', $FFFFFF, Alpha, 0.7)
           else
-            DrawText2D(0, ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(120 * Win.Scale),
-              '< ' + FreecamControlNames[Settings.FreecamControlMode] + ' >', $AAAAAA, Alpha, 0.7);
+            DrawText2D(0, ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(130 * Win.Scale),
+              '< ' + FreecamControlNames[Settings.FreecamControlMode] + ' >', COLOR_SECONDARY_LABEL, Alpha, 0.7);
         end;
 
         Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
       
       // Main Camera
-      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      ExpandButtonX := ScaledX + Round(250 * Win.Scale);
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MainCameraText'), Settings.MainCamera, Alpha, True, ExpandButtonX, Settings.MainCameraSection.Expanded,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
       // Main Camera секция — контент сдвинут на +16 чтобы выровнять текст
@@ -5080,12 +5080,12 @@ begin
       // переключает все 9 эффектов разом (с запоминанием в PostFXSaved
       // для последующего восстановления); правый шеврон — независимое
       // expand/collapse секции.
-      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      ExpandButtonX := ScaledX + Round(250 * Win.Scale);
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY,
         GetText('PostFXText'), Settings.PostFXEnable, Alpha,
         True, ExpandButtonX,
         Settings.PostFXSection.Expanded,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
       // Развёрнутая секция с 9 toggle (FXAA, Bloom, Tonemap, Sharpen,
@@ -5109,10 +5109,10 @@ begin
       end;
 
       // Free Walk (раскрывающийся toggle)
-      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      ExpandButtonX := ScaledX + Round(250 * Win.Scale);
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FreeWalkText'), Settings.FreecamWalkEnabled, Alpha,
         True, ExpandButtonX, Settings.FreeWalkSection.Expanded,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
       // Free Walk секция (Коллизия + комбо)
@@ -5148,7 +5148,7 @@ begin
       // BIL-V Server
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('BilServerText'), BilServerRunning, Alpha,
         False, 0, False,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
       // BIL-V addresses
@@ -5169,9 +5169,9 @@ begin
     1: // WORLD окно
     begin
       // Max Visible Distance
-      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      ExpandButtonX := ScaledX + Round(250 * Win.Scale);
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MaxDistanceText'), Settings.MaxVisibleDistance, Alpha, True, ExpandButtonX, Settings.MaxVisibleDistanceSection.Expanded,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
       // Max Visible Distance секция — контент сдвинут на +16 для
@@ -5208,7 +5208,7 @@ begin
       // Mega Realism
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MegaRealismText'), Settings.MegaRealism, Alpha,
         False, 0, False,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
       // City selector (visible only when MegaRealism is on)
@@ -5227,7 +5227,7 @@ begin
       // New Sky
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('NewSkyText'), Settings.NewSky, Alpha,
         False, 0, False,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
       // System Time — подмена AbsoluteTime симулятора на Windows time.
@@ -5235,7 +5235,7 @@ begin
       // переключение сразу применяется без рестарта.
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('SystemTimeText'), Settings.SystemTimeEnable, Alpha,
         False, 0, False,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
     end;
@@ -5245,19 +5245,19 @@ begin
       // 160 БЛОК
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('Block160Text'), Settings.Block160, Alpha,
         False, 0, False,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
       // Исправления КЛУБ
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('ClubFixesText'), Settings.NewClubPositions, Alpha,
         False, 0, False,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
       // Меню разработчика (toggle + expand)
-      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      ExpandButtonX := ScaledX + Round(250 * Win.Scale);
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('DeveloperMenuText'), Settings.DeveloperMenu, Alpha, True, ExpandButtonX, Settings.DeveloperSection.Expanded,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
       if Settings.DeveloperSection.AnimProgress > 0.01 then
@@ -5275,7 +5275,7 @@ begin
       // RA3 подсветка
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('RA3HoverText'), Settings.RA3Hover, Alpha,
         False, 0, False,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
     end;
     
     3: // MENU окно
@@ -5843,14 +5843,14 @@ begin
     end;
     
     // Freecam expand button
-    if InRect(X, Y, RenderWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
+    if InRect(X, Y, RenderWindow.X + 250, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
       Settings.FreecamSection.Expanded := not Settings.FreecamSection.Expanded;
       Exit;
     end;
     
     // Freecam toggle
-    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       Settings.Freecam := not Settings.Freecam;
       if Settings.Freecam then Settings.FreecamSection.Expanded := True;
@@ -5867,24 +5867,24 @@ begin
     FreecamSectionY := ContentY;
     if Settings.FreecamSection.AnimProgress > 0.01 then
     begin
-      SectionHeight := Round(160 * Settings.FreecamSection.AnimProgress);
-      if SectionHeight > 40 then
+      SectionHeight := Round(170 * Settings.FreecamSection.AnimProgress);
+      if SectionHeight > 50 then
       begin
         // Слайдер базовой скорости
-        if InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 15, SLIDER_WIDTH + 30, 30) then
+        if InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 25, SLIDER_WIDTH + 30, 30) then
         begin
           StartSliderDrag(Settings.BasespeedSlider, X);
           Exit;
         end;
         // Слайдер быстрой скорости
-        if InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 65, SLIDER_WIDTH + 30, 30) then
+        if InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 75, SLIDER_WIDTH + 30, 30) then
         begin
           StartSliderDrag(Settings.FastspeedSlider, X);
           Exit;
         end;
       end;
       // Комбобокс управления: WASD / Стрелочки
-      if (SectionHeight > 120) and InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 110, 200, ITEM_HEIGHT) then
+      if (SectionHeight > 130) and InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 120, 200, ITEM_HEIGHT) then
       begin
         Settings.FreecamControlMode := (Settings.FreecamControlMode + 1) mod FREECAM_CONTROL_COUNT;
         FreecamControlMode := Settings.FreecamControlMode;
@@ -5895,14 +5895,14 @@ begin
     end;
     
     // Main Camera expand button
-    if InRect(X, Y, RenderWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
+    if InRect(X, Y, RenderWindow.X + 250, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
       Settings.MainCameraSection.Expanded := not Settings.MainCameraSection.Expanded;
       Exit;
     end;
     
     // Main Camera toggle
-    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       Settings.MainCamera := not Settings.MainCamera;
       if Settings.MainCamera then 
@@ -5992,13 +5992,13 @@ begin
     //   * шеврон  → expand/collapse секции, не трогает enable;
     //   * label    → master ON/OFF (через SetPostFXMasterEnabled, что
     //                 синхронизирует все 9 индивидуальных toggle).
-    if InRect(X, Y, RenderWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
+    if InRect(X, Y, RenderWindow.X + 250, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
       Settings.PostFXSection.Expanded := not Settings.PostFXSection.Expanded;
       Exit;
     end;
 
-    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       SetPostFXMasterEnabled(not Settings.PostFXEnable);
       if Settings.PostFXEnable then
@@ -6044,14 +6044,14 @@ begin
     end;
 
     // Free Walk expand button
-    if InRect(X, Y, RenderWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
+    if InRect(X, Y, RenderWindow.X + 250, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
       Settings.FreeWalkSection.Expanded := not Settings.FreeWalkSection.Expanded;
       Exit;
     end;
 
     // Free Walk toggle
-    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       Settings.FreecamWalkEnabled := not Settings.FreecamWalkEnabled;
       FreecamWalkMode := Settings.FreecamWalkEnabled;
@@ -6091,7 +6091,7 @@ begin
     end;
 
     // BIL-V Server toggle
-    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       if BilServerRunning then
         BilServer_Stop
@@ -6118,14 +6118,14 @@ begin
     end;
     
     // Max Visible Distance expand button
-    if InRect(X, Y, WorldWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
+    if InRect(X, Y, WorldWindow.X + 250, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
       Settings.MaxVisibleDistanceSection.Expanded := not Settings.MaxVisibleDistanceSection.Expanded;
       Exit;
     end;
     
     // Max Visible Distance toggle
-    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       Settings.MaxVisibleDistance := not Settings.MaxVisibleDistance;
       if Settings.MaxVisibleDistance then 
@@ -6190,7 +6190,7 @@ begin
     end;
     
     // Mega Realism toggle
-    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       Settings.MegaRealism := not Settings.MegaRealism;
       SaveConfig;
@@ -6202,7 +6202,7 @@ begin
     // City selector (click cycles to next city)
     if Settings.MegaRealism then
     begin
-      if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+      if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
       begin
         Settings.MegaRealismCityIndex := (Settings.MegaRealismCityIndex + 1) mod MEGA_REALISM_CITY_COUNT;
         SaveConfig;
@@ -6213,7 +6213,7 @@ begin
     end;
 
     // New Sky toggle
-    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       Settings.NewSky := not Settings.NewSky;
       SaveConfig;
@@ -6225,7 +6225,7 @@ begin
 
     // System Time toggle — пишет в InitSystemTimeEnable, который
     // SystemTime.pas читает на каждый кадр.
-    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       Settings.SystemTimeEnable := not Settings.SystemTimeEnable;
       InitSystemTimeEnable := Settings.SystemTimeEnable;
@@ -6251,7 +6251,7 @@ begin
     end;
 
     // 160 БЛОК
-    if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       Settings.Block160 := not Settings.Block160;
       BilBlock160 := Settings.Block160;
@@ -6261,7 +6261,7 @@ begin
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
 
     // Исправления КЛУБ
-    if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       Settings.NewClubPositions := not Settings.NewClubPositions;
       if Settings.NewClubPositions then
@@ -6277,7 +6277,7 @@ begin
     //   обе превратились в одно действие — «открыть фуллскрин Dev Editor».
     //   Inline-панель (Speed/Limit/Target/Distance + Custom texts) больше не
     //   разворачиваем — пользователь хочет сразу редактор.
-    if InRect(X, Y, LocomotiveWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) or
+    if InRect(X, Y, LocomotiveWindow.X + 250, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) or
        InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
     begin
       Settings.DeveloperMenu := True;
@@ -6298,7 +6298,7 @@ begin
 
     // RA3 подсветка
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
-    if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       Settings.RA3Hover := not Settings.RA3Hover;
       SaveConfig;
