@@ -1,10 +1,10 @@
 unit Menu;
 
 interface
-uses DrawFunc2D, Variables, Windows, SysUtils;
+uses DrawFunc2D, Variables, Windows, SysUtils, BilServer;
 
 type
-  TMenuTab = (mtRender, mtSAVPE, mtSAUT);
+  TMenuTab = (mtRender, mtSAVPE, mtSAUT, mtBilV);
 
   TSAVPESettings = record
     Enabled: Boolean;
@@ -165,10 +165,10 @@ end;
 
 procedure DrawMenu;
 const
-  MenuWidth = 420;
+  MenuWidth = 440;
   MenuHeight = 350;
   TabHeight = 35;
-  TabWidth = 120;
+  TabWidth = 95;
 var
   MenuX, MenuY: Integer;
   AnimProgress: Single;
@@ -195,8 +195,9 @@ begin
     
     // Вкладки
     DrawTab(MenuX + 15, MenuY + 40, TabWidth, TabHeight, CurrentTab = mtRender, 'Рендер');
-    DrawTab(MenuX + 15 + TabWidth, MenuY + 40, TabWidth, TabHeight, CurrentTab = mtSAVPE, 'Поз. САВПЭ');
-    DrawTab(MenuX + 15 + TabWidth * 2, MenuY + 40, TabWidth, TabHeight, CurrentTab = mtSAUT, 'Поз. САУТ');
+    DrawTab(MenuX + 15 + TabWidth, MenuY + 40, TabWidth, TabHeight, CurrentTab = mtSAVPE, 'САВПЭ');
+    DrawTab(MenuX + 15 + TabWidth * 2, MenuY + 40, TabWidth, TabHeight, CurrentTab = mtSAUT, 'САУТ');
+    DrawTab(MenuX + 15 + TabWidth * 3, MenuY + 40, TabWidth, TabHeight, CurrentTab = mtBilV, 'БИЛ-В');
     
     // Линия под вкладками
     DrawLine2D(MenuX + 15, MenuY + 75, MenuX + MenuWidth - 15, MenuY + 75, $505050, Round(255 * AnimProgress), 1.0);
@@ -226,6 +227,20 @@ begin
         DrawSlider(MenuX + 30, ContentY + 90, 250, Settings.SAUT.PosY, -10.0, 10.0, 'Позиция Y:');
         DrawSlider(MenuX + 30, ContentY + 140, 250, Settings.SAUT.PosZ, -10.0, 10.0, 'Позиция Z:');
       end;
+
+      mtBilV:
+      begin
+        DrawText2D(0, MenuX + 30, ContentY, 'Мобильный БИЛ-В (сервер):', $FFFFFF, Round(255 * AnimProgress), 1.0);
+        DrawCheckbox(MenuX + 30, ContentY + 30, BilServerRunning, 'Включить Сервер');
+        if BilServerRunning then
+        begin
+          DrawText2D(0, MenuX + 30, ContentY + 65, 'Адрес:', $AAAAAA, Round(255 * AnimProgress), 0.85);
+          DrawText2D(0, MenuX + 30, ContentY + 85, BilServer_GetAddress(0), $00FFAA, Round(255 * AnimProgress), 1.0);
+          DrawText2D(0, MenuX + 30, ContentY + 115, 'Телефон -> браузер -> адрес', $808080, Round(255 * AnimProgress), 0.75);
+        end
+        else
+          DrawText2D(0, MenuX + 30, ContentY + 65, 'Сервер остановлен', $666666, Round(255 * AnimProgress), 0.85);
+      end;
     end;
     
     // Инструкция
@@ -243,10 +258,10 @@ end;
 
 procedure HandleMenuClick(X, Y: Integer);
 const
-  MenuWidth = 420;
+  MenuWidth = 440;
   MenuHeight = 350;
   TabHeight = 35;
-  TabWidth = 120;
+  TabWidth = 95;
 var
   MenuX, MenuY: Integer;
   ContentY: Integer;
@@ -263,7 +278,9 @@ begin
   else if IsPointInRect(X, Y, MenuX + 15 + TabWidth, MenuY + 40, TabWidth, TabHeight) then
     CurrentTab := mtSAVPE
   else if IsPointInRect(X, Y, MenuX + 15 + TabWidth * 2, MenuY + 40, TabWidth, TabHeight) then
-    CurrentTab := mtSAUT;
+    CurrentTab := mtSAUT
+  else if IsPointInRect(X, Y, MenuX + 15 + TabWidth * 3, MenuY + 40, TabWidth, TabHeight) then
+    CurrentTab := mtBilV;
   
   // Обработка кликов по содержимому
   case CurrentTab of
@@ -298,6 +315,18 @@ begin
         Settings.SAUT.PosY := -10.0 + ((X - MenuX - 30) / 250.0) * 20.0;
       if IsPointInRect(X, Y, MenuX + 30, ContentY + 140, 250, 20) then
         Settings.SAUT.PosZ := -10.0 + ((X - MenuX - 30) / 250.0) * 20.0;
+    end;
+
+    mtBilV:
+    begin
+      // Чекбокс БИЛ-В
+      if IsPointInRect(X, Y, MenuX + 30, ContentY + 30, 200, 18) then
+      begin
+        if BilServerRunning then
+          BilServer_Stop
+        else
+          BilServer_Start;
+      end;
     end;
   end;
 end;

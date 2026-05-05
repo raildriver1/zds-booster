@@ -3,7 +3,7 @@
 interface
 uses
   Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils,
-  KlubData, ShellAPI, Math, OpenGL, Advanced3D, CommDlg;
+  KlubData, ShellAPI, Math, OpenGL, Advanced3D, CommDlg, BilServer;
 
 type
   TSlider = record
@@ -104,6 +104,10 @@ type
     // (toggle в WORLD-вкладке). Зеркалит InitSystemTimeEnable.
     SystemTimeEnable: Boolean;
 
+    // Мега-реализм: рассвет/закат по реальному городу и месяцу
+    MegaRealism: Boolean;
+    MegaRealismCityIndex: Integer;
+
     // Visual — engine-level post-process toggles (ZDS-Booster).
     FXAAEnable: Boolean;
     BloomEnable: Boolean;
@@ -139,6 +143,9 @@ type
     DeveloperMenu: Boolean;
     DeveloperSection: TExpandableSection;
     RA3Hover: Boolean;
+    Block160: Boolean;
+    FreecamCollisionEnabled: Boolean;
+    FreecamWalkEnabled: Boolean;
   end;
 
   // Источник значения для кастомного 3D-текста — соответствует функциям из KlubData.
@@ -203,6 +210,16 @@ implementation
 
 uses
   EngineCore, CustomImages3D; // EngineCore только в implementation — иначе circular reference
+
+const
+  MEGA_REALISM_CITY_COUNT = 21;
+  MegaRealismCityNames: array[0..MEGA_REALISM_CITY_COUNT-1] of string = (
+    'Калининград', 'Санкт-Петербург', 'Москва', 'Воронеж',
+    'Волгоград', 'Ростов-на-Дону', 'Нижний Новгород', 'Казань',
+    'Самара', 'Уфа', 'Челябинск', 'Екатеринбург',
+    'Пермь', 'Омск', 'Новосибирск', 'Красноярск',
+    'Иркутск', 'Чита', 'Благовещенск', 'Хабаровск', 'Владивосток'
+  );
 
 var
   MenuVisible: Boolean = False;
@@ -346,7 +363,12 @@ type
     MainCameraText: string;
     MaxDistanceText: string;
     NewSkyText: string;
+    MegaRealismText: string;
     SystemTimeText: string;
+    BilServerText: string;
+    Block160Text: string;
+    CollisionText: string;
+    FreeWalkText: string;
     FXAAText: string;
     BloomText: string;
     PostFXText: string;
@@ -395,7 +417,12 @@ const
       MainCameraText: 'Основная Камера';
       MaxDistanceText: 'Макс. дальность';
       NewSkyText: 'Новая логика неба';
+      MegaRealismText: 'Мега реализм';
       SystemTimeText: 'Системное время';
+      BilServerText: 'БИЛ-В Сервер';
+      Block160Text: '160 БЛОК';
+      CollisionText: 'Коллизия DMD';
+      FreeWalkText: 'Free Walk';
       FXAAText: 'Сглаживание FXAA';
       BloomText: 'Свечение (Bloom)';
       PostFXText: 'Графич. эффекты';
@@ -435,7 +462,12 @@ const
       MainCameraText: 'Основна Камера';
       MaxDistanceText: 'Макс. відстань';
       NewSkyText: 'Нова логіка неба';
+      MegaRealismText: 'Мега реалізм';
       SystemTimeText: 'Системний час';
+      BilServerText: 'БІЛ-В Сервер';
+      Block160Text: '160 БЛОК';
+      CollisionText: 'Колізія DMD';
+      FreeWalkText: 'Free Walk';
       FXAAText: 'Згладжування FXAA';
       BloomText: 'Сяйво (Bloom)';
       PostFXText: 'Граф. ефекти';
@@ -475,7 +507,12 @@ const
       MainCameraText: 'Main Camera';
       MaxDistanceText: 'Max Distance';
       NewSkyText: 'New Sky Logic';
+      MegaRealismText: 'Mega Realism';
       SystemTimeText: 'System Time';
+      BilServerText: 'BIL-V Server';
+      Block160Text: '160 BLOCK';
+      CollisionText: 'DMD Collision';
+      FreeWalkText: 'Free Walk';
       FXAAText: 'FXAA Antialiasing';
       BloomText: 'Bloom Glow';
       PostFXText: 'Graphics FX';
@@ -518,7 +555,12 @@ begin
   else if TextType = 'MainCameraText' then Result := LanguageTexts[CurrentLanguage].MainCameraText
   else if TextType = 'MaxDistanceText' then Result := LanguageTexts[CurrentLanguage].MaxDistanceText
   else if TextType = 'NewSkyText' then Result := LanguageTexts[CurrentLanguage].NewSkyText
+  else if TextType = 'MegaRealismText' then Result := LanguageTexts[CurrentLanguage].MegaRealismText
   else if TextType = 'SystemTimeText' then Result := LanguageTexts[CurrentLanguage].SystemTimeText
+  else if TextType = 'BilServerText' then Result := LanguageTexts[CurrentLanguage].BilServerText
+  else if TextType = 'Block160Text' then Result := LanguageTexts[CurrentLanguage].Block160Text
+  else if TextType = 'CollisionText' then Result := LanguageTexts[CurrentLanguage].CollisionText
+  else if TextType = 'FreeWalkText' then Result := LanguageTexts[CurrentLanguage].FreeWalkText
   else if TextType = 'FXAAText' then Result := LanguageTexts[CurrentLanguage].FXAAText
   else if TextType = 'BloomText' then Result := LanguageTexts[CurrentLanguage].BloomText
   else if TextType = 'PostFXText' then Result := LanguageTexts[CurrentLanguage].PostFXText
@@ -2982,6 +3024,9 @@ begin
         if Key = 'newsky' then Settings.NewSky := (Value = '1');
         if Key = 'new_club_positions' then Settings.NewClubPositions := (Value = '1');
         if Key = 'ra3_hover' then Settings.RA3Hover := (Value = '1');
+        if Key = 'block160' then begin Settings.Block160 := (Value = '1'); BilBlock160 := Settings.Block160; end;
+        if Key = 'freecam_collision' then begin Settings.FreecamCollisionEnabled := (Value = '1'); FreecamCollision := Settings.FreecamCollisionEnabled; end;
+        if Key = 'freecam_walk' then begin Settings.FreecamWalkEnabled := (Value = '1'); FreecamWalkMode := Settings.FreecamWalkEnabled; end;
         if Key = 'new_view_angle' then Settings.NewViewAngle := (Value = '1');
         if Key = 'camera_sensitivity' then Settings.CameraSensitivity := (Value = '1');
 
@@ -2994,6 +3039,15 @@ begin
         if Key = 'system_time' then begin
           Settings.SystemTimeEnable := (Value = '1');
           InitSystemTimeEnable := Settings.SystemTimeEnable;
+        end;
+
+        // MegaRealism
+        if Key = 'mega_realism' then Settings.MegaRealism := (Value = '1');
+        if Key = 'mega_realism_city' then
+        begin
+          Settings.MegaRealismCityIndex := StrToIntDef(Value, 2);
+          if Settings.MegaRealismCityIndex < 0 then Settings.MegaRealismCityIndex := 0;
+          if Settings.MegaRealismCityIndex >= MEGA_REALISM_CITY_COUNT then Settings.MegaRealismCityIndex := 0;
         end;
 
         // ZDS-Booster: PostFX render-graph. Each key maps to both a Settings
@@ -3121,7 +3175,8 @@ begin
     newsky := Settings.NewSky;
 
     SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
-    
+    SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
+
   except on E: Exception do
     AddToLogFile(EngineLog, 'Ошибка чтения конфига: ' + E.Message);
   end;
@@ -3177,6 +3232,9 @@ begin
     if Settings.NewSky then WriteLn(F, 'newsky: 1') else WriteLn(F, 'newsky: 0');
     if Settings.NewClubPositions then WriteLn(F, 'new_club_positions: 1') else WriteLn(F, 'new_club_positions: 0');
     if Settings.RA3Hover then WriteLn(F, 'ra3_hover: 1') else WriteLn(F, 'ra3_hover: 0');
+    if Settings.Block160 then WriteLn(F, 'block160: 1') else WriteLn(F, 'block160: 0');
+    if Settings.FreecamCollisionEnabled then WriteLn(F, 'freecam_collision: 1') else WriteLn(F, 'freecam_collision: 0');
+    if Settings.FreecamWalkEnabled then WriteLn(F, 'freecam_walk: 1') else WriteLn(F, 'freecam_walk: 0');
     if Settings.NewViewAngle then WriteLn(F, 'new_view_angle: 1') else WriteLn(F, 'new_view_angle: 0');
     if Settings.CameraSensitivity then WriteLn(F, 'camera_sensitivity: 1') else WriteLn(F, 'camera_sensitivity: 0');
     
@@ -3187,6 +3245,10 @@ begin
 
     // ZDS-Booster: System time override (WORLD-вкладка).
     if Settings.SystemTimeEnable then WriteLn(F, 'system_time: 1') else WriteLn(F, 'system_time: 0');
+
+    // MegaRealism
+    if Settings.MegaRealism then WriteLn(F, 'mega_realism: 1') else WriteLn(F, 'mega_realism: 0');
+    WriteLn(F, 'mega_realism_city: ' + IntToStr(Settings.MegaRealismCityIndex));
 
     // ZDS-Booster: graphics-effects toggles. PostFX re-reads each
     // Init*Enable global every frame, so simply mirroring the menu state
@@ -3855,6 +3917,7 @@ begin
   LoadConfig;
 
   SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
+  SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
 
   // Инициализация окон с transform анимацией
   RenderWindow.Title := GetText('RenderTitle');
@@ -4582,6 +4645,7 @@ var
   ScaledX, ScaledY: Integer;
   OffsetX, OffsetY: Integer;
   HeaderGradientStart, HeaderGradientEnd: Integer;
+  bilIdx: Integer;
   // Transform координаты
   TransformX1, TransformY1, TransformX2, TransformY2: Integer;
   TransformX3, TransformY3, TransformX4, TransformY4: Integer;
@@ -4622,6 +4686,14 @@ begin
       TotalHeight := TotalHeight + MARGIN + ITEM_HEIGHT;
       if Settings.PostFXSection.AnimProgress > 0.01 then
         TotalHeight := TotalHeight + Round(GetPostFXContentHeight * Settings.PostFXSection.AnimProgress) + MARGIN;
+
+      // DMD Collision + Free Walk
+      TotalHeight := TotalHeight + (ITEM_HEIGHT + MARGIN) * 2;
+
+      // BIL-V Server
+      TotalHeight := TotalHeight + MARGIN + ITEM_HEIGHT;
+      if BilServerRunning then
+        TotalHeight := TotalHeight + (ITEM_HEIGHT + MARGIN) * BilServerIPCount;
     end;
     
     1: // WORLD окно
@@ -4631,15 +4703,18 @@ begin
       if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
         TotalHeight := TotalHeight + Round(180 * Settings.MaxVisibleDistanceSection.AnimProgress) + MARGIN;
 
-      // NewSky + SystemTime toggles.
-      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;
-      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;
+      // NewSky + MegaRealism + CitySelector + SystemTime toggles.
+      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;  // MegaRealism
+      if Settings.MegaRealism then
+        TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN; // City selector
+      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;  // NewSky
+      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;  // SystemTime
     end;
     
     2: // LOCOMOTIVE окно
     begin
-      // ClubFixes toggle + Developer toggle
-      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN + ITEM_HEIGHT + MARGIN;
+      // 160 BLOCK + ClubFixes + DeveloperMenu + RA3Hover
+      TotalHeight := TotalHeight + (ITEM_HEIGHT + MARGIN) * 4;
       // Expanded section — высота зависит от количества кастомных текстов и
       // выбранного редактора (см. GetDeveloperContentHeight).
       if Settings.DeveloperSection.AnimProgress > 0.01 then
@@ -4829,6 +4904,38 @@ begin
 
         Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
+
+      // DMD Collision
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('CollisionText'), Settings.FreecamCollisionEnabled, Alpha,
+        False, 0, False,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
+      // Free Walk
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FreeWalkText'), Settings.FreecamWalkEnabled, Alpha,
+        False, 0, False,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
+      // BIL-V Server
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('BilServerText'), BilServerRunning, Alpha,
+        False, 0, False,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
+      // BIL-V addresses
+      if BilServerRunning then
+      begin
+        for bilIdx := 0 to BilServer_GetAddressCount - 1 do
+        begin
+          DrawText2D(0,
+            ScaledX + Round((MARGIN + 8) * Win.Scale),
+            ContentY + Round(5 * Win.Scale),
+            BilServer_GetAddress(bilIdx),
+            $00FFAA, Alpha, 0.7);
+          Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+        end;
+      end;
     end;
     
     1: // WORLD окно
@@ -4869,6 +4976,24 @@ begin
         Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
       
+      // Mega Realism
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MegaRealismText'), Settings.MegaRealism, Alpha,
+        False, 0, False,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
+      // City selector (visible only when MegaRealism is on)
+      if Settings.MegaRealism then
+      begin
+        // Draw city name as clickable label: "< CityName >"
+        DrawText2D(0,
+          ScaledX + Round((MARGIN + 8) * Win.Scale),
+          ContentY + Round(5 * Win.Scale),
+          '< ' + MegaRealismCityNames[Settings.MegaRealismCityIndex] + ' >',
+          $DDDDDD, Alpha, 0.7);
+        Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+      end;
+
       // New Sky
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('NewSkyText'), Settings.NewSky, Alpha,
         False, 0, False,
@@ -4881,18 +5006,20 @@ begin
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('SystemTimeText'), Settings.SystemTimeEnable, Alpha,
         False, 0, False,
         HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
     end;
     
     2: // LOCOMOTIVE окно
     begin
-      // Исправления КЛУБ
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('ClubFixesText'), Settings.NewClubPositions, Alpha,
+      // 160 БЛОК
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('Block160Text'), Settings.Block160, Alpha,
         False, 0, False,
         HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
-      // RA3 подсветка
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('RA3HoverText'), Settings.RA3Hover, Alpha,
+      // Исправления КЛУБ
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('ClubFixesText'), Settings.NewClubPositions, Alpha,
         False, 0, False,
         HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
@@ -4911,7 +5038,13 @@ begin
 
         if Settings.DeveloperMenu and (SectionHeight > Round(30 * Win.Scale)) then
           DrawDeveloperValues(ScaledX + Round((MARGIN + 24) * Win.Scale), ContentY + Round(12 * Win.Scale), Alpha, Win.Scale, SectionHeight);
+        Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
+
+      // RA3 подсветка
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('RA3HoverText'), Settings.RA3Hover, Alpha,
+        False, 0, False,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
     end;
     
     3: // MENU окно
@@ -5497,6 +5630,7 @@ begin
   
       SaveConfig;
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
+      SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
       LoadConfigForced;
       Exit;
     end;
@@ -5553,6 +5687,7 @@ begin
         
       SaveConfig;
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
+      SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
@@ -5670,6 +5805,36 @@ begin
       end;
       Inc(ContentY, SectionHeight + MARGIN);
     end;
+
+    // DMD Collision toggle
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.FreecamCollisionEnabled := not Settings.FreecamCollisionEnabled;
+      FreecamCollision := Settings.FreecamCollisionEnabled;
+      SaveConfig;
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
+    // Free Walk toggle
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.FreecamWalkEnabled := not Settings.FreecamWalkEnabled;
+      FreecamWalkMode := Settings.FreecamWalkEnabled;
+      SaveConfig;
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
+    // BIL-V Server toggle
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      if BilServerRunning then
+        BilServer_Stop
+      else
+        BilServer_Start;
+      Exit;
+    end;
   end;
   
   // WORLD WINDOW
@@ -5711,6 +5876,7 @@ begin
       
       SaveConfig;
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
+      SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
       LastConfigReadTime := GetTickCount;
       Exit;
     end;
@@ -5759,12 +5925,36 @@ begin
       Inc(ContentY, SectionHeight + MARGIN);
     end;
     
+    // Mega Realism toggle
+    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.MegaRealism := not Settings.MegaRealism;
+      SaveConfig;
+      SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
+    // City selector (click cycles to next city)
+    if Settings.MegaRealism then
+    begin
+      if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+      begin
+        Settings.MegaRealismCityIndex := (Settings.MegaRealismCityIndex + 1) mod MEGA_REALISM_CITY_COUNT;
+        SaveConfig;
+        SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
+        Exit;
+      end;
+      Inc(ContentY, ITEM_HEIGHT + MARGIN);
+    end;
+
     // New Sky toggle
     if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
     begin
       Settings.NewSky := not Settings.NewSky;
       SaveConfig;
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
+      SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
@@ -5778,8 +5968,6 @@ begin
       SaveConfig;
       Exit;
     end;
-    // Note: PostFX header + section dispatcher переехали в RENDER click
-    // handler выше — здесь только NewSky + SystemTime.
   end;
 
   // LOCOMOTIVE WINDOW
@@ -5798,6 +5986,16 @@ begin
       Exit;
     end;
 
+    // 160 БЛОК
+    if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.Block160 := not Settings.Block160;
+      BilBlock160 := Settings.Block160;
+      SaveConfig;
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
     // Исправления КЛУБ
     if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
     begin
@@ -5806,15 +6004,6 @@ begin
         ApplyClubPositionsPatch
       else
         RemoveClubPositionsPatch;
-      SaveConfig;
-      Exit;
-    end;
-    Inc(ContentY, ITEM_HEIGHT + MARGIN);
-
-    // RA3 подсветка
-    if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
-    begin
-      Settings.RA3Hover := not Settings.RA3Hover;
       SaveConfig;
       Exit;
     end;
@@ -5842,6 +6031,15 @@ begin
     // работе мы её больше не показываем ===
     if Settings.DeveloperMenu and (Settings.DeveloperSection.AnimProgress > 0.5) then
       HandleDeveloperSectionClick(X, Y, ContentY);
+
+    // RA3 подсветка
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+    if InRect(X, Y, LocomotiveWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    begin
+      Settings.RA3Hover := not Settings.RA3Hover;
+      SaveConfig;
+      Exit;
+    end;
   end;
 end;
 

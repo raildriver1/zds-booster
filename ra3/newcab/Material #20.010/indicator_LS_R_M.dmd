@@ -1,0 +1,34 @@
+New object
+indicator_LS_R_M()
+numverts numfaces
+          6          2
+Mesh vertices:
+	-0.016315 -0.003138 -0.005013
+	-0.016315 -0.003138 -0.005013
+	0.016315 -0.003138 -0.005013
+	0.016315 0.003137 0.005013
+	0.016315 0.003137 0.005013
+	-0.016315 0.003137 0.005012
+end vertices
+Mesh faces:
+	     1      3      4
+	     5      6      2
+end faces
+end mesh
+New Texture:
+numtverts numtvfaces
+          6          2
+Texture vertices:
+	0.904014 0.293912 0.000000
+	0.739198 0.293914 0.000000
+	0.739197 0.234172 0.000000
+	0.739197 0.234172 0.000000
+	0.904013 0.234172 0.000000
+	0.904014 0.293912 0.000000
+end texture vertices
+Texture faces:
+	     1      2      3
+	     4      5      6
+end texture faces
+end of texture
+end of file

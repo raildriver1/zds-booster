@@ -1,0 +1,32 @@
+New object
+arrow_voltmeter_24v()
+numverts numfaces
+          4          2
+Mesh vertices:
+	0.000000 -0.000050 0.005827
+	0.000000 -0.000050 0.025546
+	0.000749 -0.000050 0.005708
+	-0.000749 -0.000050 0.005708
+end vertices
+Mesh faces:
+	     1      2      3
+	     4      2      1
+end faces
+end mesh
+New Texture:
+numtverts numtvfaces
+          6          2
+Texture vertices:
+	0.782382 0.130281 0.000000
+	0.781308 0.158715 0.000000
+	0.783468 0.130150 0.000000
+	0.781308 0.130069 0.000000
+	0.781308 0.158715 0.000000
+	0.782382 0.130281 0.000000
+end texture vertices
+Texture faces:
+	     1      2      3
+	     4      5      6
+end texture faces
+end of texture
+end of file

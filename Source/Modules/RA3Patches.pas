@@ -36,7 +36,7 @@ unit RA3Patches;
 
 interface
 
-uses Windows, SysUtils, EngineUtils, DrawFunc3D;
+uses Windows, SysUtils, EngineUtils, DrawFunc3D, RA3;
 
 procedure ApplyRA3PerFrame;
 
@@ -130,6 +130,7 @@ end;
 
 procedure ApplyRA3PerFrame;
 begin
+  if not IsRA3Active then Exit;
   TryZeroBlock;        // every frame — игра постоянно пишет туда биндинги
   LockCameraPosition;  // anchor когда freecam OFF, edge-trigger при on/off
 end;

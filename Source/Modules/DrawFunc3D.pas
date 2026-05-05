@@ -21,7 +21,7 @@
 unit DrawFunc3D;
 interface
 uses OpenGL, Variables, Windows, TFrustumClass, EngineUtils, SysUtils, DMD_MultyMesh,
-     Textures, DPC_Packages, Classes, KlubData, KlubProcessor, Math, TlHelp32, MMSystem, IniFiles, Sound;
+     Textures, DPC_Packages, Classes, KlubData, KlubProcessor, Math, TlHelp32, MMSystem, IniFiles, Sound, BilServer;
 
 
 type TVertex3D = record X,Y,Z : single; Color, Alpha : integer; TexX, TexY : single; end;
@@ -158,6 +158,8 @@ procedure ProcessDayNightSystem; stdcall;
 // reference, чтобы не ломать существующие места.
 var
   FreecamEnabled: Boolean;
+  FreecamCollision: Boolean;
+  FreecamWalkMode: Boolean;
 
 
 
@@ -175,7 +177,10 @@ function GetConfigFreecam: Boolean; stdcall;
 function GetConfigMainCamera: Boolean; stdcall;
 function GetConfigMaxDistance: Boolean; stdcall;
 function GetConfigNewSky: Boolean; stdcall;
-      
+
+// Mega Realism sync
+procedure SyncMegaRealismConfig(MegaRealism: Boolean; CityIndex: Integer); stdcall;
+
 procedure HookKLUB(
   x: Single;
   y: Single;
@@ -347,6 +352,8 @@ var
   Config_MainCamera: Boolean = True;   // Включена ли настройка основной камеры
   Config_MaxDistance: Boolean = True;  // Включена ли настройка дистанции
   Config_NewSky: Boolean = True;       // Включено ли новое небо (уже было)
+  Config_MegaRealism: Boolean = False;  // Мега-реализм (рассвет/закат по городу)
+  Config_MegaRealismCityIndex: Integer = 2; // Индекс города (2 = Москва)
 
   // ===== НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ФРИКАМА =====
   Config_BaseSpeed: Single = 0.0;        // Базовая скорость фрикама
@@ -372,6 +379,7 @@ var
   BoosterTexturesLoaded: Boolean = False;
 
   SkyPatchApplied: Boolean = False; // Флаг применения патча
+  SkyDrawLoggedOnce: Boolean = False; // Одноразовый диагностический лог DrawSky
 
   SkorSharedTextureID: Cardinal = 0;
 
@@ -381,6 +389,111 @@ const
   PANEL_HEIGHT = 200;         // Высота панели
   PANEL_MARGIN = 10;          // Отступ от края экрана
   ANIMATION_SPEED = 8.0;      // Скорость анимации
+
+  // === MEGA REALISM: sunrise/sunset data from dateandtime.info ===
+  // For the 15th day of each month, 2026 (local timezone)
+  MEGA_REALISM_CITY_COUNT = 21;
+
+  // Sunrise hour per city per month [cityIndex, month 1..12]
+  // Source: dateandtime.info, 15th of each month, 2026
+  MRSunriseH: array[0..MEGA_REALISM_CITY_COUNT-1, 1..12] of Byte = (
+    (8, 7, 6, 5, 4, 4, 4, 5, 6, 7, 8, 8),     // Kaliningrad
+    (9, 8, 7, 5, 4, 3, 4, 5, 6, 7, 8, 9),     // Sankt-Peterburg
+    (8, 7, 6, 5, 4, 3, 4, 5, 6, 7, 8, 8),     // Moskva
+    (8, 7, 6, 5, 4, 4, 4, 5, 5, 6, 7, 8),     // Voronezh
+    (7, 7, 6, 5, 4, 3, 4, 4, 5, 6, 7, 7),     // Volgograd
+    (8, 7, 6, 5, 4, 4, 4, 5, 5, 6, 7, 8),     // Rostov-na-Donu
+    (8, 7, 6, 4, 3, 3, 3, 4, 5, 6, 7, 8),     // Nizhniy Novgorod
+    (8, 7, 5, 4, 3, 2, 3, 4, 5, 6, 7, 8),     // Kazan
+    (8, 7, 6, 5, 4, 4, 4, 5, 6, 7, 8, 8),     // Samara
+    (9, 8, 7, 6, 5, 4, 4, 5, 6, 7, 8, 9),     // Ufa
+    (9, 8, 7, 5, 4, 4, 4, 5, 6, 7, 8, 9),     // Chelyabinsk
+    (9, 8, 7, 5, 4, 4, 4, 5, 6, 7, 8, 9),     // Ekaterinburg
+    (9, 8, 7, 6, 4, 4, 4, 5, 6, 7, 9, 9),     // Perm
+    (9, 8, 7, 6, 4, 4, 4, 5, 6, 7, 8, 9),     // Omsk
+    (9, 8, 7, 6, 5, 4, 5, 6, 7, 7, 9, 9),     // Novosibirsk
+    (9, 8, 7, 5, 4, 4, 4, 5, 6, 7, 8, 9),     // Krasnoyarsk
+    (9, 8, 7, 6, 5, 4, 4, 5, 6, 7, 8, 9),     // Irkutsk
+    (9, 8, 7, 5, 4, 4, 4, 5, 6, 7, 8, 9),     // Chita
+    (8, 8, 7, 6, 5, 5, 5, 6, 6, 7, 8, 8),     // Blagoveshchensk
+    (8, 8, 7, 6, 5, 4, 5, 5, 6, 7, 8, 8),     // Khabarovsk
+    (8, 8, 7, 6, 5, 5, 5, 6, 6, 7, 8, 8)      // Vladivostok
+  );
+
+  // Sunrise minute per city per month
+  MRSunriseM: array[0..MEGA_REALISM_CITY_COUNT-1, 1..12] of Byte = (
+    (51, 59, 52, 35, 31, 0, 21, 13, 10, 7, 8, 54),     // Kaliningrad
+    (45, 36, 15, 41, 20, 35, 3, 13, 26, 37, 56, 55),    // Sankt-Peterburg
+    (49, 53, 44, 24, 17, 44, 6, 1, 1, 0, 4, 52),        // Moskva
+    (22, 37, 37, 26, 30, 4, 22, 8, 58, 47, 41, 23),     // Voronezh
+    (49, 9, 15, 11, 20, 58, 15, 55, 38, 22, 10, 47),    // Volgograd
+    (3, 25, 33, 32, 44, 24, 40, 17, 58, 39, 24, 0),     // Rostov-na-Donu
+    (26, 29, 19, 57, 48, 14, 36, 33, 35, 35, 41, 31),   // Nizhniy Novgorod
+    (3, 7, 58, 38, 31, 58, 19, 15, 15, 14, 18, 7),      // Kazan
+    (45, 57, 53, 39, 40, 11, 31, 19, 13, 5, 3, 47),     // Samara
+    (30, 37, 30, 13, 9, 38, 59, 51, 48, 45, 46, 33),    // Ufa
+    (10, 17, 9, 50, 45, 13, 34, 28, 26, 23, 26, 13),    // Chelyabinsk
+    (23, 25, 13, 49, 39, 3, 26, 25, 28, 30, 37, 28),    // Ekaterinburg
+    (48, 46, 30, 3, 50, 11, 35, 38, 44, 49, 1, 54),     // Perm
+    (22, 28, 21, 3, 58, 26, 47, 41, 38, 35, 38, 24),    // Omsk
+    (44, 50, 43, 24, 20, 48, 9, 2, 0, 57, 0, 46),       // Novosibirsk
+    (9, 13, 3, 42, 35, 1, 23, 19, 19, 19, 24, 13),      // Krasnoyarsk
+    (5, 18, 17, 5, 7, 40, 59, 45, 36, 27, 23, 5),       // Irkutsk
+    (14, 21, 14, 56, 52, 21, 41, 34, 31, 28, 30, 16),   // Chita
+    (56, 16, 22, 17, 26, 4, 20, 0, 44, 28, 16, 54),     // Blagoveshchensk
+    (46, 7, 13, 9, 19, 57, 13, 52, 36, 19, 6, 44),      // Khabarovsk
+    (41, 10, 24, 30, 49, 32, 46, 17, 51, 25, 4, 36)     // Vladivostok
+  );
+
+  // Sunset hour per city per month
+  MRSunsetH: array[0..MEGA_REALISM_CITY_COUNT-1, 1..12] of Byte = (
+    (16, 17, 18, 19, 20, 21, 21, 20, 18, 17, 16, 16),  // Kaliningrad
+    (16, 17, 19, 20, 21, 22, 22, 20, 19, 17, 16, 15),  // Sankt-Peterburg
+    (16, 17, 18, 19, 20, 21, 21, 20, 18, 17, 16, 15),  // Moskva
+    (16, 17, 18, 19, 20, 20, 20, 19, 18, 17, 16, 16),  // Voronezh
+    (16, 17, 18, 18, 19, 20, 20, 19, 18, 17, 16, 16),  // Volgograd
+    (16, 17, 18, 19, 19, 20, 20, 19, 18, 17, 16, 16),  // Rostov-na-Donu
+    (15, 17, 18, 19, 20, 20, 20, 19, 18, 17, 15, 15),  // Nizhniy Novgorod
+    (15, 16, 17, 18, 19, 20, 20, 19, 18, 16, 15, 15),  // Kazan
+    (16, 17, 18, 19, 20, 21, 20, 20, 18, 17, 16, 16),  // Samara
+    (17, 18, 19, 20, 21, 21, 21, 20, 19, 18, 17, 16),  // Ufa
+    (16, 17, 18, 19, 20, 21, 21, 20, 19, 17, 16, 16),  // Chelyabinsk
+    (16, 17, 18, 20, 21, 21, 21, 20, 19, 17, 16, 16),  // Ekaterinburg
+    (17, 18, 19, 20, 21, 22, 22, 21, 19, 18, 16, 16),  // Perm
+    (17, 18, 19, 20, 21, 21, 21, 20, 19, 18, 17, 16),  // Omsk
+    (17, 18, 19, 20, 21, 22, 21, 21, 19, 18, 17, 16),  // Novosibirsk
+    (16, 17, 18, 19, 20, 21, 21, 20, 19, 17, 16, 16),  // Krasnoyarsk
+    (17, 18, 19, 20, 20, 21, 21, 20, 19, 18, 17, 16),  // Irkutsk
+    (17, 18, 19, 20, 20, 21, 21, 20, 19, 18, 16, 16),  // Chita
+    (17, 18, 19, 19, 20, 21, 21, 20, 19, 18, 17, 17),  // Blagoveshchensk
+    (17, 18, 19, 19, 20, 21, 20, 20, 19, 18, 17, 17),  // Khabarovsk
+    (18, 18, 19, 19, 20, 20, 20, 20, 19, 18, 17, 17)   // Vladivostok
+  );
+
+  // Sunset minute per city per month
+  MRSunsetM: array[0..MEGA_REALISM_CITY_COUNT-1, 1..12] of Byte = (
+    (42, 44, 41, 40, 37, 16, 6, 11, 55, 40, 36, 11),   // Kaliningrad
+    (30, 49, 0, 15, 29, 23, 6, 52, 21, 51, 30, 52),     // Sankt-Peterburg
+    (28, 33, 32, 34, 34, 15, 4, 6, 48, 30, 23, 56),     // Moskva
+    (42, 37, 27, 19, 8, 43, 35, 47, 38, 30, 33, 13),    // Voronezh
+    (33, 22, 6, 52, 36, 6, 0, 17, 15, 13, 22, 6),       // Volgograd
+    (57, 44, 26, 9, 50, 18, 13, 33, 34, 34, 46, 31),    // Rostov-na-Donu
+    (59, 6, 6, 10, 11, 54, 43, 43, 23, 3, 55, 26),      // Nizhniy Novgorod
+    (42, 47, 46, 48, 48, 29, 19, 20, 2, 44, 37, 10),    // Kazan
+    (51, 49, 42, 38, 31, 8, 59, 7, 56, 44, 44, 21),     // Samara
+    (20, 22, 19, 19, 15, 55, 45, 49, 34, 18, 14, 49),   // Ufa
+    (56, 59, 57, 58, 55, 36, 25, 29, 12, 56, 50, 24),   // Chelyabinsk
+    (50, 58, 59, 5, 8, 52, 40, 38, 17, 56, 46, 16),     // Ekaterinburg
+    (0, 12, 17, 26, 32, 19, 6, 0, 35, 11, 57, 25),      // Perm
+    (9, 12, 9, 9, 7, 47, 37, 41, 24, 8, 3, 38),         // Omsk
+    (31, 33, 31, 31, 29, 9, 59, 3, 46, 30, 25, 59),     // Novosibirsk
+    (45, 51, 51, 54, 54, 36, 25, 26, 7, 49, 41, 13),    // Krasnoyarsk
+    (19, 15, 6, 0, 50, 26, 18, 28, 19, 9, 11, 49),      // Irkutsk
+    (3, 5, 2, 2, 58, 38, 29, 33, 17, 2, 57, 32),        // Chita
+    (38, 28, 12, 59, 42, 13, 7, 24, 22, 20, 29, 12),    // Blagoveshchensk
+    (31, 20, 4, 49, 32, 2, 57, 15, 13, 11, 21, 4),      // Khabarovsk
+    (2, 42, 18, 54, 28, 53, 50, 16, 23, 30, 49, 38)     // Vladivostok
+  );
 
   // Тип для хранения информации о станции
 type
@@ -540,6 +653,13 @@ var
   FreecamKeyDelay: Cardinal = 200; // 200мс задержка между нажатиями
   MaxDistanceWritten: Boolean = False;  // ← ДОБАВИТЬ ЭТУ СТРОКУ
   
+  // Коллизия DMD и Free Walk (FreecamCollision/FreecamWalkMode в interface)
+  WalkGravityVel: Single = 0.0;       // вертикальная скорость для гравитации
+  WALK_GRAVITY: Single = 0.03;        // ускорение гравитации за кадр
+  WALK_EYE_HEIGHT: Single = 1.7;      // высота глаз над землёй
+  WALK_PLAYER_RADIUS: Single = 0.3;   // радиус "тела" для коллизии
+  WALK_PLAYER_HEIGHT: Single = 1.8;   // высота "тела" для коллизии
+
   // NOP патч
   OriginalBytes: array[0..4] of Byte;
   NopBytes: array[0..4] of Byte = ($90, $90, $90, $90, $90);
@@ -605,6 +725,123 @@ end;
 function GetConfigNewSky: Boolean; stdcall;
 begin
   Result := Config_NewSky;
+end;
+
+procedure SyncMegaRealismConfig(MegaRealism: Boolean; CityIndex: Integer); stdcall;
+begin
+  Config_MegaRealism := MegaRealism;
+  if (CityIndex >= 0) and (CityIndex < MEGA_REALISM_CITY_COUNT) then
+    Config_MegaRealismCityIndex := CityIndex
+  else
+    Config_MegaRealismCityIndex := 2; // Москва
+end;
+
+// Вспомогательная: кол-во дней в месяце
+function MRDaysInMonth(mo, yr: Integer): Integer;
+begin
+  case mo of
+    1, 3, 5, 7, 8, 10, 12: Result := 31;
+    4, 6, 9, 11: Result := 30;
+    2: if (yr mod 4 = 0) and ((yr mod 100 <> 0) or (yr mod 400 = 0))
+         then Result := 29 else Result := 28;
+  else
+    Result := 30;
+  end;
+end;
+
+// Возвращает время восхода в минутах от полуночи с интерполяцией по дню.
+// Данные хранятся для 15-го числа каждого месяца.
+// Линейно интерполируем между ближайшими 15-ми числами.
+function GetMegaRealismSunrise: Integer;
+var
+  st: TSystemTime;
+  ci, mo, day, yr: Integer;
+  moA, moB: Integer;
+  valA, valB: Integer;
+  span, offset, dimA: Integer;
+begin
+  GetLocalTime(st);
+  ci := Config_MegaRealismCityIndex;
+  mo := st.wMonth; day := st.wDay; yr := st.wYear;
+  if (ci < 0) or (ci >= MEGA_REALISM_CITY_COUNT) then ci := 2;
+  if (mo < 1) or (mo > 12) then mo := 1;
+  if (day < 1) or (day > 31) then day := 15;
+
+  // Точное попадание на 15-е — без интерполяции
+  if day = 15 then
+  begin
+    Result := Integer(MRSunriseH[ci, mo]) * 60 + Integer(MRSunriseM[ci, mo]);
+    Exit;
+  end;
+
+  if day < 15 then
+  begin
+    moA := mo - 1; if moA < 1 then moA := 12;
+    moB := mo;
+    dimA := MRDaysInMonth(moA, yr);
+    span := (dimA - 15) + 15;
+    offset := (dimA - 15) + day;
+  end
+  else
+  begin
+    moA := mo;
+    moB := mo + 1; if moB > 12 then moB := 1;
+    dimA := MRDaysInMonth(moA, yr);
+    span := (dimA - 15) + 15;
+    offset := day - 15;
+  end;
+
+  valA := Integer(MRSunriseH[ci, moA]) * 60 + Integer(MRSunriseM[ci, moA]);
+  valB := Integer(MRSunriseH[ci, moB]) * 60 + Integer(MRSunriseM[ci, moB]);
+
+  if span <= 0 then span := 30;
+  Result := valA + Round((valB - valA) * offset / span);
+end;
+
+// Возвращает время заката в минутах от полуночи с интерполяцией по дню.
+function GetMegaRealismSunset: Integer;
+var
+  st: TSystemTime;
+  ci, mo, day, yr: Integer;
+  moA, moB: Integer;
+  valA, valB: Integer;
+  span, offset, dimA: Integer;
+begin
+  GetLocalTime(st);
+  ci := Config_MegaRealismCityIndex;
+  mo := st.wMonth; day := st.wDay; yr := st.wYear;
+  if (ci < 0) or (ci >= MEGA_REALISM_CITY_COUNT) then ci := 2;
+  if (mo < 1) or (mo > 12) then mo := 1;
+  if (day < 1) or (day > 31) then day := 15;
+
+  if day = 15 then
+  begin
+    Result := Integer(MRSunsetH[ci, mo]) * 60 + Integer(MRSunsetM[ci, mo]);
+    Exit;
+  end;
+
+  if day < 15 then
+  begin
+    moA := mo - 1; if moA < 1 then moA := 12;
+    moB := mo;
+    dimA := MRDaysInMonth(moA, yr);
+    span := (dimA - 15) + 15;
+    offset := (dimA - 15) + day;
+  end
+  else
+  begin
+    moA := mo;
+    moB := mo + 1; if moB > 12 then moB := 1;
+    dimA := MRDaysInMonth(moA, yr);
+    span := (dimA - 15) + 15;
+    offset := day - 15;
+  end;
+
+  valA := Integer(MRSunsetH[ci, moA]) * 60 + Integer(MRSunsetM[ci, moA]);
+  valB := Integer(MRSunsetH[ci, moB]) * 60 + Integer(MRSunsetM[ci, moB]);
+
+  if span <= 0 then span := 30;
+  Result := valA + Round((valB - valA) * offset / span);
 end;
 
 function GetCurrentHour: Integer;
@@ -892,6 +1129,11 @@ var
   
   // Переменные для определения сезона
   isWinter: Boolean;
+
+  // MegaRealism phase boundaries (in minutes from midnight)
+  mrSR, mrSS: Integer;     // sunrise, sunset in minutes
+  mrP0, mrP1, mrP2, mrP3, mrP4, mrP5, mrP6, mrP7, mrP8, mrP9, mrP10, mrP11: Integer;
+  mrHandled: Boolean;
   
 begin
   try
@@ -929,19 +1171,13 @@ begin
       v5 := 0.0;
     end;
     
-    // ZDS-Booster: расширяем sky.dmd сферу так чтобы она перекрывала
-    // увеличенный zFar (мы патчили его до 8000м в DomePatch).
-    // Без этого за оригинальной сферой неба видно белое (clearColor).
-    // Scale3D — мультипликативный поверх original game size, а не absolute,
-    // поэтому 6.0 = "в 6 раз больше штатного" (~ покрывает 8000м-горизонт).
+    // Проверяем флаг освещения
     try
       lightingCheck := PByte(Pointer($090043A4))^;
       if lightingCheck = 0 then
-        Scale3D(4.0)
-      else
-        Scale3D(4.0);
+        Scale3D(1.2);
     except
-      Scale3D(4.0);
+      Scale3D(1.2);
     end;
     
     // Читаем текущий час и минуты
@@ -996,7 +1232,215 @@ begin
     
     a1 := False;
     totalMinutes := currentHour * 60 + currentMinute;
-    
+
+    // Одноразовый диагностический лог
+    if not SkyDrawLoggedOnce then
+    begin
+      SkyDrawLoggedOnce := True;
+      AddToLogFile(EngineLog, Format('=== DrawSky CALLED: hour=%d min=%d modelID=%d day=%d sunset=%d night=%d sunrise=%d isWinter=%s ===',
+        [currentHour, currentMinute, modelID, dayTextureID, sunsetTextureID, nightTextureID, sunriseTextureID, BoolToStr(isWinter, True)]));
+      AddToLogFile(EngineLog, Format('=== DrawSky Booster: dawn=%d twilight=%d daySnow=%d sunsetSnow=%d twilightSnow=%d nightSnow=%d dawnSnow=%d sunriseSnow=%d loaded=%s ===',
+        [BoosterSunriseDawnTextureID, BoosterSunsetTwilightTextureID, BoosterDaySnowTextureID, BoosterSunsetSnowTextureID, 
+         BoosterSunsetTwilightSnowTextureID, BoosterNightSnowTextureID, BoosterSunriseDawnSnowTextureID, BoosterSunriseSnowTextureID,
+         BoolToStr(BoosterTexturesLoaded, True)]));
+      AddToLogFile(EngineLog, Format('=== DrawSky pos: x=%.2f y=%.2f z=%.2f rot=%.2f Config_NewSky=%s Config_MegaRealism=%s ===',
+        [x, y, z, v5, BoolToStr(Config_NewSky, True), BoolToStr(Config_MegaRealism, True)]));
+    end;
+
+    // ===== MEGA REALISM: динамические фазы неба по городу и месяцу =====
+    mrHandled := False;
+    if Config_MegaRealism and Config_NewSky and BoosterTexturesLoaded then
+    begin
+      mrSR := GetMegaRealismSunrise;  // восход в минутах
+      mrSS := GetMegaRealismSunset;   // закат в минутах
+
+      // 12 фаз неба (30-минутные переходы, 30-минутные чистые фазы):
+      // P0..P1: ночь->рассветные сумерки (fade)   SR-90..SR-60
+      // P1..P2: чистые рассветные сумерки          SR-60..SR-30
+      // P2..P3: сумерки->рассвет (fade)            SR-30..SR
+      // P3..P4: чистый рассвет                     SR..SR+30
+      // P4..P5: рассвет->день (fade)               SR+30..SR+60
+      // P5..P6: чистый день                        SR+60..SS-60
+      // P6..P7: день->закат (fade)                 SS-60..SS-30
+      // P7..P8: чистый закат                       SS-30..SS
+      // P8..P9: закат->сумерки (fade)              SS..SS+30
+      // P9..P10: чистые сумерки заката             SS+30..SS+60
+      // P10..P11: сумерки->ночь (fade)             SS+60..SS+90
+      // остальное: чистая ночь
+
+      mrP0  := mrSR - 90;
+      mrP1  := mrSR - 60;
+      mrP2  := mrSR - 30;
+      mrP3  := mrSR;
+      mrP4  := mrSR + 30;
+      mrP5  := mrSR + 60;
+      mrP6  := mrSS - 60;
+      mrP7  := mrSS - 30;
+      mrP8  := mrSS;
+      mrP9  := mrSS + 30;
+      mrP10 := mrSS + 60;
+      mrP11 := mrSS + 90;
+
+      mrHandled := True;
+
+      if isWinter then
+      begin
+        // === MEGA REALISM ЗИМА ===
+
+        // Ночь -> Рассветные сумерки (fade 30 мин)
+        if (totalMinutes >= mrP0) and (totalMinutes < mrP1) then
+        begin
+          DrawSkyLayer(BoosterNightSnowTextureID, 240, modelID);
+          alpha := Round((totalMinutes - mrP0) * 255 / 30);
+          DrawSkyLayer(BoosterSunriseDawnSnowTextureID, alpha, modelID);
+        end
+        // Чистые рассветные сумерки
+        else if (totalMinutes >= mrP1) and (totalMinutes < mrP2) then
+        begin
+          DrawSkyLayer(BoosterSunriseDawnSnowTextureID, 255, modelID);
+        end
+        // Рассветные сумерки -> Рассвет (fade 30 мин)
+        else if (totalMinutes >= mrP2) and (totalMinutes < mrP3) then
+        begin
+          DrawSkyLayer(BoosterSunriseDawnSnowTextureID, 255, modelID);
+          alpha := Round((totalMinutes - mrP2) * 255 / 30);
+          DrawSkyLayer(BoosterSunriseSnowTextureID, alpha, modelID);
+        end
+        // Чистый рассвет
+        else if (totalMinutes >= mrP3) and (totalMinutes < mrP4) then
+        begin
+          DrawSkyLayer(BoosterSunriseSnowTextureID, 255, modelID);
+        end
+        // Рассвет -> День (fade 30 мин)
+        else if (totalMinutes >= mrP4) and (totalMinutes < mrP5) then
+        begin
+          DrawSkyLayer(BoosterSunriseSnowTextureID, 255, modelID);
+          alpha := Round((totalMinutes - mrP4) * 255 / 30);
+          DrawSkyLayer(BoosterDaySnowTextureID, alpha, modelID);
+        end
+        // Чистый день
+        else if (totalMinutes >= mrP5) and (totalMinutes < mrP6) then
+        begin
+          DrawSkyLayer(BoosterDaySnowTextureID, 255, modelID);
+        end
+        // День -> Закат (fade 30 мин)
+        else if (totalMinutes >= mrP6) and (totalMinutes < mrP7) then
+        begin
+          DrawSkyLayer(BoosterDaySnowTextureID, 255, modelID);
+          alpha := Round((totalMinutes - mrP6) * 255 / 30);
+          DrawSkyLayer(BoosterSunsetSnowTextureID, alpha, modelID);
+        end
+        // Чистый закат
+        else if (totalMinutes >= mrP7) and (totalMinutes < mrP8) then
+        begin
+          DrawSkyLayer(BoosterSunsetSnowTextureID, 255, modelID);
+        end
+        // Закат -> Сумерки (fade 30 мин)
+        else if (totalMinutes >= mrP8) and (totalMinutes < mrP9) then
+        begin
+          DrawSkyLayer(BoosterSunsetSnowTextureID, 255, modelID);
+          alpha := Round((totalMinutes - mrP8) * 255 / 30);
+          DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, alpha, modelID);
+        end
+        // Чистые сумерки заката
+        else if (totalMinutes >= mrP9) and (totalMinutes < mrP10) then
+        begin
+          DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, 255, modelID);
+        end
+        // Сумерки -> Ночь (fade 30 мин)
+        else if (totalMinutes >= mrP10) and (totalMinutes < mrP11) then
+        begin
+          DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, 255, modelID);
+          alpha := Round((totalMinutes - mrP10) * 240 / 30);
+          DrawSkyLayer(BoosterNightSnowTextureID, alpha, modelID);
+        end
+        // Чистая ночь
+        else
+        begin
+          DrawSkyLayer(BoosterNightSnowTextureID, 240, modelID);
+        end;
+      end
+      else
+      begin
+        // === MEGA REALISM ЛЕТО ===
+
+        // Ночь -> Рассветные сумерки (fade 30 мин)
+        if (totalMinutes >= mrP0) and (totalMinutes < mrP1) then
+        begin
+          DrawSkyLayer(nightTextureID, 240, modelID);
+          alpha := Round((totalMinutes - mrP0) * 255 / 30);
+          DrawSkyLayer(BoosterSunriseDawnTextureID, alpha, modelID);
+        end
+        // Чистые рассветные сумерки
+        else if (totalMinutes >= mrP1) and (totalMinutes < mrP2) then
+        begin
+          DrawSkyLayer(BoosterSunriseDawnTextureID, 255, modelID);
+        end
+        // Рассветные сумерки -> Рассвет (fade 30 мин)
+        else if (totalMinutes >= mrP2) and (totalMinutes < mrP3) then
+        begin
+          DrawSkyLayer(BoosterSunriseDawnTextureID, 255, modelID);
+          alpha := Round((totalMinutes - mrP2) * 255 / 30);
+          DrawSkyLayer(sunriseTextureID, alpha, modelID);
+        end
+        // Чистый рассвет
+        else if (totalMinutes >= mrP3) and (totalMinutes < mrP4) then
+        begin
+          DrawSkyLayer(sunriseTextureID, 255, modelID);
+        end
+        // Рассвет -> День (fade 30 мин)
+        else if (totalMinutes >= mrP4) and (totalMinutes < mrP5) then
+        begin
+          DrawSkyLayer(sunriseTextureID, 255, modelID);
+          alpha := Round((totalMinutes - mrP4) * 255 / 30);
+          DrawSkyLayer(dayTextureID, alpha, modelID);
+        end
+        // Чистый день
+        else if (totalMinutes >= mrP5) and (totalMinutes < mrP6) then
+        begin
+          DrawSkyLayer(dayTextureID, 255, modelID);
+        end
+        // День -> Закат (fade 30 мин)
+        else if (totalMinutes >= mrP6) and (totalMinutes < mrP7) then
+        begin
+          DrawSkyLayer(dayTextureID, 255, modelID);
+          alpha := Round((totalMinutes - mrP6) * 255 / 30);
+          DrawSkyLayer(sunsetTextureID, alpha, modelID);
+        end
+        // Чистый закат
+        else if (totalMinutes >= mrP7) and (totalMinutes < mrP8) then
+        begin
+          DrawSkyLayer(sunsetTextureID, 255, modelID);
+        end
+        // Закат -> Сумерки (fade 30 мин)
+        else if (totalMinutes >= mrP8) and (totalMinutes < mrP9) then
+        begin
+          DrawSkyLayer(sunsetTextureID, 255, modelID);
+          alpha := Round((totalMinutes - mrP8) * 255 / 30);
+          DrawSkyLayer(BoosterSunsetTwilightTextureID, alpha, modelID);
+        end
+        // Чистые сумерки заката
+        else if (totalMinutes >= mrP9) and (totalMinutes < mrP10) then
+        begin
+          DrawSkyLayer(BoosterSunsetTwilightTextureID, 255, modelID);
+        end
+        // Сумерки -> Ночь (fade 30 мин)
+        else if (totalMinutes >= mrP10) and (totalMinutes < mrP11) then
+        begin
+          DrawSkyLayer(BoosterSunsetTwilightTextureID, 255, modelID);
+          alpha := Round((totalMinutes - mrP10) * 240 / 30);
+          DrawSkyLayer(nightTextureID, alpha, modelID);
+        end
+        // Чистая ночь
+        else
+        begin
+          DrawSkyLayer(nightTextureID, 240, modelID);
+        end;
+      end;
+    end;
+
+    // ===== Стандартная логика (если MegaRealism не обработал) =====
+    if not mrHandled then
     if isWinter then
     begin
       // ===== ЗИМНЕЕ ВРЕМЯ С СМЕЩЕНИЕМ НА +1 ЧАС =====
@@ -1012,13 +1456,9 @@ begin
       // 8:30-9:00: ПЛАВНЫЙ переход предрассветные сумерки → рассвет
       else if (totalMinutes >= 510) and (totalMinutes < 540) then // 8:30-9:00
       begin
-        // Новая текстура (рассвет) плавно появляется
+        DrawSkyLayer(BoosterSunriseDawnSnowTextureID, 255, modelID);
         alpha := Round((totalMinutes - 510) * 255 / 30);
         DrawSkyLayer(BoosterSunriseSnowTextureID, alpha, modelID);
-        
-        // Старая текстура (предрассветные сумерки) плавно исчезает
-        alpha := Round(255 - (totalMinutes - 510) * 255 / 30);
-        DrawSkyLayer(BoosterSunriseDawnSnowTextureID, alpha, modelID);
       end
       
       // 9:00-10:30: Чистый рассвет
@@ -1032,13 +1472,9 @@ begin
       // 10:30-11:00: ПЛАВНЫЙ переход рассвет → день
       else if (totalMinutes >= 630) and (totalMinutes < 660) then // 10:30-11:00
       begin
-        // Новая текстура (день) плавно появляется
+        DrawSkyLayer(BoosterSunriseSnowTextureID, 255, modelID);
         alpha := Round((totalMinutes - 630) * 255 / 30);
         DrawSkyLayer(BoosterDaySnowTextureID, alpha, modelID);
-        
-        // Старая текстура (рассвет) плавно исчезает
-        alpha := Round(255 - (totalMinutes - 630) * 255 / 30);
-        DrawSkyLayer(BoosterSunriseSnowTextureID, alpha, modelID);
       end
       
       // 11:00-15:30: Чистый день
@@ -1052,13 +1488,9 @@ begin
       // 15:30-16:00: ПЛАВНЫЙ переход день → закат
       else if (totalMinutes >= 930) and (totalMinutes < 960) then // 15:30-16:00
       begin
-        // Новая текстура (закат) плавно появляется
+        DrawSkyLayer(BoosterDaySnowTextureID, 255, modelID);
         alpha := Round((totalMinutes - 930) * 255 / 30);
         DrawSkyLayer(BoosterSunsetSnowTextureID, alpha, modelID);
-        
-        // Старая текстура (день) плавно исчезает
-        alpha := Round(255 - (totalMinutes - 930) * 255 / 30);
-        DrawSkyLayer(BoosterDaySnowTextureID, alpha, modelID);
       end
       
       // 16:00-17:30: Чистый закат
@@ -1072,13 +1504,9 @@ begin
       // 17:30-18:00: ПЛАВНЫЙ переход закат → сумерки заката
       else if (totalMinutes >= 1050) and (totalMinutes < 1080) then // 17:30-18:00
       begin
-        // Новая текстура (сумерки заката) плавно появляется
+        DrawSkyLayer(BoosterSunsetSnowTextureID, 255, modelID);
         alpha := Round((totalMinutes - 1050) * 255 / 30);
         DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, alpha, modelID);
-        
-        // Старая текстура (закат) плавно исчезает
-        alpha := Round(255 - (totalMinutes - 1050) * 255 / 30);
-        DrawSkyLayer(BoosterSunsetSnowTextureID, alpha, modelID);
       end
       
       // 18:00-19:30: Чистые сумерки заката
@@ -1092,13 +1520,9 @@ begin
       // 19:30-20:00: ПЛАВНЫЙ переход сумерки заката → ночь
       else if (totalMinutes >= 1170) and (totalMinutes < 1200) then // 19:30-20:00
       begin
-        // Новая текстура (ночь) плавно появляется
-        alpha := Round((totalMinutes - 1170) * 240 / 30); // До 240, не до 255
+        DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, 255, modelID);
+        alpha := Round((totalMinutes - 1170) * 240 / 30);
         DrawSkyLayer(BoosterNightSnowTextureID, alpha, modelID);
-        
-        // Старая текстура (сумерки заката) плавно исчезает
-        alpha := Round(255 - (totalMinutes - 1170) * 255 / 30);
-        DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, alpha, modelID);
       end
       
       // 20:00-6:30: Чистая ночь
@@ -1112,13 +1536,9 @@ begin
       // 6:30-7:00: ПЛАВНЫЙ переход ночь → предрассветные сумерки
       else if (totalMinutes >= 390) and (totalMinutes < 420) then // 6:30-7:00
       begin
-        // Новая текстура (предрассветные сумерки) плавно появляется
+        DrawSkyLayer(BoosterNightSnowTextureID, 240, modelID);
         alpha := Round((totalMinutes - 390) * 255 / 30);
         DrawSkyLayer(BoosterSunriseDawnSnowTextureID, alpha, modelID);
-        
-        // Старая текстура (ночь) плавно исчезает
-        alpha := Round(240 - (totalMinutes - 390) * 240 / 30);
-        DrawSkyLayer(BoosterNightSnowTextureID, alpha, modelID);
       end
       
       // Fallback на ночь
@@ -1136,13 +1556,9 @@ begin
       // 5:00-6:00: ПЛАВНЫЙ переход предрассветные сумерки → рассвет
       if (totalMinutes >= 300) and (totalMinutes < 360) then // 5:00-6:00
       begin
-        // Новая текстура (рассвет) плавно появляется
+        DrawSkyLayer(BoosterSunriseDawnTextureID, 255, modelID);
         alpha := Round((totalMinutes - 300) * 255 / 60);
         DrawSkyLayer(sunriseTextureID, alpha, modelID);
-        
-        // Старая текстура (предрассветные сумерки) плавно исчезает
-        alpha := Round(255 - (totalMinutes - 300) * 255 / 60);
-        DrawSkyLayer(BoosterSunriseDawnTextureID, alpha, modelID);
       end
       
       // 6:00-7:00: Чистый рассвет
@@ -1156,13 +1572,9 @@ begin
       // 7:00-8:00: ПЛАВНЫЙ переход рассвет → день
       else if (totalMinutes >= 420) and (totalMinutes < 480) then // 7:00-8:00
       begin
-        // Новая текстура (день) плавно появляется
+        DrawSkyLayer(sunriseTextureID, 255, modelID);
         alpha := Round((totalMinutes - 420) * 255 / 60);
         DrawSkyLayer(dayTextureID, alpha, modelID);
-        
-        // Старая текстура (рассвет) плавно исчезает
-        alpha := Round(255 - (totalMinutes - 420) * 255 / 60);
-        DrawSkyLayer(sunriseTextureID, alpha, modelID);
       end
       
       // 8:00-17:00: Чистый день
@@ -1176,13 +1588,9 @@ begin
       // 17:00-18:00: ПЛАВНЫЙ переход день → закат
       else if (totalMinutes >= 1020) and (totalMinutes < 1080) then // 17:00-18:00
       begin
-        // Новая текстура (закат) плавно появляется
+        DrawSkyLayer(dayTextureID, 255, modelID);
         alpha := Round((totalMinutes - 1020) * 255 / 60);
         DrawSkyLayer(sunsetTextureID, alpha, modelID);
-        
-        // Старая текстура (день) плавно исчезает
-        alpha := Round(255 - (totalMinutes - 1020) * 255 / 60);
-        DrawSkyLayer(dayTextureID, alpha, modelID);
       end
       
       // 18:00-19:00: Чистый закат
@@ -1196,13 +1604,9 @@ begin
       // 19:00-20:00: ПЛАВНЫЙ переход закат → сумерки заката
       else if (totalMinutes >= 1140) and (totalMinutes < 1200) then // 19:00-20:00
       begin
-        // Новая текстура (сумерки заката) плавно появляется
+        DrawSkyLayer(sunsetTextureID, 255, modelID);
         alpha := Round((totalMinutes - 1140) * 255 / 60);
         DrawSkyLayer(BoosterSunsetTwilightTextureID, alpha, modelID);
-        
-        // Старая текстура (закат) плавно исчезает
-        alpha := Round(255 - (totalMinutes - 1140) * 255 / 60);
-        DrawSkyLayer(sunsetTextureID, alpha, modelID);
       end
       
       // 20:00-21:00: Чистые сумерки заката
@@ -1216,13 +1620,9 @@ begin
       // 21:00-22:00: ПЛАВНЫЙ переход сумерки заката → ночь
       else if (totalMinutes >= 1260) and (totalMinutes < 1320) then // 21:00-22:00
       begin
-        // Новая текстура (ночь) плавно появляется
-        alpha := Round((totalMinutes - 1260) * 240 / 60); // До 240, не до 255
+        DrawSkyLayer(BoosterSunsetTwilightTextureID, 255, modelID);
+        alpha := Round((totalMinutes - 1260) * 240 / 60);
         DrawSkyLayer(nightTextureID, alpha, modelID);
-        
-        // Старая текстура (сумерки заката) плавно исчезает
-        alpha := Round(255 - (totalMinutes - 1260) * 255 / 60);
-        DrawSkyLayer(BoosterSunsetTwilightTextureID, alpha, modelID);
       end
       
       // 22:00-3:00: Чистая ночь
@@ -1236,13 +1636,9 @@ begin
       // 3:00-4:00: ПЛАВНЫЙ переход ночь → предрассветные сумерки
       else if (totalMinutes >= 180) and (totalMinutes < 240) then // 3:00-4:00
       begin
-        // Новая текстура (предрассветные сумерки) плавно появляется
+        DrawSkyLayer(nightTextureID, 240, modelID);
         alpha := Round((totalMinutes - 180) * 255 / 60);
         DrawSkyLayer(BoosterSunriseDawnTextureID, alpha, modelID);
-        
-        // Старая текстура (ночь) плавно исчезает до 240, не до 0
-        alpha := Round(240 - (totalMinutes - 180) * 240 / 60);
-        DrawSkyLayer(nightTextureID, alpha, modelID);
       end
       
       // 4:00-5:00: Чистые предрассветные сумерки
@@ -5961,9 +6357,25 @@ function IsNightTime: Boolean;
 var
   hour: Integer;
   season: Byte;
+  totalMin, srMin, ssMin: Integer;
 begin
   hour := GetCurrentHour;
-  
+
+  // Мега-реализм: используем точные данные восхода/заката
+  if Config_MegaRealism then
+  begin
+    try
+      totalMin := hour * 60 + PInteger(Pointer($00400000 + $8C08038))^;
+      srMin := GetMegaRealismSunrise;
+      ssMin := GetMegaRealismSunset;
+      // Ночь = после заката+90мин или до рассвета-90мин
+      Result := (totalMin >= ssMin + 90) or (totalMin < srMin - 90);
+    except
+      Result := (hour >= 21) or (hour <= 4);
+    end;
+    Exit;
+  end;
+
   try
     // Читаем сезон: 0 = лето, 1 = зима
     season := PByte(Pointer($00400000 + $349968))^;
@@ -6637,6 +7049,9 @@ var
   Speed: Single;
   NewYaw, NewPitch: Single;
   ConfigStateChanged: Boolean;
+  DepthValue: Single;
+  LinearDepth: Single;
+  Viewport: array[0..3] of Integer;
 begin
   CurrentTime := GetTickCount;
   
@@ -6649,6 +7064,7 @@ begin
     begin
       AddToLogFile(EngineLog, 'Конфиг требует выключить фрикам при старте');
       FreecamEnabled := False;
+      FreecamInitialized := False;
       
       // Восстанавливаем оригинальные байты
       if RestoreOriginalBytes then
@@ -6713,6 +7129,7 @@ begin
       AddToLogFile(EngineLog, 'Ручное выключение фрикама (Alt+X)');
       
       FreecamEnabled := False;
+      FreecamInitialized := False;
       
       WriteMemoryDouble(FREEMODE_SWITCH_ADDR, 0.0);
       WriteMemorySingle(ADDR_X, InitialX);
@@ -6764,6 +7181,7 @@ begin
       begin
         AddToLogFile(EngineLog, 'Автоматически выключаем фрикам (из меню)...');
         FreecamEnabled := False;
+        FreecamInitialized := False;
         
         WriteMemoryDouble(FREEMODE_SWITCH_ADDR, 0.0);
         WriteMemorySingle(ADDR_X, InitialX);
@@ -6813,36 +7231,101 @@ begin
     Speed := MenuFreecamBaseSpeed;
   
   if Speed <= 0.0 then Speed := 0.01;
-  
-  if IsKeyPressed(Ord('W')) then
+
+  // === ДВИЖЕНИЕ ===
+  if FreecamWalkMode then
   begin
-    CurrentX := CurrentX + ForwardX * Speed;
-    CurrentY := CurrentY + ForwardY * Speed;
-    CurrentZ := CurrentZ + ForwardZ * Speed;
-  end;
-  
-  if IsKeyPressed(Ord('S')) then
+    // Free Walk: движение только по горизонтали (XY), Z управляется гравитацией
+    if IsKeyPressed(Ord('W')) then
+    begin
+      CurrentX := CurrentX + sin(YawRad) * Speed;
+      CurrentY := CurrentY + cos(YawRad) * Speed;
+    end;
+    if IsKeyPressed(Ord('S')) then
+    begin
+      CurrentX := CurrentX - sin(YawRad) * Speed;
+      CurrentY := CurrentY - cos(YawRad) * Speed;
+    end;
+    if IsKeyPressed(Ord('A')) then
+    begin
+      CurrentX := CurrentX + RightX * Speed;
+      CurrentY := CurrentY + RightY * Speed;
+    end;
+    if IsKeyPressed(Ord('D')) then
+    begin
+      CurrentX := CurrentX - RightX * Speed;
+      CurrentY := CurrentY - RightY * Speed;
+    end;
+    // Прыжок (только если стоим на земле — vel ~= 0)
+    if IsKeyPressed(VK_SPACE) and (Abs(WalkGravityVel) < 0.01) then
+      WalkGravityVel := 0.15;
+    // Гравитация
+    WalkGravityVel := WalkGravityVel - WALK_GRAVITY;
+    CurrentZ := CurrentZ + WalkGravityVel;
+  end
+  else
   begin
-    CurrentX := CurrentX - ForwardX * Speed;
-    CurrentY := CurrentY - ForwardY * Speed;
-    CurrentZ := CurrentZ - ForwardZ * Speed;
+    // Обычный фрикам: полный 3D полёт
+    if IsKeyPressed(Ord('W')) then
+    begin
+      CurrentX := CurrentX + ForwardX * Speed;
+      CurrentY := CurrentY + ForwardY * Speed;
+      CurrentZ := CurrentZ + ForwardZ * Speed;
+    end;
+    if IsKeyPressed(Ord('S')) then
+    begin
+      CurrentX := CurrentX - ForwardX * Speed;
+      CurrentY := CurrentY - ForwardY * Speed;
+      CurrentZ := CurrentZ - ForwardZ * Speed;
+    end;
+    if IsKeyPressed(Ord('A')) then
+    begin
+      CurrentX := CurrentX + RightX * Speed;
+      CurrentY := CurrentY + RightY * Speed;
+    end;
+    if IsKeyPressed(Ord('D')) then
+    begin
+      CurrentX := CurrentX - RightX * Speed;
+      CurrentY := CurrentY - RightY * Speed;
+    end;
+    if IsKeyPressed(VK_SPACE) then
+      CurrentZ := CurrentZ + Speed;
+    if IsKeyPressed(VK_CONTROL) then
+      CurrentZ := CurrentZ - Speed;
   end;
-  
-  if IsKeyPressed(Ord('A')) then
+
+  // === КОЛЛИЗИЯ (depth buffer) ===
+  if FreecamCollision then
   begin
-    CurrentX := CurrentX + RightX * Speed;
-    CurrentY := CurrentY + RightY * Speed;
+    // Читаем глубину в центре экрана — показывает расстояние до ближайшего объекта впереди
+    glGetIntegerv(GL_VIEWPORT, @Viewport[0]);
+    glReadPixels(Viewport[2] div 2, Viewport[3] div 2, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, @DepthValue);
+    // Конвертируем depth [0..1] в линейное расстояние (near=0.1, far=10000)
+    if DepthValue < 1.0 then
+      LinearDepth := (0.1 * 10000.0) / (10000.0 - DepthValue * (10000.0 - 0.1))
+    else
+      LinearDepth := 10000.0;
+    // Если объект ближе чем радиус игрока — блокируем движение
+    if LinearDepth < WALK_PLAYER_RADIUS then
+    begin
+      CurrentX := ReadMemorySingle(ADDR_X);
+      CurrentY := ReadMemorySingle(ADDR_Y);
+      CurrentZ := ReadMemorySingle(ADDR_Z);
+      if FreecamWalkMode then
+        WalkGravityVel := 0.0;
+    end;
   end;
-  
-  if IsKeyPressed(Ord('D')) then
+
+  // Free Walk: не дать провалиться ниже стартовой Z (грубый пол)
+  if FreecamWalkMode then
   begin
-    CurrentX := CurrentX - RightX * Speed;
-    CurrentY := CurrentY - RightY * Speed;
+    if CurrentZ < InitialZ then
+    begin
+      CurrentZ := InitialZ;
+      WalkGravityVel := 0.0;
+    end;
   end;
-  
-  if IsKeyPressed(VK_SPACE) then
-    CurrentZ := CurrentZ + Speed;
-  
+
   NewYaw := CurrentYaw;
   NewPitch := ClampPitch(CurrentPitch);
 
@@ -8189,6 +8672,7 @@ var
   i: Integer;
   angle, needleAngle: Single;
   speed, speedLimit, maxSpeed, speedTarget: Single;
+  tickStep, tickCount: Integer;
   tc, tm, ur: Single;
   speedText: string;
   segments: Integer;
@@ -8246,7 +8730,18 @@ begin
     speed := GetSpeedValue2;
     speedLimit := GetLimitSpeedValue;
     speedTarget := GetTargetSpeedValue;
-    maxSpeed := MAX_SPEED;
+    if BilBlock160 then
+    begin
+      maxSpeed := 160;
+      tickStep := 10;
+      tickCount := 16; // 0,10,20...160
+    end
+    else
+    begin
+      maxSpeed := MAX_SPEED;
+      tickStep := 20;
+      tickCount := 15; // 0,20,40...300
+    end;
     tc := StrToFloatDef(GetPressureTC, 0);
     tm := StrToFloatDef(GetPressureTM, 0);
     ur := StrToFloatDef(GetPressureUR, 0);
@@ -8347,9 +8842,9 @@ begin
 end;
 
     // === ДЕЛЕНИЯ + ЦИФРЫ ===
-    for i := 0 to 15 do
+    for i := 0 to tickCount do
     begin
-      angle := (START_ANGLE - (i * 20 / maxSpeed) * SPEED_RANGE) * (Pi / 180.0);
+      angle := (START_ANGLE - (i * tickStep / maxSpeed) * SPEED_RANGE) * (Pi / 180.0);
 
       // Деление
       BeginObj3D;
@@ -8378,7 +8873,7 @@ end;
       Scale3D(0.008);
       Color3D($FFFFFF, 255, False, 0.0);
       SetTexture(0);
-      DrawText3D(0, IntToStr(i * 20));
+      DrawText3D(0, IntToStr(i * tickStep));
       EndObj3D;
     end;
 
