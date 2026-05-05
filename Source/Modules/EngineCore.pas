@@ -704,8 +704,8 @@ begin
 
 CurrentTime := GetTimer;
   
-  // Чтение конфига раз в 2 секунды (2000 мс)
-  if (CurrentTime - LastConfigReadTime) >= 100 then
+  // Обновление модулей раз в 500 мс
+  if (CurrentTime - LastConfigReadTime) >= 500 then
   begin
     ProcessAllModules;
     LastConfigReadTime := CurrentTime;
@@ -812,7 +812,7 @@ begin
 
        _frustumcalculated:=false;
 
-       SetLength(Obj3DInfo,0);
+       Obj3DInfoCount := 0;
        MultyTexActive:=false;
 
        if length(Plugins)<>0 then

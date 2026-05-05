@@ -441,9 +441,18 @@ begin
   EndObj3D;
 end;
 
+var
+  CachedRA3Active: Boolean = False;
+  CachedRA3LocNum: string = '';
+
 function IsRA3Active: Boolean;
 begin
-  Result := Pos('RA3', UpperCase(LocNum)) > 0;
+  if LocNum <> CachedRA3LocNum then
+  begin
+    CachedRA3LocNum := LocNum;
+    CachedRA3Active := Pos('RA3', UpperCase(LocNum)) > 0;
+  end;
+  Result := CachedRA3Active;
 end;
 
 procedure WriteRA3CameraInit;

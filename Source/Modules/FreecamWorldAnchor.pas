@@ -65,10 +65,7 @@ var
   LastToggleTime: Cardinal = 0;
   LogOnceEnabled: Boolean = False;
   LogOnceDisabled: Boolean = False;
-  // Диагностика: логируем первый успешный/неуспешный read loco-pos после
-  // включения тоггла, и каждые 60 кадров — текущие значения чтобы видеть
-  // движется ли локомотив в наших данных.
-  DiagFrameCount:  Cardinal = 0;
+  // Диагностика: логируем первый успешный read loco-pos после включения тоггла.
   DiagFirstLog:    Boolean = False;
   DiagPtrFailLog:  Boolean = False;
   ApplyEverCalled: Boolean = False;
@@ -166,14 +163,12 @@ begin
     Exit;
   end;
 
-  // Каждые 60 кадров логируем что прочиталось — чтобы можно было
-  // увидеть в логе, движется ли локомотив в наших данных.
-  Inc(DiagFrameCount);
-  if (not DiagFirstLog) or ((DiagFrameCount mod 60) = 0) then
+  // Диагностика: логируем только при первом успешном чтении
+  if not DiagFirstLog then
   begin
     AddToLogFile(FWA_LOG, Format(
-      'FreecamWorldAnchor: loco_world = (%.3f, %.3f, %.3f), prev = (%.3f, %.3f, %.3f)',
-      [CurLocoX, CurLocoY, CurLocoZ, PrevLocoX, PrevLocoY, PrevLocoZ]));
+      'FreecamWorldAnchor: first read loco_world = (%.3f, %.3f, %.3f)',
+      [CurLocoX, CurLocoY, CurLocoZ]));
     DiagFirstLog := True;
   end;
 

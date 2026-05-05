@@ -146,6 +146,11 @@ type
     Block160: Boolean;
     FreecamCollisionEnabled: Boolean;
     FreecamWalkEnabled: Boolean;
+    FreeWalkSection: TExpandableSection;
+    // 0 = WASD, 1 = Стрелочки
+    FreecamControlMode: Integer;
+    // Кнопка временного отключения коллизии: 0 = Откл, 1 = Shift, 2 = Ctrl
+    CollisionDisableKey: Integer;
   end;
 
   // Источник значения для кастомного 3D-текста — соответствует функциям из KlubData.
@@ -212,6 +217,16 @@ uses
   EngineCore, CustomImages3D; // EngineCore только в implementation — иначе circular reference
 
 const
+  FREECAM_CONTROL_COUNT = 2;
+  FreecamControlNames: array[0..FREECAM_CONTROL_COUNT-1] of string = (
+    'WASD', 'Стрелочки'
+  );
+
+  COLLISION_DISABLE_COUNT = 3;
+  CollisionDisableNames: array[0..COLLISION_DISABLE_COUNT-1] of string = (
+    'Откл', 'Shift', 'Ctrl'
+  );
+
   MEGA_REALISM_CITY_COUNT = 21;
   MegaRealismCityNames: array[0..MEGA_REALISM_CITY_COUNT-1] of string = (
     'Калининград', 'Санкт-Петербург', 'Москва', 'Воронеж',
@@ -369,6 +384,7 @@ type
     Block160Text: string;
     CollisionText: string;
     FreeWalkText: string;
+    CollisionDisableText: string;
     FXAAText: string;
     BloomText: string;
     PostFXText: string;
@@ -422,7 +438,8 @@ const
       BilServerText: 'БИЛ-В Сервер';
       Block160Text: '160 БЛОК';
       CollisionText: 'Коллизия DMD';
-      FreeWalkText: 'Free Walk';
+      FreeWalkText: 'Свободная Ходьба';
+      CollisionDisableText: 'Откл. коллизии';
       FXAAText: 'Сглаживание FXAA';
       BloomText: 'Свечение (Bloom)';
       PostFXText: 'Графич. эффекты';
@@ -467,7 +484,8 @@ const
       BilServerText: 'БІЛ-В Сервер';
       Block160Text: '160 БЛОК';
       CollisionText: 'Колізія DMD';
-      FreeWalkText: 'Free Walk';
+      FreeWalkText: 'Вільна Ходьба';
+      CollisionDisableText: 'Відкл. колізії';
       FXAAText: 'Згладжування FXAA';
       BloomText: 'Сяйво (Bloom)';
       PostFXText: 'Граф. ефекти';
@@ -513,6 +531,7 @@ const
       Block160Text: '160 BLOCK';
       CollisionText: 'DMD Collision';
       FreeWalkText: 'Free Walk';
+      CollisionDisableText: 'Disable collision';
       FXAAText: 'FXAA Antialiasing';
       BloomText: 'Bloom Glow';
       PostFXText: 'Graphics FX';
@@ -561,6 +580,7 @@ begin
   else if TextType = 'Block160Text' then Result := LanguageTexts[CurrentLanguage].Block160Text
   else if TextType = 'CollisionText' then Result := LanguageTexts[CurrentLanguage].CollisionText
   else if TextType = 'FreeWalkText' then Result := LanguageTexts[CurrentLanguage].FreeWalkText
+  else if TextType = 'CollisionDisableText' then Result := LanguageTexts[CurrentLanguage].CollisionDisableText
   else if TextType = 'FXAAText' then Result := LanguageTexts[CurrentLanguage].FXAAText
   else if TextType = 'BloomText' then Result := LanguageTexts[CurrentLanguage].BloomText
   else if TextType = 'PostFXText' then Result := LanguageTexts[CurrentLanguage].PostFXText
@@ -3027,6 +3047,8 @@ begin
         if Key = 'block160' then begin Settings.Block160 := (Value = '1'); BilBlock160 := Settings.Block160; end;
         if Key = 'freecam_collision' then begin Settings.FreecamCollisionEnabled := (Value = '1'); FreecamCollision := Settings.FreecamCollisionEnabled; end;
         if Key = 'freecam_walk' then begin Settings.FreecamWalkEnabled := (Value = '1'); FreecamWalkMode := Settings.FreecamWalkEnabled; end;
+        if Key = 'freecam_control_mode' then begin Settings.FreecamControlMode := StrToIntDef(Value, 0); if Settings.FreecamControlMode >= FREECAM_CONTROL_COUNT then Settings.FreecamControlMode := 0; FreecamControlMode := Settings.FreecamControlMode; end;
+        if Key = 'collision_disable_key' then begin Settings.CollisionDisableKey := StrToIntDef(Value, 0); if Settings.CollisionDisableKey >= COLLISION_DISABLE_COUNT then Settings.CollisionDisableKey := 0; FreecamCollisionDisableKey := Settings.CollisionDisableKey; end;
         if Key = 'new_view_angle' then Settings.NewViewAngle := (Value = '1');
         if Key = 'camera_sensitivity' then Settings.CameraSensitivity := (Value = '1');
 
@@ -3235,6 +3257,8 @@ begin
     if Settings.Block160 then WriteLn(F, 'block160: 1') else WriteLn(F, 'block160: 0');
     if Settings.FreecamCollisionEnabled then WriteLn(F, 'freecam_collision: 1') else WriteLn(F, 'freecam_collision: 0');
     if Settings.FreecamWalkEnabled then WriteLn(F, 'freecam_walk: 1') else WriteLn(F, 'freecam_walk: 0');
+    WriteLn(F, 'freecam_control_mode: ' + IntToStr(Settings.FreecamControlMode));
+    WriteLn(F, 'collision_disable_key: ' + IntToStr(Settings.CollisionDisableKey));
     if Settings.NewViewAngle then WriteLn(F, 'new_view_angle: 1') else WriteLn(F, 'new_view_angle: 0');
     if Settings.CameraSensitivity then WriteLn(F, 'camera_sensitivity: 1') else WriteLn(F, 'camera_sensitivity: 0');
     
@@ -3774,6 +3798,20 @@ begin
     end;
     if DeveloperSection.AnimProgress < 0 then DeveloperSection.AnimProgress := 0;
     if DeveloperSection.AnimProgress > 1 then DeveloperSection.AnimProgress := 1;
+
+    // Free Walk секция
+    if FreeWalkSection.Expanded then
+    begin
+      if FreeWalkSection.AnimProgress < 1.0 then
+        FreeWalkSection.AnimProgress := FreeWalkSection.AnimProgress + 5.0 * DeltaTime;
+    end
+    else
+    begin
+      if FreeWalkSection.AnimProgress > 0.0 then
+        FreeWalkSection.AnimProgress := FreeWalkSection.AnimProgress - 5.0 * DeltaTime;
+    end;
+    if FreeWalkSection.AnimProgress < 0 then FreeWalkSection.AnimProgress := 0;
+    if FreeWalkSection.AnimProgress > 1 then FreeWalkSection.AnimProgress := 1;
   end;
 end;
 
@@ -3869,6 +3907,9 @@ begin
   if Settings.MainCamera and Settings.CameraSensitivity then
     ApplyCameraSensitivity;
 
+  // Sync freecam globals
+  FreecamControlMode := Settings.FreecamControlMode;
+  FreecamCollisionDisableKey := Settings.CollisionDisableKey;
   MenuFreecamBaseSpeed := Settings.BasespeedSlider.Value;
   MenuFreecamFastSpeed := Settings.FastspeedSlider.Value;
   MenuFreecamTurnSpeed := Settings.TurnspeedSlider.Value;
@@ -4674,7 +4715,7 @@ begin
     begin
       TotalHeight := TotalHeight + ITEM_HEIGHT;
       if Settings.FreecamSection.AnimProgress > 0.01 then
-        TotalHeight := TotalHeight + Round(150 * Settings.FreecamSection.AnimProgress) + MARGIN;
+        TotalHeight := TotalHeight + Round(160 * Settings.FreecamSection.AnimProgress) + MARGIN;
       
       TotalHeight := TotalHeight + ITEM_HEIGHT;
       if Settings.MainCameraSection.AnimProgress > 0.01 then
@@ -4687,8 +4728,15 @@ begin
       if Settings.PostFXSection.AnimProgress > 0.01 then
         TotalHeight := TotalHeight + Round(GetPostFXContentHeight * Settings.PostFXSection.AnimProgress) + MARGIN;
 
-      // DMD Collision + Free Walk
-      TotalHeight := TotalHeight + (ITEM_HEIGHT + MARGIN) * 2;
+      // Free Walk (раскрывающийся toggle)
+      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;
+      if Settings.FreeWalkSection.AnimProgress > 0.01 then
+      begin
+        TotalHeight := TotalHeight + Round(70 * Settings.FreeWalkSection.AnimProgress);
+        if Settings.FreecamCollisionEnabled then
+          TotalHeight := TotalHeight + Round(30 * Settings.FreeWalkSection.AnimProgress);
+        TotalHeight := TotalHeight + MARGIN;
+      end;
 
       // BIL-V Server
       TotalHeight := TotalHeight + MARGIN + ITEM_HEIGHT;
@@ -4795,7 +4843,8 @@ begin
     begin
       // Freecam
       ExpandButtonX := ScaledX + Round(220 * Win.Scale);
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FreeCameraText'), Settings.Freecam, Alpha, True, ExpandButtonX, Settings.FreecamSection.Expanded, Settings.FreecamSection.AnimProgress);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FreeCameraText'), Settings.Freecam, Alpha, True, ExpandButtonX, Settings.FreecamSection.Expanded,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
       // Freecam секция. Контент сдвинут на CONTENT_TEXT_INSET (= 16)
@@ -4803,22 +4852,36 @@ begin
       // header'а (у DrawModernToggle тоже +16 px паддинг до текста).
       if Settings.FreecamSection.AnimProgress > 0.01 then
       begin
-        SectionHeight := Round(150 * Settings.FreecamSection.AnimProgress * Win.Scale);
+        SectionHeight := Round(160 * Settings.FreecamSection.AnimProgress * Win.Scale);
 
         DrawStyledRect(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
           Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
 
         if SectionHeight > Round(40 * Win.Scale) then
         begin
+          // Базовая скорость
           Settings.BasespeedSlider.HoverProgress :=
             HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round((25 - 22) * Win.Scale),
                      Round((SLIDER_WIDTH + 30) * Win.Scale), Round(40 * Win.Scale));
           DrawModernSlider(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(25 * Win.Scale), Settings.BasespeedSlider, GetText('BaseSpeedText'), Alpha, Win.Scale);
 
+          // Быстрая скорость
           Settings.FastspeedSlider.HoverProgress :=
             HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round((75 - 22) * Win.Scale),
                      Round((SLIDER_WIDTH + 30) * Win.Scale), Round(40 * Win.Scale));
           DrawModernSlider(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(75 * Win.Scale), Settings.FastspeedSlider, GetText('FastSpeedText'), Alpha, Win.Scale);
+        end;
+
+        // Комбобокс управления: WASD / Стрелочки (с hover)
+        if SectionHeight > Round(120 * Win.Scale) then
+        begin
+          if HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(115 * Win.Scale),
+                      Round(200 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)) > 0.5 then
+            DrawText2D(0, ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(120 * Win.Scale),
+              '< ' + FreecamControlNames[Settings.FreecamControlMode] + ' >', $FFFFFF, Alpha, 0.7)
+          else
+            DrawText2D(0, ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(120 * Win.Scale),
+              '< ' + FreecamControlNames[Settings.FreecamControlMode] + ' >', $AAAAAA, Alpha, 0.7);
         end;
 
         Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
@@ -4826,7 +4889,8 @@ begin
       
       // Main Camera
       ExpandButtonX := ScaledX + Round(220 * Win.Scale);
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MainCameraText'), Settings.MainCamera, Alpha, True, ExpandButtonX, Settings.MainCameraSection.Expanded, Settings.MainCameraSection.AnimProgress);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MainCameraText'), Settings.MainCamera, Alpha, True, ExpandButtonX, Settings.MainCameraSection.Expanded,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
       // Main Camera секция — контент сдвинут на +16 чтобы выровнять текст
@@ -4882,7 +4946,8 @@ begin
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY,
         GetText('PostFXText'), Settings.PostFXEnable, Alpha,
         True, ExpandButtonX,
-        Settings.PostFXSection.Expanded, Settings.PostFXSection.AnimProgress);
+        Settings.PostFXSection.Expanded,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
       // Развёрнутая секция с 9 toggle (FXAA, Bloom, Tonemap, Sharpen,
@@ -4905,17 +4970,42 @@ begin
         Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
 
-      // DMD Collision
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('CollisionText'), Settings.FreecamCollisionEnabled, Alpha,
-        False, 0, False,
+      // Free Walk (раскрывающийся toggle)
+      ExpandButtonX := ScaledX + Round(220 * Win.Scale);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FreeWalkText'), Settings.FreecamWalkEnabled, Alpha,
+        True, ExpandButtonX, Settings.FreeWalkSection.Expanded,
         HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
-      // Free Walk
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('FreeWalkText'), Settings.FreecamWalkEnabled, Alpha,
-        False, 0, False,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
-      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+      // Free Walk секция (Коллизия + комбо)
+      if Settings.FreeWalkSection.AnimProgress > 0.01 then
+      begin
+        SectionHeight := Round(70 * Settings.FreeWalkSection.AnimProgress * Win.Scale);
+        if Settings.FreecamCollisionEnabled then
+          SectionHeight := SectionHeight + Round(30 * Settings.FreeWalkSection.AnimProgress * Win.Scale);
+
+        DrawStyledRect(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True, COLOR_BORDER);
+
+        // Коллизия DMD checkbox
+        if SectionHeight > Round(10 * Win.Scale) then
+          DrawModernCheckbox(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(10 * Win.Scale), GetText('CollisionText'), Settings.FreecamCollisionEnabled, Alpha,
+            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(10 * Win.Scale), Round(200 * Win.Scale), Round(20 * Win.Scale)));
+
+        // Комбобокс Откл / Shift / Ctrl (с hover, только если коллизия включена)
+        if Settings.FreecamCollisionEnabled and (SectionHeight > Round(40 * Win.Scale)) then
+        begin
+          if HoverFor(ScaledX + Round((MARGIN + 32) * Win.Scale), ContentY + Round(40 * Win.Scale),
+                      Round(200 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)) > 0.5 then
+            DrawText2D(0, ScaledX + Round((MARGIN + 32) * Win.Scale), ContentY + Round(45 * Win.Scale),
+              GetText('CollisionDisableText') + ': < ' + CollisionDisableNames[Settings.CollisionDisableKey] + ' >', $FFFFFF, Alpha, 0.7)
+          else
+            DrawText2D(0, ScaledX + Round((MARGIN + 32) * Win.Scale), ContentY + Round(45 * Win.Scale),
+              GetText('CollisionDisableText') + ': < ' + CollisionDisableNames[Settings.CollisionDisableKey] + ' >', $AAAAAA, Alpha, 0.7);
+        end;
+
+        Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
+      end;
 
       // BIL-V Server
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('BilServerText'), BilServerRunning, Alpha,
@@ -4942,7 +5032,8 @@ begin
     begin
       // Max Visible Distance
       ExpandButtonX := ScaledX + Round(220 * Win.Scale);
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MaxDistanceText'), Settings.MaxVisibleDistance, Alpha, True, ExpandButtonX, Settings.MaxVisibleDistanceSection.Expanded, Settings.MaxVisibleDistanceSection.AnimProgress);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MaxDistanceText'), Settings.MaxVisibleDistance, Alpha, True, ExpandButtonX, Settings.MaxVisibleDistanceSection.Expanded,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       
       // Max Visible Distance секция — контент сдвинут на +16 для
@@ -4985,12 +5076,13 @@ begin
       // City selector (visible only when MegaRealism is on)
       if Settings.MegaRealism then
       begin
-        // Draw city name as clickable label: "< CityName >"
-        DrawText2D(0,
-          ScaledX + Round((MARGIN + 8) * Win.Scale),
-          ContentY + Round(5 * Win.Scale),
-          '< ' + MegaRealismCityNames[Settings.MegaRealismCityIndex] + ' >',
-          $DDDDDD, Alpha, 0.7);
+        if HoverFor(ScaledX + Round((MARGIN + 8) * Win.Scale), ContentY,
+                    Round(220 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)) > 0.5 then
+          DrawText2D(0, ScaledX + Round((MARGIN + 8) * Win.Scale), ContentY + Round(5 * Win.Scale),
+            '< ' + MegaRealismCityNames[Settings.MegaRealismCityIndex] + ' >', $FFFFFF, Alpha, 0.7)
+        else
+          DrawText2D(0, ScaledX + Round((MARGIN + 8) * Win.Scale), ContentY + Round(5 * Win.Scale),
+            '< ' + MegaRealismCityNames[Settings.MegaRealismCityIndex] + ' >', $AAAAAA, Alpha, 0.7);
         Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
       end;
 
@@ -5026,7 +5118,8 @@ begin
 
       // Меню разработчика (toggle + expand)
       ExpandButtonX := ScaledX + Round(220 * Win.Scale);
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('DeveloperMenuText'), Settings.DeveloperMenu, Alpha, True, ExpandButtonX, Settings.DeveloperSection.Expanded, Settings.DeveloperSection.AnimProgress);
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('DeveloperMenuText'), Settings.DeveloperMenu, Alpha, True, ExpandButtonX, Settings.DeveloperSection.Expanded,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(240 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
 
       if Settings.DeveloperSection.AnimProgress > 0.01 then
@@ -5636,23 +5729,33 @@ begin
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
     
-    // Freecam sliders
+    // Freecam section content
     FreecamSectionY := ContentY;
     if Settings.FreecamSection.AnimProgress > 0.01 then
     begin
-      SectionHeight := Round(150 * Settings.FreecamSection.AnimProgress);
+      SectionHeight := Round(160 * Settings.FreecamSection.AnimProgress);
       if SectionHeight > 40 then
       begin
+        // Слайдер базовой скорости
         if InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 15, SLIDER_WIDTH + 30, 30) then
         begin
           StartSliderDrag(Settings.BasespeedSlider, X);
           Exit;
         end;
+        // Слайдер быстрой скорости
         if InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 65, SLIDER_WIDTH + 30, 30) then
         begin
           StartSliderDrag(Settings.FastspeedSlider, X);
           Exit;
         end;
+      end;
+      // Комбобокс управления: WASD / Стрелочки
+      if (SectionHeight > 120) and InRect(X, Y, RenderWindow.X + MARGIN + 16, FreecamSectionY + 110, 200, ITEM_HEIGHT) then
+      begin
+        Settings.FreecamControlMode := (Settings.FreecamControlMode + 1) mod FREECAM_CONTROL_COUNT;
+        FreecamControlMode := Settings.FreecamControlMode;
+        SaveConfig;
+        Exit;
       end;
       Inc(ContentY, SectionHeight + MARGIN);
     end;
@@ -5806,25 +5909,52 @@ begin
       Inc(ContentY, SectionHeight + MARGIN);
     end;
 
-    // DMD Collision toggle
-    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
+    // Free Walk expand button
+    if InRect(X, Y, RenderWindow.X + 220, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
-      Settings.FreecamCollisionEnabled := not Settings.FreecamCollisionEnabled;
-      FreecamCollision := Settings.FreecamCollisionEnabled;
-      SaveConfig;
+      Settings.FreeWalkSection.Expanded := not Settings.FreeWalkSection.Expanded;
       Exit;
     end;
-    Inc(ContentY, ITEM_HEIGHT + MARGIN);
 
     // Free Walk toggle
     if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then
     begin
       Settings.FreecamWalkEnabled := not Settings.FreecamWalkEnabled;
       FreecamWalkMode := Settings.FreecamWalkEnabled;
+      if Settings.FreecamWalkEnabled then Settings.FreeWalkSection.Expanded := True;
       SaveConfig;
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
+    // Free Walk секция
+    if Settings.FreeWalkSection.AnimProgress > 0.01 then
+    begin
+      SectionHeight := Round(70 * Settings.FreeWalkSection.AnimProgress);
+      if Settings.FreecamCollisionEnabled then
+        SectionHeight := SectionHeight + Round(30 * Settings.FreeWalkSection.AnimProgress);
+
+      // Коллизия DMD checkbox
+      if (SectionHeight > 10) and InRect(X, Y, RenderWindow.X + MARGIN + 16, ContentY + 5, 200, ITEM_HEIGHT) then
+      begin
+        Settings.FreecamCollisionEnabled := not Settings.FreecamCollisionEnabled;
+        FreecamCollision := Settings.FreecamCollisionEnabled;
+        SaveConfig;
+        Exit;
+      end;
+
+      // Комбобокс Откл / Shift / Ctrl
+      if Settings.FreecamCollisionEnabled and (SectionHeight > 40) and
+         InRect(X, Y, RenderWindow.X + MARGIN + 32, ContentY + 35, 200, ITEM_HEIGHT) then
+      begin
+        Settings.CollisionDisableKey := (Settings.CollisionDisableKey + 1) mod COLLISION_DISABLE_COUNT;
+        FreecamCollisionDisableKey := Settings.CollisionDisableKey;
+        SaveConfig;
+        Exit;
+      end;
+
+      Inc(ContentY, SectionHeight + MARGIN);
+    end;
 
     // BIL-V Server toggle
     if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 220, ITEM_HEIGHT) then

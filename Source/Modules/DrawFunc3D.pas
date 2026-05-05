@@ -160,6 +160,10 @@ var
   FreecamEnabled: Boolean;
   FreecamCollision: Boolean;
   FreecamWalkMode: Boolean;
+  // 0 = WASD, 1 = Стрелочки (стрелки)
+  FreecamControlMode: Integer;
+  // Кнопка временного отключения коллизии: 0 = Откл, 1 = Shift, 2 = Ctrl
+  FreecamCollisionDisableKey: Integer;
 
 
 
@@ -305,6 +309,7 @@ NextStationName: string = '';
 LastCollide : integer = -1;
 
 Obj3DInfo : array of TObj3DInfo;
+Obj3DInfoCount : Integer = 0;
 InBlock : boolean = false;
 
 CantRenderInFBO : boolean;
@@ -2160,8 +2165,7 @@ procedure ProcessAllModules;
 var
   currentTime: Cardinal;
 const
-  PROCESS_INTERVAL = 50;
-  MODULE_COUNT = 4;
+  MODULE_COUNT = 3;
 begin
   currentTime := timeGetTime;
   
@@ -2176,20 +2180,14 @@ begin
   LastProcessTime := currentTime;
 
   // Обрабатываем модули по очереди (round-robin)
+  // ProcessFreecam убран — вызывается каждый кадр из EngineMainDraw
   case ModuleIndex of
-    0: ProcessFreecam;
-    1: ProcessStepForwardConfig;
-    2: ApplyMaxVisibleDistance;
-    3: ProcessNewSkyPatch;
+    0: ProcessStepForwardConfig;
+    1: ApplyMaxVisibleDistance;
+    2: ProcessNewSkyPatch;
   end;
   
   ModuleIndex := (ModuleIndex + 1) mod MODULE_COUNT;
-  
-  // Конфиги загружаем еще реже
-  if (currentTime - LastBoosterConfigCheck) > (BoosterConfigCheckInterval) then
-  begin
-    LastBoosterConfigCheck := currentTime;
-  end;
 end;
 
 //procedure DRAWTOOLS3D____DRAWKLUBLS_SINGLE_SINGLE_SINGLE_SINGLE_SINGLE_SHORTINT_SHORTINT
@@ -4567,6 +4565,7 @@ begin
 
     // Очищаем массивы
     Obj3DInfo := nil;
+    Obj3DInfoCount := 0;
 
     // Проверяем тайм-аут
     if (GetTickCount - StartTime) > 5000 then
@@ -5576,10 +5575,13 @@ end;
 procedure BeginObj3D; stdcall;
 begin
    InBlock:=true;
-   SetLength(Obj3DInfo,length(Obj3DInfo)+1);
-   Obj3DInfo[length(Obj3DInfo)-1].Texture:=curTexture;
-   Obj3DInfo[length(Obj3DInfo)-1].Projecting:=Projecting;
-   glGetFloatv(GL_CURRENT_COLOR, @Obj3DInfo[length(Obj3DInfo)-1].Color);
+   // Grow array only when needed — avoids per-frame heap churn
+   if Obj3DInfoCount >= Length(Obj3DInfo) then
+     SetLength(Obj3DInfo, Obj3DInfoCount + 8);
+   Obj3DInfo[Obj3DInfoCount].Texture:=curTexture;
+   Obj3DInfo[Obj3DInfoCount].Projecting:=Projecting;
+   glGetFloatv(GL_CURRENT_COLOR, @Obj3DInfo[Obj3DInfoCount].Color);
+   Inc(Obj3DInfoCount);
 
   if Projecting then
   glEnable(GL_BLEND);
@@ -5590,10 +5592,10 @@ end;
 procedure EndObj3D; stdcall;
 begin
   glPopMatrix();
-  glcolor4f(Obj3DInfo[length(Obj3DInfo)-1].Color[1],Obj3DInfo[length(Obj3DInfo)-1].Color[2],Obj3DInfo[length(Obj3DInfo)-1].Color[3],Obj3DInfo[length(Obj3DInfo)-1].Color[4]);
-  SetTexture(Obj3DInfo[length(Obj3DInfo)-1].Texture);
-  Projecting:=Obj3DInfo[length(Obj3DInfo)-1].Projecting;
-  SetLength(Obj3DInfo,length(Obj3DInfo)-1);
+  Dec(Obj3DInfoCount);
+  glcolor4f(Obj3DInfo[Obj3DInfoCount].Color[1],Obj3DInfo[Obj3DInfoCount].Color[2],Obj3DInfo[Obj3DInfoCount].Color[3],Obj3DInfo[Obj3DInfoCount].Color[4]);
+  SetTexture(Obj3DInfo[Obj3DInfoCount].Texture);
+  Projecting:=Obj3DInfo[Obj3DInfoCount].Projecting;
   if not Projecting then
   begin
   glDisable(GL_TEXTURE_GEN_S);
@@ -7052,6 +7054,8 @@ var
   DepthValue: Single;
   LinearDepth: Single;
   Viewport: array[0..3] of Integer;
+  KeyForward, KeyBack, KeyLeft, KeyRight: Integer;
+  CollisionActive: Boolean;
 begin
   CurrentTime := GetTickCount;
   
@@ -7232,26 +7236,38 @@ begin
   
   if Speed <= 0.0 then Speed := 0.01;
 
+  // === ОПРЕДЕЛЕНИЕ КЛАВИШ ДВИЖЕНИЯ (WASD или Стрелочки) ===
+  if FreecamControlMode = 1 then
+  begin
+    KeyForward := VK_UP;    KeyBack := VK_DOWN;
+    KeyLeft    := VK_LEFT;  KeyRight := VK_RIGHT;
+  end
+  else
+  begin
+    KeyForward := Ord('W'); KeyBack := Ord('S');
+    KeyLeft    := Ord('A'); KeyRight := Ord('D');
+  end;
+
   // === ДВИЖЕНИЕ ===
   if FreecamWalkMode then
   begin
     // Free Walk: движение только по горизонтали (XY), Z управляется гравитацией
-    if IsKeyPressed(Ord('W')) then
+    if IsKeyPressed(KeyForward) then
     begin
       CurrentX := CurrentX + sin(YawRad) * Speed;
       CurrentY := CurrentY + cos(YawRad) * Speed;
     end;
-    if IsKeyPressed(Ord('S')) then
+    if IsKeyPressed(KeyBack) then
     begin
       CurrentX := CurrentX - sin(YawRad) * Speed;
       CurrentY := CurrentY - cos(YawRad) * Speed;
     end;
-    if IsKeyPressed(Ord('A')) then
+    if IsKeyPressed(KeyLeft) then
     begin
       CurrentX := CurrentX + RightX * Speed;
       CurrentY := CurrentY + RightY * Speed;
     end;
-    if IsKeyPressed(Ord('D')) then
+    if IsKeyPressed(KeyRight) then
     begin
       CurrentX := CurrentX - RightX * Speed;
       CurrentY := CurrentY - RightY * Speed;
@@ -7266,24 +7282,24 @@ begin
   else
   begin
     // Обычный фрикам: полный 3D полёт
-    if IsKeyPressed(Ord('W')) then
+    if IsKeyPressed(KeyForward) then
     begin
       CurrentX := CurrentX + ForwardX * Speed;
       CurrentY := CurrentY + ForwardY * Speed;
       CurrentZ := CurrentZ + ForwardZ * Speed;
     end;
-    if IsKeyPressed(Ord('S')) then
+    if IsKeyPressed(KeyBack) then
     begin
       CurrentX := CurrentX - ForwardX * Speed;
       CurrentY := CurrentY - ForwardY * Speed;
       CurrentZ := CurrentZ - ForwardZ * Speed;
     end;
-    if IsKeyPressed(Ord('A')) then
+    if IsKeyPressed(KeyLeft) then
     begin
       CurrentX := CurrentX + RightX * Speed;
       CurrentY := CurrentY + RightY * Speed;
     end;
-    if IsKeyPressed(Ord('D')) then
+    if IsKeyPressed(KeyRight) then
     begin
       CurrentX := CurrentX - RightX * Speed;
       CurrentY := CurrentY - RightY * Speed;
@@ -7295,7 +7311,14 @@ begin
   end;
 
   // === КОЛЛИЗИЯ (depth buffer) ===
-  if FreecamCollision then
+  // Временное отключение коллизии: если назначена клавиша и она нажата — пропускаем
+  CollisionActive := FreecamCollision;
+  if CollisionActive and (FreecamCollisionDisableKey = 1) and IsKeyPressed(VK_SHIFT) then
+    CollisionActive := False;
+  if CollisionActive and (FreecamCollisionDisableKey = 2) and IsKeyPressed(VK_CONTROL) then
+    CollisionActive := False;
+
+  if CollisionActive then
   begin
     // Читаем глубину в центре экрана — показывает расстояние до ближайшего объекта впереди
     glGetIntegerv(GL_VIEWPORT, @Viewport[0]);
@@ -8679,20 +8702,21 @@ var
   x, y: Single;
   blinkState: Boolean;
   innerRadius, outerRadius: Single;
+  alsValue: Integer;
+  needleBlink: Boolean;
+  ca, sa: Single; // cached cos/sin
 
 const
-  MIN_SPEED = 0;
   MAX_SPEED = 300;
   START_ANGLE = 225;
-  END_ANGLE = -45;
   SPEED_RANGE = 270;
   BASE_RADIUS = 60;
+  DEG2RAD = Pi / 180.0;
 
 procedure UpdateYellowZone(speedTarget, speedLimit, maxSpeed: Single);
 var
   i, segments: Integer;
-  angle: Single;
-  x, y: Single;
+  angle, ca, sa: Single;
 begin
   if (Abs(LastTarget - speedTarget) < 0.1) and
      (Abs(LastLimit - speedLimit) < 0.1) then Exit;
@@ -8709,18 +8733,16 @@ begin
   for i := 0 to segments do
   begin
     angle := (START_ANGLE - (speedTarget / maxSpeed) * SPEED_RANGE -
-              (i * (speedLimit - speedTarget) / maxSpeed * SPEED_RANGE / segments)) * (Pi / 180.0);
+              (i * (speedLimit - speedTarget) / maxSpeed * SPEED_RANGE / segments)) * DEG2RAD;
+    ca := cos(angle);
+    sa := sin(angle);
 
-    x := outerRadius * cos(angle);
-    y := outerRadius * sin(angle);
-    YellowZoneVerts[i*2][0] := x;
-    YellowZoneVerts[i*2][1] := y;
+    YellowZoneVerts[i*2][0] := outerRadius * ca;
+    YellowZoneVerts[i*2][1] := outerRadius * sa;
     YellowZoneVerts[i*2][2] := 0.2;
 
-    x := innerRadius * cos(angle);
-    y := innerRadius * sin(angle);
-    YellowZoneVerts[i*2+1][0] := x;
-    YellowZoneVerts[i*2+1][1] := y;
+    YellowZoneVerts[i*2+1][0] := innerRadius * ca;
+    YellowZoneVerts[i*2+1][1] := innerRadius * sa;
     YellowZoneVerts[i*2+1][2] := 0.2;
   end;
 end;
@@ -8734,13 +8756,13 @@ begin
     begin
       maxSpeed := 160;
       tickStep := 10;
-      tickCount := 16; // 0,10,20...160
+      tickCount := 16;
     end
     else
     begin
       maxSpeed := MAX_SPEED;
       tickStep := 20;
-      tickCount := 15; // 0,20,40...300
+      tickCount := 15;
     end;
     tc := StrToFloatDef(GetPressureTC, 0);
     tm := StrToFloatDef(GetPressureTM, 0);
@@ -8749,14 +8771,16 @@ begin
     if speed > maxSpeed then speed := maxSpeed;
     if speedLimit > maxSpeed then speedLimit := maxSpeed;
 
-    blinkState := (Trunc(GetTickCount / 500) mod 2 = 0);
+    alsValue := GetALS;
+    blinkState := (GetTickCount and 512) = 0; // fast blink ~500ms via bit test
+    needleBlink := (speed > speedLimit - 3) and (alsValue > 0) and (speed > 0);
 
     glDisable(GL_LIGHTING);
 
-    // === БЕЛАЯ ДУГА ===
     innerRadius := BASE_RADIUS - 1;
     outerRadius := BASE_RADIUS + 1;
 
+    // === БЕЛАЯ ДУГА ===
     BeginObj3D;
     Position3D(-0.01, 0, 0.18);
     RotateX(-90);
@@ -8764,110 +8788,112 @@ begin
     Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
 
-    if GetALS > 0 then
+    if alsValue > 0 then
       segments := Round((speedLimit / maxSpeed) * SPEED_RANGE)
     else
       segments := SPEED_RANGE;
+    if segments < 1 then segments := 1;
 
     glBegin(GL_TRIANGLE_STRIP);
     for i := 0 to segments do
     begin
-      if GetALS > 0 then
-        angle := (START_ANGLE - (i * (speedLimit / maxSpeed) * SPEED_RANGE / segments)) * (Pi / 180.0)
+      if alsValue > 0 then
+        angle := (START_ANGLE - (i * (speedLimit / maxSpeed) * SPEED_RANGE / segments)) * DEG2RAD
       else
-        angle := (START_ANGLE - (i * SPEED_RANGE / segments)) * (Pi / 180.0);
+        angle := (START_ANGLE - (i * SPEED_RANGE / segments)) * DEG2RAD;
+      ca := cos(angle);
+      sa := sin(angle);
 
-      x := outerRadius * cos(angle);
-      y := outerRadius * sin(angle);
-      glVertex3f(x, y, 0);
-
-      x := innerRadius * cos(angle);
-      y := innerRadius * sin(angle);
-      glVertex3f(x, y, 0);
+      glVertex3f(outerRadius * ca, outerRadius * sa, 0);
+      glVertex3f(innerRadius * ca, innerRadius * sa, 0);
     end;
     glEnd;
     EndObj3D;
 
     // === КРАСНАЯ ЗОНА ===
-    if GetALS > 0 then
+    if alsValue > 0 then
     begin
-      BeginObj3D;
-      Position3D(-0.01, 0, 0.18);
-      RotateX(-90);
-      Scale3D(0.0009);
-      Color3D($0000FF, 255, False, 0.0);
-      SetTexture(0);
-
       segments := Round(((maxSpeed - speedLimit) / maxSpeed) * SPEED_RANGE);
 
       if segments > 0 then
       begin
+        BeginObj3D;
+        Position3D(-0.01, 0, 0.18);
+        RotateX(-90);
+        Scale3D(0.0009);
+        Color3D($0000FF, 255, False, 0.0);
+        SetTexture(0);
+
         glBegin(GL_TRIANGLE_STRIP);
         for i := 0 to segments do
         begin
-          angle := (START_ANGLE - (speedLimit / maxSpeed) * SPEED_RANGE - (i * ((maxSpeed - speedLimit) / maxSpeed) * SPEED_RANGE / segments)) * (Pi / 180.0);
+          angle := (START_ANGLE - (speedLimit / maxSpeed) * SPEED_RANGE - (i * ((maxSpeed - speedLimit) / maxSpeed) * SPEED_RANGE / segments)) * DEG2RAD;
+          ca := cos(angle);
+          sa := sin(angle);
 
-          x := outerRadius * cos(angle);
-          y := outerRadius * sin(angle);
-          glVertex3f(x, y, 0.1);
-
-          x := innerRadius * cos(angle);
-          y := innerRadius * sin(angle);
-          glVertex3f(x, y, 0.1);
+          glVertex3f(outerRadius * ca, outerRadius * sa, 0.1);
+          glVertex3f(innerRadius * ca, innerRadius * sa, 0.1);
         end;
         glEnd;
+        EndObj3D;
       end;
-      EndObj3D;
     end;
-//
-// === ЖЕЛТАЯ ЗОНА ===
-if (GetALS > 0) and (speedTarget > 0) and (speedTarget < speedLimit) and
-   (speedLimit - speedTarget > 3) then
-begin
-  UpdateYellowZone(speedTarget, speedLimit, maxSpeed);
 
-  BeginObj3D;
-  Position3D(-0.01, 0, 0.18);
-  RotateX(-90);
-  Scale3D(0.0009);
-  Color3D($00FFFF, 255, False, 0.0);
-  SetTexture(0);
-
-  glBegin(GL_TRIANGLE_STRIP);
-    for i := 0 to High(YellowZoneVerts) do
-      glVertex3fv(@YellowZoneVerts[i]);
-  glEnd;
-
-  EndObj3D;
-end;
-
-    // === ДЕЛЕНИЯ + ЦИФРЫ ===
-    for i := 0 to tickCount do
+    // === ЖЕЛТАЯ ЗОНА ===
+    if (alsValue > 0) and (speedTarget > 0) and (speedTarget < speedLimit) and
+       (speedLimit - speedTarget > 3) then
     begin
-      angle := (START_ANGLE - (i * tickStep / maxSpeed) * SPEED_RANGE) * (Pi / 180.0);
+      UpdateYellowZone(speedTarget, speedLimit, maxSpeed);
 
-      // Деление
       BeginObj3D;
       Position3D(-0.01, 0, 0.18);
       RotateX(-90);
       Scale3D(0.0009);
-      Color3D($FFFFFF, 255, False, 0.0);
+      Color3D($00FFFF, 255, False, 0.0);
       SetTexture(0);
 
-      glLineWidth(2);
-      glBegin(GL_LINES);
-        glVertex3f((BASE_RADIUS + 0) * cos(angle), (BASE_RADIUS + 0) * sin(angle), 0);
-        glVertex3f((BASE_RADIUS + 5) * cos(angle), (BASE_RADIUS + 5) * sin(angle), 0);
+      glBegin(GL_TRIANGLE_STRIP);
+        for i := 0 to High(YellowZoneVerts) do
+          glVertex3fv(@YellowZoneVerts[i]);
       glEnd;
-      glLineWidth(1);
-      EndObj3D;
 
-      // Цифры
+      EndObj3D;
+    end;
+
+    // === ДЕЛЕНИЯ (все в одном batch) ===
+    BeginObj3D;
+    Position3D(-0.01, 0, 0.18);
+    RotateX(-90);
+    Scale3D(0.0009);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+
+    glLineWidth(2);
+    glBegin(GL_LINES);
+    for i := 0 to tickCount do
+    begin
+      angle := (START_ANGLE - (i * tickStep / maxSpeed) * SPEED_RANGE) * DEG2RAD;
+      ca := cos(angle);
+      sa := sin(angle);
+      glVertex3f(BASE_RADIUS * ca, BASE_RADIUS * sa, 0);
+      glVertex3f((BASE_RADIUS + 5) * ca, (BASE_RADIUS + 5) * sa, 0);
+    end;
+    glEnd;
+    glLineWidth(1);
+    EndObj3D;
+
+    // === ЦИФРЫ делений ===
+    for i := 0 to tickCount do
+    begin
+      angle := (START_ANGLE - (i * tickStep / maxSpeed) * SPEED_RANGE) * DEG2RAD;
+      ca := cos(angle);
+      sa := sin(angle);
+
       BeginObj3D;
         Position3D(
-          -0.017 + (BASE_RADIUS - 6) * cos(angle) * 0.0008,
+          -0.017 + (BASE_RADIUS - 6) * ca * 0.0008,
           0,
-          0.18 + (BASE_RADIUS - 6) * sin(angle) * 0.0008
+          0.18 + (BASE_RADIUS - 6) * sa * 0.0008
         );
       RotateX(-90);
       Scale3D(0.008);
@@ -8877,87 +8903,51 @@ end;
       EndObj3D;
     end;
 
-    // === СТРЕЛКА (исправленная - всегда видимая) ===
-    needleAngle := (START_ANGLE - (speed / maxSpeed) * SPEED_RANGE) * (Pi / 180.0);
-
+    // === СТРЕЛКА + центральный круг (один batch) ===
+    needleAngle := (START_ANGLE - (speed / maxSpeed) * SPEED_RANGE) * DEG2RAD;
 
     BeginObj3D;
     Position3D(-0.01, 0, 0.18);
     RotateX(-90);
     Scale3D(0.0009);
 
-    if (speed > speedLimit - 3) and (GetALS > 0) and (speed > 0) then
-    begin
-      if blinkState then
-        Color3D($FFFFFF, 255, False, 0.0)
-      else
-        Color3D($FF6600, 255, False, 0.0);
-    end
+    if needleBlink and blinkState then
+      Color3D($FFFFFF, 255, False, 0.0)
     else
       Color3D($FF6600, 255, False, 0.0);
 
     SetTexture(0);
 
-    // Рисуем стрелку с правильным основанием (перпендикулярно направлению)
+    ca := cos(needleAngle);
+    sa := sin(needleAngle);
+
     glBegin(GL_TRIANGLES);
-      // Вычисляем перпендикулярный угол для основания стрелки (делаем уже)
-      // Левая точка основания
       glVertex3f(4 * cos(needleAngle + Pi/2), 4 * sin(needleAngle + Pi/2), 0.5);
-      // Правая точка основания  
       glVertex3f(4 * cos(needleAngle - Pi/2), 4 * sin(needleAngle - Pi/2), 0.5);
-      // Кончик стрелки (делаем острее - ближе к краю)
-      glVertex3f((BASE_RADIUS - 1) * cos(needleAngle),
-                 (BASE_RADIUS - 1) * sin(needleAngle),
-                 0.5);
+      glVertex3f((BASE_RADIUS - 1) * ca, (BASE_RADIUS - 1) * sa, 0.5);
     glEnd;
-    
-    // Дополнительно рисуем тонкую линию от центра к кончику
+
     glLineWidth(2);
     glBegin(GL_LINES);
       glVertex3f(0, 0, 0.5);
-      glVertex3f((BASE_RADIUS - 1) * cos(needleAngle),
-                 (BASE_RADIUS - 1) * sin(needleAngle),
-                 0.5);
+      glVertex3f((BASE_RADIUS - 1) * ca, (BASE_RADIUS - 1) * sa, 0.5);
     glEnd;
     glLineWidth(1);
-    
-    EndObj3D;
 
-    // Включаем depth test обратно
-    glEnable(GL_DEPTH_TEST);
-
-    
-    BeginObj3D;
-    Position3D(-0.01, 0, 0.18);
-    RotateX(-90);
-    Scale3D(0.0009);
-
-    if (speed > speedLimit - 3) and (GetALS > 0) and (speed > 0) then
-    begin
-      if blinkState then
-        Color3D($FFFFFF, 255, False, 0.0)
-      else
-        Color3D($FF6600, 255, False, 0.0);
-    end
-    else
-      Color3D($FF6600, 255, False, 0.0);
-
-    SetTexture(0);
-
+    // Центральный круг (заливка)
     segments := 30;
     glBegin(GL_TRIANGLE_FAN);
-      glVertex3f(0, 0, 0.6); // Еще выше чем стрелка
+      glVertex3f(0, 0, 0.6);
       for i := 0 to segments do
       begin
         angle := (i * 2 * Pi / segments);
         glVertex3f(12 * cos(angle), 12 * sin(angle), 0.6);
       end;
     glEnd;
+
     EndObj3D;
 
-    glEnable(GL_DEPTH_TEST); // Включаем обратно
-
-
+    // Обводка центрального круга
     BeginObj3D;
     Position3D(-0.01, 0, 0.18);
     RotateX(-90);
@@ -8965,7 +8955,6 @@ end;
     Color3D($FFFFFF, 255, False, 0.0);
     SetTexture(0);
 
-    segments := 30;
     glLineWidth(2);
     glBegin(GL_LINE_LOOP);
       for i := 0 to segments do
@@ -8976,41 +8965,39 @@ end;
     glEnd;
     glLineWidth(1);
     EndObj3D;
-    
-    glEnable(GL_DEPTH_TEST);
 
-// === ТЕКСТ СКОРОСТИ ===
-speedText := FormatFloat('000', Trunc(speed));
+    // === ТЕКСТ СКОРОСТИ ===
+    speedText := FormatFloat('000', Trunc(speed));
 
-BeginObj3D;
-Position3D(-0.019, -0.001, 0.177); // Увеличил Z с 0.177 до 0.178 - чуть вперед
-RotateX(-90);
-Scale3D(0.012);
+    BeginObj3D;
+    Position3D(-0.019, -0.001, 0.177);
+    RotateX(-90);
+    Scale3D(0.012);
 
-if (speed > speedLimit - 3) and (GetALS > 0) and (speed > 0) and blinkState then
-  Color3D($FF6600, 255, False, 0.0)
-else
-  Color3D($FFFFFF, 255, False, 0.0);
+    if needleBlink and blinkState then
+      Color3D($FF6600, 255, False, 0.0)
+    else
+      Color3D($FFFFFF, 255, False, 0.0);
 
-SetTexture(0);
-DrawText3D(0, speedText);
-EndObj3D;
+    SetTexture(0);
+    DrawText3D(0, speedText);
+    EndObj3D;
 
     // === ТЕКСТ ОГРАНИЧЕНИЯ ===
-    if GetALS > 0 then
+    if alsValue > 0 then
     begin
       BeginObj3D;
-      Position3D(-0.019, 0, 0.157); // Выдвигаем вперед
+      Position3D(-0.019, 0, 0.157);
       RotateX(-90);
-      Scale3D(0.012); // Чуть увеличиваем размер текста
+      Scale3D(0.012);
       Color3D($0000FF, 255, False, 0.0);
       SetTexture(0);
       DrawText3D(0, FormatFloat('000', Trunc(speedLimit)));
       EndObj3D;
     end;
 
-    // === ИНДИКАТОРЫ ДАВЛЕНИЯ ===
-    if tc > 0 then
+    // === ИНДИКАТОРЫ ДАВЛЕНИЯ (один batch для всех) ===
+    if (tc > 0) or (tm > 0) or (ur > 0) then
     begin
       BeginObj3D;
       Position3D(-0.01, 0, 0.18);
@@ -9018,46 +9005,31 @@ EndObj3D;
       Scale3D(0.0009);
       Color3D($0101F8, 200, False, 0.0);
       SetTexture(0);
+
       glBegin(GL_QUADS);
+      if tc > 0 then
+      begin
         glVertex3f(-3, -tc * 12, 0);
         glVertex3f(3, -tc * 12, 0);
         glVertex3f(3, 0, 0);
         glVertex3f(-3, 0, 0);
-      glEnd;
-      EndObj3D;
-    end;
-
-    if tm > 0 then
-    begin
-      BeginObj3D;
-      Position3D(-0.01, 0, 0.18);
-      RotateX(-90);
-      Scale3D(0.0009);
-      Color3D($0101F8, 200, False, 0.0);
-      SetTexture(0);
-      glBegin(GL_QUADS);
+      end;
+      if tm > 0 then
+      begin
         glVertex3f(-3, -5 * 12, 0);
         glVertex3f(3, -5 * 12, 0);
         glVertex3f(3, 0, 0);
         glVertex3f(-3, 0, 0);
-      glEnd;
-      EndObj3D;
-    end;
-
-    if ur > 0 then
-    begin
-      BeginObj3D;
-      Position3D(-0.01, 0, 0.18);
-      RotateX(-90);
-      Scale3D(0.0009);
-      Color3D($0101F8, 200, False, 0.0);
-      SetTexture(0);
-      glBegin(GL_QUADS);
+      end;
+      if ur > 0 then
+      begin
         glVertex3f(-3, -ur * 12, 0);
         glVertex3f(3, -ur * 12, 0);
         glVertex3f(3, 0, 0);
         glVertex3f(-3, 0, 0);
+      end;
       glEnd;
+
       EndObj3D;
     end;
 
@@ -9067,7 +9039,7 @@ EndObj3D;
     on E: Exception do
     begin
       glEnable(GL_LIGHTING);
-      glEnable(GL_DEPTH_TEST); // Убеждаемся что depth test включен в случае ошибки
+      glEnable(GL_DEPTH_TEST);
       AddToLogFile(EngineLog, 'Ошибка отрисовки 3D спидометра: ' + E.Message);
     end;
   end;
@@ -9130,26 +9102,18 @@ end;
 // Функция записи байта в память
 procedure WriteByteToMemory(Address: Pointer; Value: Byte);
 begin
-  AddToLogFile(EngineLog, '[ПАМЯТЬ] Попытка записи байта ' + IntToStr(Value) + ' по адресу ' + IntToHex(Cardinal(Address), 8));
   try
     PByte(Address)^ := Value;
-    AddToLogFile(EngineLog, '[ПАМЯТЬ] ✓ УСПЕШНО записан байт ' + IntToStr(Value));
   except
-    on E: Exception do
-      AddToLogFile(EngineLog, '[ПАМЯТЬ] ✗ ОШИБКА записи: ' + E.Message);
   end;
 end;
 
 // Функция записи 4-байтового значения в память
 procedure WriteDWordToMemory(Address: Pointer; Value: LongWord);
 begin
-  AddToLogFile(EngineLog, '[ПАМЯТЬ] Попытка записи 4 байтов ' + IntToStr(Value) + ' по адресу ' + IntToHex(Cardinal(Address), 8));
   try
     PLongWord(Address)^ := Value;
-    AddToLogFile(EngineLog, '[ПАМЯТЬ] ✓ УСПЕШНО записано 4 байта ' + IntToStr(Value));
   except
-    on E: Exception do
-      AddToLogFile(EngineLog, '[ПАМЯТЬ] ✗ ОШИБКА записи 4 байт: ' + E.Message);
   end;
 end;
 
@@ -9162,10 +9126,8 @@ begin
   
   currentTime := GetTickCount;
   
-  // Проверяем прошло ли 4 секунды (4000 мс)
   if (currentTime - K123Timer) >= 4000 then
   begin
-    AddToLogFile(EngineLog, '[К123] Таймер истек, записываем 0');
     WriteByteToMemory(Pointer($0074988C), 0);
     K123Active := False;
     K123Timer := 0;
@@ -9177,28 +9139,17 @@ end;
 // Обработка кнопки "СТР" - очистка буфера
 procedure ProcessButtonClear;
 begin
-  AddToLogFile(EngineLog, '[КНОПКА СТР] Очистка буфера, было: "' + InputBuffer + '"');
-
   InputBuffer := '';
-  AddToLogFile(EngineLog, '[КНОПКА СТР] ✓ Буфер очищен');
 end;
 
 // Обработка нажатия кнопки "П"
 procedure ProcessButtonP;
 begin
-  AddToLogFile(EngineLog, '[КНОПКА П] Обработка нажатия, текущее состояние: ' + IntToStr(ButtonPState));
-  
   if ButtonPState = 0 then
   begin
-    // Записываем 20 и переходим к ожиданию первого числа
     WriteByteToMemory(Pointer($0074988C), 20);
     ButtonPState := 1;
     InputBuffer := '';
-    AddToLogFile(EngineLog, '[КНОПКА П] ✓ Записали 20, ожидаем первое число');
-  end
-  else
-  begin
-    AddToLogFile(EngineLog, '[КНОПКА П] Кнопка нажата повторно, игнорируем (состояние: ' + IntToStr(ButtonPState) + ')');
   end;
 end;
 
@@ -10184,7 +10135,7 @@ begin
       begin
         BlinkVisible := not BlinkVisible; // Переключаем видимость
         BlinkTimer := currentTime; // Сбрасываем таймер
-        AddToLogFile(EngineLog, '[РМП МИГАНИЕ] Переключение видимости: ' + BoolToStr(BlinkVisible, True));
+        // logging removed — called every 500ms
       end;
     end
     else
