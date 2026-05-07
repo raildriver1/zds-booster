@@ -147,6 +147,7 @@ type
     FreecamCollisionEnabled: Boolean;
     FreecamWalkEnabled: Boolean;
     FreeWalkSection: TExpandableSection;
+    NewSkySection: TExpandableSection;
     // 0 = WASD, 1 = Стрелочки
     FreecamControlMode: Integer;
     // Кнопка временного отключения коллизии: 0 = Откл, 1 = Shift, 2 = Ctrl
@@ -161,6 +162,19 @@ type
     ksCurrentStation, ksChannel, ksTrackWithDir, ksTargetType
   );
 
+  // Группа (папка) для пользовательских 3D-текстов. Работает как "слой-папка"
+  // в Photoshop: содержит имя, позицию (parent transform), expand/collapse.
+  // Элементы внутри группы наследуют её трансформ (их координаты становятся
+  // локальными относительно группы).
+  TCustomTextGroup = record
+    Name: string;           // имя папки (для UI, напр. "Drawblock", "Панель КЛУБа")
+    X, Y, Z: Single;       // позиция группы в локальной системе кабины
+    RX, RY, RZ: Single;    // углы поворота группы
+    Scale: Single;          // масштаб группы
+    Expanded: Boolean;      // раскрыта ли папка в DevEditor
+    AnimProgress: Single;   // 0..1 анимация expand/collapse
+  end;
+
   // Один пользовательский 3D-текст в кабине РА-3.
   // Локальные координаты кабины (как в DrawTextSimple/DrawAllInfoFields).
   TCustomText3D = record
@@ -171,6 +185,7 @@ type
     Scale: Single;
     Visible: Boolean;
     Color: Cardinal;    // COLORREF, $FFFFFF = белый. Применяется в DrawCustomTextsRA3.
+    GroupIdx: Integer;   // -1 = корневой уровень, >=0 = индекс в CustomTextGroups
   end;
 
 procedure InitCheatMenu; stdcall;
@@ -772,7 +787,14 @@ begin
     else if Value = Round(Value) then
       Result := IntToStr(Round(Value))
     else
-      Result := Format('%.2f', [Value]);
+    begin
+      // 6 знаков после точки — хватает для шагов 0.001 и мельче.
+      // Убираем хвостовые нули чтобы конфиг не раздувался.
+      Result := Format('%.6f', [Value]);
+      while (Length(Result) > 1) and (Result[Length(Result)] = '0') and
+            (Result[Length(Result) - 1] <> '.') do
+        Delete(Result, Length(Result), 1);
+    end;
   finally
     DecimalSeparator := OldSep;
   end;
@@ -804,7 +826,9 @@ const
 
 var
   CustomTexts: array of TCustomText3D;
+  CustomTextGroups: array of TCustomTextGroup;
   CustomTextSelectedIdx: Integer = -1;
+  CustomGroupSelectedIdx: Integer = -1;  // выбранная группа в DevEditor (-1 = нет)
 
   // Слайдеры редактора — общие, переиспользуются для текущего выбранного текста.
   CustomXSlider, CustomYSlider, CustomZSlider: TSlider;
@@ -816,9 +840,10 @@ type
   //   gtkNone  — ничего не выделено
   //   gtkText  — выделен CustomTexts[CustomTextSelectedIdx]
   //   gtkImage — выделен CustomImages[CustomImageSelectedIdx]
+  //   gtkGroup — выделена CustomTextGroups[CustomGroupSelectedIdx]
   // Гизмо и UI работают через этот target — в коде не должно остаться
   // прямых обращений CustomTexts[CustomTextSelectedIdx], кроме save/load.
-  TGizmoTargetKind = (gtkNone, gtkText, gtkImage);
+  TGizmoTargetKind = (gtkNone, gtkText, gtkImage, gtkGroup);
 
 var
   GizmoTargetKind: TGizmoTargetKind = gtkNone;
@@ -938,14 +963,40 @@ const
   // Browse-кнопка внутри image-карточки — открывает GetOpenFileName
   // и заменяет текстуру у выбранной картинки.
   DE_HOT_IMG_BROWSE = 140;
+  // Apply (Save) — явное сохранение текущего состояния на диск.
+  DE_HOT_APPLY      = 150;
+
+  DE_GROUP_H          = 36;     // высота заголовка группы-папки (без контролов)
+  DE_GROUP_H_SEL      = 66;    // высота заголовка группы когда выбрана (с XYZ/RX/RY/RZ/S)
+  DE_GROUP_INDENT     = 24;     // отступ слева для элементов внутри группы
+
+  // Хотспоты групп
+  DE_HOT_GRP_EXPAND = 160;     // раскрыть/свернуть
+  DE_HOT_GRP_NAME   = 161;     // клик по имени группы → rename
+  DE_HOT_GRP_DELETE = 162;     // удалить группу (элементы → корень)
+  DE_HOT_ADD_GROUP  = 103;     // кнопка «+ Add Group» в тулбаре
+  // Хотспоты value-контролов группы (XYZ/RXRYRZ/Scale):
+  // Используем те же ID, что у текстов (DE_HOT_X_MINUS..DE_HOT_S_VAL),
+  // но обработчик различает по HitGroup vs HitCard.
 
   // Шаги +/− (одиночный клик)
-  DE_STEP_POS    = 0.005;
-  DE_STEP_ANG    = 1.0;
+  DE_STEP_POS    = 0.001;
+  DE_STEP_ANG    = 0.001;
   DE_STEP_SCALE  = 0.001;
   DE_STEP_SIZE   = 0.005;  // шаг W/H у картинок
 
 type
+  // Display list — визуальный порядок строк в DevEditor.
+  // Сначала группы (с их детьми), потом корневые элементы.
+  TDEDisplayKind = (dekGroup, dekText);
+  TDEDisplayItem = record
+    Kind: TDEDisplayKind;
+    DataIdx: Integer;   // индекс в CustomTextGroups (dekGroup) или CustomTexts (dekText)
+    YPos: Integer;      // абсолютная Y-координата строки (без учёта scroll)
+    ItemH: Integer;     // высота строки
+    Indent: Integer;    // отступ слева (0 = корень, DE_GROUP_INDENT = внутри группы)
+  end;
+
   // Какой массив сейчас редактируется в DevEditor — тексты или картинки.
   TDEEditMode = (demTexts, demImages);
 
@@ -991,6 +1042,13 @@ var
   // hover: индекс карточки и hot-spot ID внутри неё (0 = карточка целиком/пусто)
   DevEditorHoveredCard: Integer = -1;
   DevEditorHoveredHotspot: Integer = DE_HOT_NONE;
+  // Hover для группы (-1 = ни одна группа не hover'ится)
+  DevEditorHoveredGroupIdx: Integer = -1;
+  DevEditorHoveredGroupHotspot: Integer = DE_HOT_NONE;
+  // Display list для текстового режима (группы + элементы)
+  DEDisplayList: array of TDEDisplayItem;
+  DEDisplayCount: Integer = 0;
+  DEDisplayContentH: Integer = 0;  // суммарная высота контента для скролла
   // Combobox state
   DevEditorComboboxOpen: Boolean = False;
   DevEditorComboboxCardIdx: Integer = -1;
@@ -1008,6 +1066,11 @@ var
     $FF0000, $00FFFF, $FF00FF, $FFFF00, $0080FF, $00FF80,
     $8000FF, $FF8000, $80FF80, $80FFFF, $FF80FF, $FF8080
   );
+  // Drag & drop: перетаскивание текстового элемента между группами
+  DEDragStartIdx: Integer = -1;   // индекс в CustomTexts (-1 = нет drag)
+  DEDragStartMY: Integer = 0;     // мышь Y при начале drag
+  DEDragging: Boolean = False;    // true = активное перетаскивание
+  DEDragDropTarget: Integer = -2; // -2 = нет цели, -1 = корень, >=0 = индекс группы
 
 procedure DrawDevEditor; forward;
 procedure HandleDevEditorClick(MX, MY: Integer); forward;
@@ -1124,6 +1187,7 @@ begin
   case GizmoTargetKind of
     gtkText:  Result := (CustomTextSelectedIdx  >= 0) and (CustomTextSelectedIdx  < Length(CustomTexts));
     gtkImage: Result := (CustomImageSelectedIdx >= 0) and (CustomImageSelectedIdx < Length(CustomImages));
+    gtkGroup: Result := (CustomGroupSelectedIdx >= 0) and (CustomGroupSelectedIdx < Length(CustomTextGroups));
   else
     Result := False;
   end;
@@ -1136,6 +1200,7 @@ begin
   case GizmoTargetKind of
     gtkText:  Result := CustomTexts[CustomTextSelectedIdx].X;
     gtkImage: Result := CustomImages[CustomImageSelectedIdx].X;
+    gtkGroup: Result := CustomTextGroups[CustomGroupSelectedIdx].X;
   end;
 end;
 
@@ -1145,6 +1210,7 @@ begin
   case GizmoTargetKind of
     gtkText:  CustomTexts[CustomTextSelectedIdx].X := V;
     gtkImage: CustomImages[CustomImageSelectedIdx].X := V;
+    gtkGroup: CustomTextGroups[CustomGroupSelectedIdx].X := V;
   end;
 end;
 
@@ -1155,6 +1221,7 @@ begin
   case GizmoTargetKind of
     gtkText:  Result := CustomTexts[CustomTextSelectedIdx].Y;
     gtkImage: Result := CustomImages[CustomImageSelectedIdx].Y;
+    gtkGroup: Result := CustomTextGroups[CustomGroupSelectedIdx].Y;
   end;
 end;
 
@@ -1164,6 +1231,7 @@ begin
   case GizmoTargetKind of
     gtkText:  CustomTexts[CustomTextSelectedIdx].Y := V;
     gtkImage: CustomImages[CustomImageSelectedIdx].Y := V;
+    gtkGroup: CustomTextGroups[CustomGroupSelectedIdx].Y := V;
   end;
 end;
 
@@ -1174,6 +1242,7 @@ begin
   case GizmoTargetKind of
     gtkText:  Result := CustomTexts[CustomTextSelectedIdx].Z;
     gtkImage: Result := CustomImages[CustomImageSelectedIdx].Z;
+    gtkGroup: Result := CustomTextGroups[CustomGroupSelectedIdx].Z;
   end;
 end;
 
@@ -1183,6 +1252,7 @@ begin
   case GizmoTargetKind of
     gtkText:  CustomTexts[CustomTextSelectedIdx].Z := V;
     gtkImage: CustomImages[CustomImageSelectedIdx].Z := V;
+    gtkGroup: CustomTextGroups[CustomGroupSelectedIdx].Z := V;
   end;
 end;
 
@@ -1193,6 +1263,7 @@ begin
   case GizmoTargetKind of
     gtkText:  Result := CustomTexts[CustomTextSelectedIdx].RX;
     gtkImage: Result := CustomImages[CustomImageSelectedIdx].RX;
+    gtkGroup: Result := CustomTextGroups[CustomGroupSelectedIdx].RX;
   end;
 end;
 
@@ -1202,6 +1273,7 @@ begin
   case GizmoTargetKind of
     gtkText:  CustomTexts[CustomTextSelectedIdx].RX := V;
     gtkImage: CustomImages[CustomImageSelectedIdx].RX := V;
+    gtkGroup: CustomTextGroups[CustomGroupSelectedIdx].RX := V;
   end;
 end;
 
@@ -1212,6 +1284,7 @@ begin
   case GizmoTargetKind of
     gtkText:  Result := CustomTexts[CustomTextSelectedIdx].RY;
     gtkImage: Result := CustomImages[CustomImageSelectedIdx].RY;
+    gtkGroup: Result := CustomTextGroups[CustomGroupSelectedIdx].RY;
   end;
 end;
 
@@ -1221,6 +1294,7 @@ begin
   case GizmoTargetKind of
     gtkText:  CustomTexts[CustomTextSelectedIdx].RY := V;
     gtkImage: CustomImages[CustomImageSelectedIdx].RY := V;
+    gtkGroup: CustomTextGroups[CustomGroupSelectedIdx].RY := V;
   end;
 end;
 
@@ -1231,6 +1305,7 @@ begin
   case GizmoTargetKind of
     gtkText:  Result := CustomTexts[CustomTextSelectedIdx].RZ;
     gtkImage: Result := CustomImages[CustomImageSelectedIdx].RZ;
+    gtkGroup: Result := CustomTextGroups[CustomGroupSelectedIdx].RZ;
   end;
 end;
 
@@ -1240,6 +1315,7 @@ begin
   case GizmoTargetKind of
     gtkText:  CustomTexts[CustomTextSelectedIdx].RZ := V;
     gtkImage: CustomImages[CustomImageSelectedIdx].RZ := V;
+    gtkGroup: CustomTextGroups[CustomGroupSelectedIdx].RZ := V;
   end;
 end;
 
@@ -1258,6 +1334,7 @@ begin
                      CustomImages[CustomImageSelectedIdx].Height);
       if Result < 0.0001 then Result := 0.0001;
     end;
+    gtkGroup: Result := CustomTextGroups[CustomGroupSelectedIdx].Scale;
   end;
 end;
 
@@ -1276,6 +1353,7 @@ begin
       CustomImages[CustomImageSelectedIdx].Width  := CustomImages[CustomImageSelectedIdx].Width  * K;
       CustomImages[CustomImageSelectedIdx].Height := CustomImages[CustomImageSelectedIdx].Height * K;
     end;
+    gtkGroup: CustomTextGroups[CustomGroupSelectedIdx].Scale := V;
   end;
 end;
 
@@ -1306,6 +1384,12 @@ begin
       HalfW := 0.0;
       HalfH := 0.0;
     end;
+    gtkGroup:
+    begin
+      // У группы origin — это её позиция, центр-офсет нулевой.
+      HalfW := 0.0;
+      HalfH := 0.0;
+    end;
   end;
 end;
 
@@ -1313,6 +1397,7 @@ procedure GT_SelectText(Idx: Integer);
 begin
   CustomTextSelectedIdx := Idx;
   CustomImageSelectedIdx := -1;
+  CustomGroupSelectedIdx := -1;
   if (Idx >= 0) and (Idx < Length(CustomTexts)) then
     GizmoTargetKind := gtkText
   else
@@ -1323,8 +1408,20 @@ procedure GT_SelectImage(Idx: Integer);
 begin
   CustomImageSelectedIdx := Idx;
   CustomTextSelectedIdx := -1;
+  CustomGroupSelectedIdx := -1;
   if (Idx >= 0) and (Idx < Length(CustomImages)) then
     GizmoTargetKind := gtkImage
+  else
+    GizmoTargetKind := gtkNone;
+end;
+
+procedure GT_SelectGroup(Idx: Integer);
+begin
+  CustomGroupSelectedIdx := Idx;
+  CustomTextSelectedIdx := -1;
+  CustomImageSelectedIdx := -1;
+  if (Idx >= 0) and (Idx < Length(CustomTextGroups)) then
+    GizmoTargetKind := gtkGroup
   else
     GizmoTargetKind := gtkNone;
 end;
@@ -1333,6 +1430,7 @@ procedure GT_DeselectAll;
 begin
   CustomTextSelectedIdx := -1;
   CustomImageSelectedIdx := -1;
+  CustomGroupSelectedIdx := -1;
   GizmoTargetKind := gtkNone;
 end;
 
@@ -1386,11 +1484,6 @@ function ResolveLocoFolder(const Num: string): string;
 var
   LocType: Integer;
 begin
-  if Pos('RA3', UpperCase(Num)) > 0 then
-  begin
-    Result := 'ra3';
-    Exit;
-  end;
   try
     LocType := GetLocomotiveTypeFromMemory;
     Result := GetLocomotiveFolder(LocType);
@@ -1507,6 +1600,24 @@ begin
           WriteLn(F, 'ct' + IntToStr(i) + '_visible: 1')
         else
           WriteLn(F, 'ct' + IntToStr(i) + '_visible: 0');
+        WriteLn(F, 'ct' + IntToStr(i) + '_groupidx: ' + IntToStr(CustomTexts[i].GroupIdx));
+      end;
+      // Группы
+      WriteLn(F, 'custom_group_count: ' + IntToStr(Length(CustomTextGroups)));
+      for i := 0 to Length(CustomTextGroups) - 1 do
+      begin
+        WriteLn(F, 'grp' + IntToStr(i) + '_name: '     + CustomTextGroups[i].Name);
+        WriteLn(F, 'grp' + IntToStr(i) + '_x: '        + FormatValue(CustomTextGroups[i].X));
+        WriteLn(F, 'grp' + IntToStr(i) + '_y: '        + FormatValue(CustomTextGroups[i].Y));
+        WriteLn(F, 'grp' + IntToStr(i) + '_z: '        + FormatValue(CustomTextGroups[i].Z));
+        WriteLn(F, 'grp' + IntToStr(i) + '_rx: '       + FormatValue(CustomTextGroups[i].RX));
+        WriteLn(F, 'grp' + IntToStr(i) + '_ry: '       + FormatValue(CustomTextGroups[i].RY));
+        WriteLn(F, 'grp' + IntToStr(i) + '_rz: '       + FormatValue(CustomTextGroups[i].RZ));
+        WriteLn(F, 'grp' + IntToStr(i) + '_scale: '    + FormatValue(CustomTextGroups[i].Scale));
+        if CustomTextGroups[i].Expanded then
+          WriteLn(F, 'grp' + IntToStr(i) + '_expanded: 1')
+        else
+          WriteLn(F, 'grp' + IntToStr(i) + '_expanded: 0');
       end;
     finally
       CloseFile(F);
@@ -1525,6 +1636,8 @@ var
   F: TextFile;
   ColonPos, CTCount, CTIdx, SrcVal, USCorePos: Integer;
   CTPrefix: string;
+  GrpIdx, GrpCount: Integer;
+  GrpPrefix: string;
 begin
   Result := False;
   Path := GetCustomTextsConfigPath;
@@ -1534,8 +1647,9 @@ begin
     AssignFile(F, Path);
     Reset(F);
     try
-      // Очищаем текущие тексты перед загрузкой нового набора.
+      // Очищаем текущие тексты и группы перед загрузкой нового набора.
       SetLength(CustomTexts, 0);
+      SetLength(CustomTextGroups, 0);
       CustomTextSelectedIdx := -1;
       while not Eof(F) do
       begin
@@ -1566,6 +1680,27 @@ begin
             CustomTexts[CTIdx].Scale   := CUSTOM_TEXT_DEFAULT_SCALE;
             CustomTexts[CTIdx].Visible := True;
             CustomTexts[CTIdx].Color   := $FFFFFF;
+            CustomTexts[CTIdx].GroupIdx := -1;
+          end;
+        end
+        else if Key = 'custom_group_count' then
+        begin
+          GrpCount := StrToIntDef(Value, 0);
+          if GrpCount < 0 then GrpCount := 0;
+          if GrpCount > 64 then GrpCount := 64;
+          SetLength(CustomTextGroups, GrpCount);
+          for GrpIdx := 0 to GrpCount - 1 do
+          begin
+            CustomTextGroups[GrpIdx].Name := 'Group ' + IntToStr(GrpIdx);
+            CustomTextGroups[GrpIdx].X := 0.0;
+            CustomTextGroups[GrpIdx].Y := 0.0;
+            CustomTextGroups[GrpIdx].Z := 0.0;
+            CustomTextGroups[GrpIdx].RX := 0.0;
+            CustomTextGroups[GrpIdx].RY := 0.0;
+            CustomTextGroups[GrpIdx].RZ := 0.0;
+            CustomTextGroups[GrpIdx].Scale := 1.0;
+            CustomTextGroups[GrpIdx].Expanded := True;
+            CustomTextGroups[GrpIdx].AnimProgress := 1.0;
           end;
         end
         else if (Length(Key) > 2) and (Copy(Key, 1, 2) = 'ct') then
@@ -1590,9 +1725,32 @@ begin
           else if CTPrefix = 'ry'      then CustomTexts[CTIdx].RY      := ParseFloat(Value, 0.0)
           else if CTPrefix = 'rz'      then CustomTexts[CTIdx].RZ      := ParseFloat(Value, 0.0)
           else if CTPrefix = 'scale'   then CustomTexts[CTIdx].Scale   := ParseFloat(Value, CUSTOM_TEXT_DEFAULT_SCALE)
-          else if CTPrefix = 'visible' then CustomTexts[CTIdx].Visible := (Value = '1');
+          else if CTPrefix = 'visible' then CustomTexts[CTIdx].Visible := (Value = '1')
+          else if CTPrefix = 'groupidx' then CustomTexts[CTIdx].GroupIdx := StrToIntDef(Value, -1);
+        end
+        // Группы — ключи вида grpN_xxx
+        else if (Length(Key) > 3) and (Copy(Key, 1, 3) = 'grp') then
+        begin
+          USCorePos := Pos('_', Key);
+          if USCorePos < 5 then Continue;
+          GrpIdx := StrToIntDef(Copy(Key, 4, USCorePos - 4), -1);
+          if (GrpIdx < 0) or (GrpIdx >= Length(CustomTextGroups)) then Continue;
+          GrpPrefix := Copy(Key, USCorePos + 1, Length(Key));
+          if GrpPrefix = 'name'       then CustomTextGroups[GrpIdx].Name   := Value
+          else if GrpPrefix = 'x'     then CustomTextGroups[GrpIdx].X      := ParseFloat(Value, 0.0)
+          else if GrpPrefix = 'y'     then CustomTextGroups[GrpIdx].Y      := ParseFloat(Value, 0.0)
+          else if GrpPrefix = 'z'     then CustomTextGroups[GrpIdx].Z      := ParseFloat(Value, 0.0)
+          else if GrpPrefix = 'rx'    then CustomTextGroups[GrpIdx].RX     := ParseFloat(Value, 0.0)
+          else if GrpPrefix = 'ry'    then CustomTextGroups[GrpIdx].RY     := ParseFloat(Value, 0.0)
+          else if GrpPrefix = 'rz'    then CustomTextGroups[GrpIdx].RZ     := ParseFloat(Value, 0.0)
+          else if GrpPrefix = 'scale' then CustomTextGroups[GrpIdx].Scale  := ParseFloat(Value, 1.0)
+          else if GrpPrefix = 'expanded' then CustomTextGroups[GrpIdx].Expanded := (Value = '1');
         end;
       end;
+      // Валидируем GroupIdx — если указывает за границы массива групп, сбрасываем
+      for CTIdx := 0 to Length(CustomTexts) - 1 do
+        if (CustomTexts[CTIdx].GroupIdx >= Length(CustomTextGroups)) then
+          CustomTexts[CTIdx].GroupIdx := -1;
       Result := True;
     finally
       CloseFile(F);
@@ -1602,6 +1760,7 @@ begin
   end;
   if (CustomTextSelectedIdx >= Length(CustomTexts)) then
     CustomTextSelectedIdx := -1;
+  CustomGroupSelectedIdx := -1;
 end;
 
 // Per-frame: проверяем, не сменился ли локомотив. Если да — загружаем
@@ -1655,6 +1814,7 @@ begin
   T.Scale := CUSTOM_TEXT_DEFAULT_SCALE;
   T.Visible := True;
   T.Color := $FFFFFF; // белый по умолчанию
+  T.GroupIdx := -1;   // корневой уровень
   SetLength(CustomTexts, N + 1);
   CustomTexts[N] := T;
   GT_SelectText(N);
@@ -1697,9 +1857,10 @@ procedure Write3DExt(FontID: Integer; Text: PChar); stdcall; external 'DGLEngine
 // кабины РА-3. Вызывается из RA3.DrawRA3 каждый кадр.
 procedure DrawCustomTextsRA3;
 var
-  i: Integer;
+  i, g: Integer;
   S: string;
   Buf: PChar;
+  Grp: TCustomTextGroup;
 begin
   if Length(CustomTexts) = 0 then Exit;
   for i := 0 to Length(CustomTexts) - 1 do
@@ -1707,19 +1868,51 @@ begin
     if not CustomTexts[i].Visible then Continue;
     S := GetKlubSourceValue(CustomTexts[i].Source);
     if S = '' then Continue;
-    BeginObj3D;
-    glDisable(GL_LIGHTING);
-    Position3D(CustomTexts[i].X, CustomTexts[i].Y, CustomTexts[i].Z);
-    RotateX(CustomTexts[i].RX);
-    RotateY(CustomTexts[i].RY);
-    RotateZ(CustomTexts[i].RZ);
-    Scale3D(CustomTexts[i].Scale);
-    Color3D(Integer(CustomTexts[i].Color), 255, False, 0.0);
-    SetTexture(0);
-    Buf := PChar(S);
-    Write3DExt(0, Buf);
-    glEnable(GL_LIGHTING);
-    EndObj3D;
+    g := CustomTexts[i].GroupIdx;
+    if (g >= 0) and (g < Length(CustomTextGroups)) then
+    begin
+      // Рендерим с родительским transform группы:
+      // BeginObj → group transform → BeginObj → local transform → end → end
+      Grp := CustomTextGroups[g];
+      BeginObj3D;
+      glDisable(GL_LIGHTING);
+      Position3D(Grp.X, Grp.Y, Grp.Z);
+      RotateX(Grp.RX);
+      RotateY(Grp.RY);
+      RotateZ(Grp.RZ);
+      Scale3D(Grp.Scale);
+      // Вложенный объект — локальный transform элемента
+      BeginObj3D;
+      Position3D(CustomTexts[i].X, CustomTexts[i].Y, CustomTexts[i].Z);
+      RotateX(CustomTexts[i].RX);
+      RotateY(CustomTexts[i].RY);
+      RotateZ(CustomTexts[i].RZ);
+      Scale3D(CustomTexts[i].Scale);
+      Color3D(Integer(CustomTexts[i].Color), 255, False, 0.0);
+      SetTexture(0);
+      Buf := PChar(S);
+      Write3DExt(0, Buf);
+      EndObj3D;
+      glEnable(GL_LIGHTING);
+      EndObj3D;
+    end
+    else
+    begin
+      // Корневой элемент (без группы) — как раньше
+      BeginObj3D;
+      glDisable(GL_LIGHTING);
+      Position3D(CustomTexts[i].X, CustomTexts[i].Y, CustomTexts[i].Z);
+      RotateX(CustomTexts[i].RX);
+      RotateY(CustomTexts[i].RY);
+      RotateZ(CustomTexts[i].RZ);
+      Scale3D(CustomTexts[i].Scale);
+      Color3D(Integer(CustomTexts[i].Color), 255, False, 0.0);
+      SetTexture(0);
+      Buf := PChar(S);
+      Write3DExt(0, Buf);
+      glEnable(GL_LIGHTING);
+      EndObj3D;
+    end;
   end;
 end;
 
@@ -1816,18 +2009,26 @@ end;
 function FormatGizmoFloat(V: Single; Decimals: Integer): string;
 var
   OldSep: Char;
+  DotPos, IntLen: Integer;
 begin
   OldSep := DecimalSeparator;
   try
     DecimalSeparator := '.';
-    // FloatToStrF не использует DecimalSeparator в Delphi 2007 в некоторых сборках,
-    // а Format(%f) — использует. На всякий случай и руками.
     if Decimals < 0 then Decimals := 0;
     if Decimals > 8 then Decimals := 8;
     Result := FloatToStrF(V, ffFixed, 15, Decimals);
     // Подстраховка — на случай если FloatToStrF всё-таки вписал запятую.
     if Pos(',', Result) > 0 then
       Result := StringReplace(Result, ',', '.', [rfReplaceAll]);
+    // Формат **.*** — ограничиваем целую часть до 2 символов (не считая знака).
+    // Если число >= 100 или <= -100, усекаем до 99.999/-99.999 визуально.
+    DotPos := Pos('.', Result);
+    if DotPos = 0 then DotPos := Length(Result) + 1;
+    if (V < 0) then IntLen := DotPos - 2 // минус + цифры
+    else IntLen := DotPos - 1;
+    // Pad: если целая часть 1 цифра, добавляем пробел спереди для выравнивания.
+    if (V >= 0) and (IntLen < 2) then
+      Result := ' ' + Result;
   finally
     DecimalSeparator := OldSep;
   end;
@@ -1849,8 +2050,6 @@ end;
 // сбой форматирования / OpenGL-операции не валил DLL.
 procedure DrawGizmoOverlay2D;
 var
-  Idx: Integer;
-  T: TCustomText3D;
   S, DegSym: string;
   TX, TY: Integer;
   StartX, StartY, CurX, CurY: Integer;
@@ -1862,9 +2061,7 @@ var
   Begin2DActive: Boolean;
 begin
   if not GizmoCacheValid then Exit;
-  Idx := CustomTextSelectedIdx;
-  if (Idx < 0) or (Idx >= Length(CustomTexts)) then Exit;
-  T := CustomTexts[Idx];
+  if not GT_Valid then Exit;
   // Знак градуса берём как одиночный байт CP1251 (B0). Если шрифт не умеет —
   // в любом случае не упадёт.
   DegSym := Chr(176);
@@ -1941,22 +2138,22 @@ begin
       case GizmoMode of
         gmTranslate:
           case GizmoActiveAxis of
-            GIZMO_AXIS_X:    S := 'X: '   + FormatGizmoFloat(T.X, 4);
-            GIZMO_AXIS_Y:    S := 'Y: '   + FormatGizmoFloat(T.Y, 4);
-            GIZMO_AXIS_Z:    S := 'Z: '   + FormatGizmoFloat(T.Z, 4);
-            GIZMO_AXIS_VIEW: S := 'XYZ: ' + FormatGizmoFloat(T.X, 3) + ' / ' +
-                                            FormatGizmoFloat(T.Y, 3) + ' / ' +
-                                            FormatGizmoFloat(T.Z, 3);
+            GIZMO_AXIS_X:    S := 'X: '   + FormatGizmoFloat(GT_X, 4);
+            GIZMO_AXIS_Y:    S := 'Y: '   + FormatGizmoFloat(GT_Y, 4);
+            GIZMO_AXIS_Z:    S := 'Z: '   + FormatGizmoFloat(GT_Z, 4);
+            GIZMO_AXIS_VIEW: S := 'XYZ: ' + FormatGizmoFloat(GT_X, 3) + ' / ' +
+                                            FormatGizmoFloat(GT_Y, 3) + ' / ' +
+                                            FormatGizmoFloat(GT_Z, 3);
           end;
         gmRotate:
           // Свап Y↔Z: показываем тот угол, который реально меняется кольцом.
           case GizmoActiveAxis of
-            GIZMO_AXIS_X: S := 'RX: ' + FormatGizmoFloatSigned(T.RX, 1) + DegSym;
-            GIZMO_AXIS_Y: S := 'RZ: ' + FormatGizmoFloatSigned(T.RZ, 1) + DegSym;
-            GIZMO_AXIS_Z: S := 'RY: ' + FormatGizmoFloatSigned(T.RY, 1) + DegSym;
+            GIZMO_AXIS_X: S := 'RX: ' + FormatGizmoFloatSigned(GT_RX, 1) + DegSym;
+            GIZMO_AXIS_Y: S := 'RZ: ' + FormatGizmoFloatSigned(GT_RZ, 1) + DegSym;
+            GIZMO_AXIS_Z: S := 'RY: ' + FormatGizmoFloatSigned(GT_RY, 1) + DegSym;
           end;
         gmScale:
-          S := 'Scale: ' + FormatGizmoFloat(T.Scale, 3) + 'x';
+          S := 'Scale: ' + FormatGizmoFloat(GT_Scale, 3) + 'x';
       end;
       if GizmoShiftHeld then S := S + '   [snap]';
       if GizmoCtrlHeld  then S := S + '   [precise]';
@@ -2000,6 +2197,8 @@ var
   RingV: array[0..GIZMO_RING_SAMPLES - 1] of TVertex;
   HalfWWorld, HalfHWorld: Single;
   PosX, PosY, PosZ, RotX, RotY, RotZ: Single;
+  g: Integer;
+  Grp: TCustomTextGroup;
 begin
   // ВАЖНО: гизмо рисуется всегда, когда есть выбранный объект (текст ИЛИ
   // картинка) — даже без F12-меню, чтобы можно было редактировать прямо в кабине.
@@ -2024,9 +2223,25 @@ begin
   // картинки — 0 (DrawPlane уже центрирует quad на (X,Y,Z)).
   GT_GetCenterOffset(HalfWWorld, HalfHWorld);
 
+  // Если выбранный текст принадлежит группе — сначала применяем групповой
+  // трансформ, чтобы гизмо оказалось на том же месте, где рендерится элемент.
+  // Оси гизмо после undo-rotation будут в group-space: drag X двигает локальный X
+  // элемента вдоль оси X группы — визуально совпадает.
+  if (GizmoTargetKind = gtkText) and (CustomTextSelectedIdx >= 0) and
+     (CustomTextSelectedIdx < Length(CustomTexts)) then
+  begin
+    g := CustomTexts[CustomTextSelectedIdx].GroupIdx;
+    if (g >= 0) and (g < Length(CustomTextGroups)) then
+    begin
+      Grp := CustomTextGroups[g];
+      Position3D(Grp.X, Grp.Y, Grp.Z);
+      RotateX(Grp.RX); RotateY(Grp.RY); RotateZ(Grp.RZ);
+      Scale3D(Grp.Scale);
+    end;
+  end;
+
   // Матричный трюк: T(anchor) * R * T(local_offset) * R^-1.
-  // → origin сдвинут на R * (HalfW, HalfH, 0), а оси остаются мировыми XYZ.
-  // Это сохраняет совместимость с математикой drag (она в world-XYZ).
+  // → origin сдвинут на R * (HalfW, HalfH, 0), а оси остаются в parent-space.
   Position3D(PosX, PosY, PosZ);
   RotateX(RotX); RotateY(RotY); RotateZ(RotZ);
   glTranslatef(HalfWWorld, HalfHWorld, 0);
@@ -2565,12 +2780,14 @@ begin
   end;
   GizmoLastEsc := EscNow;
 
-  // Rising edge → старт drag'а (если не над окном меню и не в Dev Editor'е).
+  // Rising edge → старт drag'а (если не над окном меню).
+  // DevEditor — полноэкранный оверлей, но гизмо должно работать даже когда он
+  // открыт, иначе пользователь видит гизмо но не может его таскать.
   if (not GizmoDragging) and LMB and (not GizmoLastLMB) and (HoveredGizmoAxis <> GIZMO_AXIS_NONE) then
   begin
-    if (MenuVisible and PointInAnyMenuWindow(MX, MY)) or DevEditorVisible then
+    if MenuVisible and PointInAnyMenuWindow(MX, MY) then
     begin
-      // Клик попал в UI — пускай его обработает соответствующий код.
+      // Клик попал в окно меню — пускай его обработает соответствующий код.
     end
     else
     begin
@@ -2985,6 +3202,8 @@ var
   LangValue: Integer;
   CTCount, CTIdx, SrcVal: Integer;
   CTPrefix: string;
+  GrpCount, GrpIdx: Integer;
+  GrpPrefix: string;
 
   // Возвращает True, если Key начинается с 'ctN_' и помещает индекс N в CTIdx,
   // а суффикс (без префикса 'ctN_') — в Out.
@@ -2998,6 +3217,29 @@ var
     if (K[1] <> 'c') or (K[2] <> 't') then Exit;
     NumS := '';
     J := 3;
+    while (J <= Length(K)) and (K[J] >= '0') and (K[J] <= '9') do
+    begin
+      NumS := NumS + K[J];
+      Inc(J);
+    end;
+    if (NumS = '') or (J > Length(K)) or (K[J] <> '_') then Exit;
+    Idx := StrToIntDef(NumS, -1);
+    if Idx < 0 then Exit;
+    Suffix := Copy(K, J + 1, Length(K));
+    Result := True;
+  end;
+
+  // Аналогично MatchCT, но для 'grpN_'.
+  function MatchGrp(const K: string; out Idx: Integer; out Suffix: string): Boolean;
+  var
+    J: Integer;
+    NumS: string;
+  begin
+    Result := False;
+    if Length(K) < 5 then Exit;
+    if (K[1] <> 'g') or (K[2] <> 'r') or (K[3] <> 'p') then Exit;
+    NumS := '';
+    J := 4;
     while (J <= Length(K)) and (K[J] >= '0') and (K[J] <= '9') do
     begin
       NumS := NumS + K[J];
@@ -3140,53 +3382,100 @@ begin
         end;
 
         // --- Кастомные 3D-тексты ---
-        // Сначала размер массива:
-        if Key = 'custom_text_count' then
+        // Per-loco система: тексты загружаются из per-loco файла
+        // (CheckLocoChangeAndReloadTexts → LoadCustomTextsForCurrentLoco).
+        // zdbooster.cfg содержит тексты ТОЛЬКО как fallback при самом первом запуске
+        // (когда per-loco файла ещё нет). Если per-loco файл уже загружен
+        // (LastLocoIdent <> ''), пропускаем текстовые ключи из глобального cfg.
+        if (LastLocoIdent = '') then
         begin
-          CTCount := StrToIntDef(Value, 0);
-          if CTCount < 0 then CTCount := 0;
-          if CTCount > 256 then CTCount := 256; // sanity-cap
-          SetLength(CustomTexts, CTCount);
-          // Заполняем дефолтами на случай неполного конфига:
-          for CTIdx := 0 to CTCount - 1 do
+          if Key = 'custom_text_count' then
           begin
-            CustomTexts[CTIdx].Name    := '';
-            CustomTexts[CTIdx].Source  := ksSpeed;
-            CustomTexts[CTIdx].X       := 0.0;
-            CustomTexts[CTIdx].Y       := 0.0;
-            CustomTexts[CTIdx].Z       := 0.2;
-            CustomTexts[CTIdx].RX      := -90.0;
-            CustomTexts[CTIdx].RY      := 0.0;
-            CustomTexts[CTIdx].RZ      := 0.0;
-            CustomTexts[CTIdx].Scale   := CUSTOM_TEXT_DEFAULT_SCALE;
-            CustomTexts[CTIdx].Visible := True;
-            CustomTexts[CTIdx].Color   := $FFFFFF;
-          end;
-          if CustomTextSelectedIdx >= CTCount then
-            CustomTextSelectedIdx := CTCount - 1;
-        end
-        else if MatchCT(Key, CTIdx, CTPrefix) and (CTIdx < Length(CustomTexts)) then
-        begin
-          if CTPrefix = 'source' then
-          begin
-            SrcVal := StrToIntDef(Value, 0);
-            if (SrcVal >= 0) and (SrcVal < KLUB_SOURCE_COUNT) then
-              CustomTexts[CTIdx].Source := TKlubSource(SrcVal);
+            CTCount := StrToIntDef(Value, 0);
+            if CTCount < 0 then CTCount := 0;
+            if CTCount > 256 then CTCount := 256;
+            SetLength(CustomTexts, CTCount);
+            for CTIdx := 0 to CTCount - 1 do
+            begin
+              CustomTexts[CTIdx].Name    := '';
+              CustomTexts[CTIdx].Source  := ksSpeed;
+              CustomTexts[CTIdx].X       := 0.0;
+              CustomTexts[CTIdx].Y       := 0.0;
+              CustomTexts[CTIdx].Z       := 0.2;
+              CustomTexts[CTIdx].RX      := -90.0;
+              CustomTexts[CTIdx].RY      := 0.0;
+              CustomTexts[CTIdx].RZ      := 0.0;
+              CustomTexts[CTIdx].Scale   := CUSTOM_TEXT_DEFAULT_SCALE;
+              CustomTexts[CTIdx].Visible := True;
+              CustomTexts[CTIdx].Color   := $FFFFFF;
+              CustomTexts[CTIdx].GroupIdx := -1;
+            end;
+            if CustomTextSelectedIdx >= CTCount then
+              CustomTextSelectedIdx := CTCount - 1;
           end
-          else if CTPrefix = 'name'    then CustomTexts[CTIdx].Name    := Value
-          else if CTPrefix = 'color'   then CustomTexts[CTIdx].Color   := Cardinal(StrToIntDef(Value, $FFFFFF))
-          else if CTPrefix = 'x'       then CustomTexts[CTIdx].X       := ParseFloat(Value, 0.0)
-          else if CTPrefix = 'y'       then CustomTexts[CTIdx].Y       := ParseFloat(Value, 0.0)
-          else if CTPrefix = 'z'       then CustomTexts[CTIdx].Z       := ParseFloat(Value, 0.2)
-          else if CTPrefix = 'rx'      then CustomTexts[CTIdx].RX      := ParseFloat(Value, -90.0)
-          else if CTPrefix = 'ry'      then CustomTexts[CTIdx].RY      := ParseFloat(Value, 0.0)
-          else if CTPrefix = 'rz'      then CustomTexts[CTIdx].RZ      := ParseFloat(Value, 0.0)
-          else if CTPrefix = 'scale'   then CustomTexts[CTIdx].Scale   := ParseFloat(Value, CUSTOM_TEXT_DEFAULT_SCALE)
-          else if CTPrefix = 'visible' then CustomTexts[CTIdx].Visible := (Value = '1');
+          else if MatchCT(Key, CTIdx, CTPrefix) and (CTIdx < Length(CustomTexts)) then
+          begin
+            if CTPrefix = 'source' then
+            begin
+              SrcVal := StrToIntDef(Value, 0);
+              if (SrcVal >= 0) and (SrcVal < KLUB_SOURCE_COUNT) then
+                CustomTexts[CTIdx].Source := TKlubSource(SrcVal);
+            end
+            else if CTPrefix = 'name'    then CustomTexts[CTIdx].Name    := Value
+            else if CTPrefix = 'color'   then CustomTexts[CTIdx].Color   := Cardinal(StrToIntDef(Value, $FFFFFF))
+            else if CTPrefix = 'x'       then CustomTexts[CTIdx].X       := ParseFloat(Value, 0.0)
+            else if CTPrefix = 'y'       then CustomTexts[CTIdx].Y       := ParseFloat(Value, 0.0)
+            else if CTPrefix = 'z'       then CustomTexts[CTIdx].Z       := ParseFloat(Value, 0.2)
+            else if CTPrefix = 'rx'      then CustomTexts[CTIdx].RX      := ParseFloat(Value, -90.0)
+            else if CTPrefix = 'ry'      then CustomTexts[CTIdx].RY      := ParseFloat(Value, 0.0)
+            else if CTPrefix = 'rz'      then CustomTexts[CTIdx].RZ      := ParseFloat(Value, 0.0)
+            else if CTPrefix = 'scale'   then CustomTexts[CTIdx].Scale   := ParseFloat(Value, CUSTOM_TEXT_DEFAULT_SCALE)
+            else if CTPrefix = 'visible' then CustomTexts[CTIdx].Visible := (Value = '1')
+            else if CTPrefix = 'groupidx' then CustomTexts[CTIdx].GroupIdx := StrToIntDef(Value, -1);
+          end;
+
+          // Группы (fallback из zdbooster.cfg)
+          if Key = 'custom_group_count' then
+          begin
+            GrpCount := StrToIntDef(Value, 0);
+            if GrpCount < 0 then GrpCount := 0;
+            if GrpCount > 64 then GrpCount := 64;
+            SetLength(CustomTextGroups, GrpCount);
+            for GrpIdx := 0 to GrpCount - 1 do
+            begin
+              CustomTextGroups[GrpIdx].Name := 'Group ' + IntToStr(GrpIdx);
+              CustomTextGroups[GrpIdx].X := 0.0;
+              CustomTextGroups[GrpIdx].Y := 0.0;
+              CustomTextGroups[GrpIdx].Z := 0.0;
+              CustomTextGroups[GrpIdx].RX := 0.0;
+              CustomTextGroups[GrpIdx].RY := 0.0;
+              CustomTextGroups[GrpIdx].RZ := 0.0;
+              CustomTextGroups[GrpIdx].Scale := 1.0;
+              CustomTextGroups[GrpIdx].Expanded := True;
+              CustomTextGroups[GrpIdx].AnimProgress := 1.0;
+            end;
+          end
+          else if MatchGrp(Key, GrpIdx, GrpPrefix) and (GrpIdx < Length(CustomTextGroups)) then
+          begin
+            if      GrpPrefix = 'name'     then CustomTextGroups[GrpIdx].Name     := Value
+            else if GrpPrefix = 'x'        then CustomTextGroups[GrpIdx].X        := ParseFloat(Value, 0.0)
+            else if GrpPrefix = 'y'        then CustomTextGroups[GrpIdx].Y        := ParseFloat(Value, 0.0)
+            else if GrpPrefix = 'z'        then CustomTextGroups[GrpIdx].Z        := ParseFloat(Value, 0.0)
+            else if GrpPrefix = 'rx'       then CustomTextGroups[GrpIdx].RX       := ParseFloat(Value, 0.0)
+            else if GrpPrefix = 'ry'       then CustomTextGroups[GrpIdx].RY       := ParseFloat(Value, 0.0)
+            else if GrpPrefix = 'rz'       then CustomTextGroups[GrpIdx].RZ       := ParseFloat(Value, 0.0)
+            else if GrpPrefix = 'scale'    then CustomTextGroups[GrpIdx].Scale    := ParseFloat(Value, 1.0)
+            else if GrpPrefix = 'expanded' then CustomTextGroups[GrpIdx].Expanded := (Value = '1');
+          end;
         end;
       end;
     end;
     CloseFile(F);
+
+    // Валидируем GroupIdx текстов
+    for CTIdx := 0 to Length(CustomTexts) - 1 do
+      if CustomTexts[CTIdx].GroupIdx >= Length(CustomTextGroups) then
+        CustomTexts[CTIdx].GroupIdx := -1;
 
     // Если что-то выбрано, синхронизируем слайдеры (значения изменились на диске).
     if (CustomTextSelectedIdx >= 0) and (CustomTextSelectedIdx < Length(CustomTexts)) then
@@ -3327,6 +3616,25 @@ begin
         WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_visible: 1')
       else
         WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_visible: 0');
+      WriteLn(F, 'ct' + IntToStr(I_SAVE) + '_groupidx: ' + IntToStr(CustomTexts[I_SAVE].GroupIdx));
+    end;
+
+    // Группы кастомных текстов
+    WriteLn(F, 'custom_group_count: ' + IntToStr(Length(CustomTextGroups)));
+    for I_SAVE := 0 to Length(CustomTextGroups) - 1 do
+    begin
+      WriteLn(F, 'grp' + IntToStr(I_SAVE) + '_name: '     + CustomTextGroups[I_SAVE].Name);
+      WriteLn(F, 'grp' + IntToStr(I_SAVE) + '_x: '        + FormatValue(CustomTextGroups[I_SAVE].X));
+      WriteLn(F, 'grp' + IntToStr(I_SAVE) + '_y: '        + FormatValue(CustomTextGroups[I_SAVE].Y));
+      WriteLn(F, 'grp' + IntToStr(I_SAVE) + '_z: '        + FormatValue(CustomTextGroups[I_SAVE].Z));
+      WriteLn(F, 'grp' + IntToStr(I_SAVE) + '_rx: '       + FormatValue(CustomTextGroups[I_SAVE].RX));
+      WriteLn(F, 'grp' + IntToStr(I_SAVE) + '_ry: '       + FormatValue(CustomTextGroups[I_SAVE].RY));
+      WriteLn(F, 'grp' + IntToStr(I_SAVE) + '_rz: '       + FormatValue(CustomTextGroups[I_SAVE].RZ));
+      WriteLn(F, 'grp' + IntToStr(I_SAVE) + '_scale: '    + FormatValue(CustomTextGroups[I_SAVE].Scale));
+      if CustomTextGroups[I_SAVE].Expanded then
+        WriteLn(F, 'grp' + IntToStr(I_SAVE) + '_expanded: 1')
+      else
+        WriteLn(F, 'grp' + IntToStr(I_SAVE) + '_expanded: 0');
     end;
 
     CloseFile(F);
@@ -3815,6 +4123,20 @@ begin
     end;
     if FreeWalkSection.AnimProgress < 0 then FreeWalkSection.AnimProgress := 0;
     if FreeWalkSection.AnimProgress > 1 then FreeWalkSection.AnimProgress := 1;
+
+    // NewSky секция
+    if NewSkySection.Expanded then
+    begin
+      if NewSkySection.AnimProgress < 1.0 then
+        NewSkySection.AnimProgress := NewSkySection.AnimProgress + 5.0 * DeltaTime;
+    end
+    else
+    begin
+      if NewSkySection.AnimProgress > 0.0 then
+        NewSkySection.AnimProgress := NewSkySection.AnimProgress - 5.0 * DeltaTime;
+    end;
+    if NewSkySection.AnimProgress < 0 then NewSkySection.AnimProgress := 0;
+    if NewSkySection.AnimProgress > 1 then NewSkySection.AnimProgress := 1;
   end;
 end;
 
@@ -3889,7 +4211,9 @@ begin
   // Слайдеры редактора кастомных 3D-текстов
   InitCustomTextSliders;
   SetLength(CustomTexts, 0);
+  SetLength(CustomTextGroups, 0);
   CustomTextSelectedIdx := -1;
+  CustomGroupSelectedIdx := -1;
 
   // Адреса для угла обзора
   ViewAngleNopAddr1 := $723909;
@@ -4241,24 +4565,16 @@ begin
   TrackH := 4;
   TrackY := Y + 10 - TrackH div 2;
 
-  // Inactive track (full width, pill-shaped with circles on ends)
-  DrawCircle2D_Fill(X + 2, TrackY + TrackH div 2, TrackH div 2, TrackColor, Alpha);
-  DrawCircle2D_Fill(X + ScaledWidth - 2, TrackY + TrackH div 2, TrackH div 2, TrackColor, Alpha);
-  DrawRectangle2D(X + 2, TrackY, ScaledWidth - 4, TrackH, TrackColor, Alpha, True);
+  // Inactive track (full width, simple rectangle)
+  DrawRectangle2D(X, TrackY, ScaledWidth, TrackH, TrackColor, Alpha, True);
 
-  // Active track (left part, pill-shaped)
+  // Active track (left part)
   if Progress > 0.01 then
-  begin
-    DrawCircle2D_Fill(X + 2, TrackY + TrackH div 2, TrackH div 2, ActiveColor, Alpha);
-    DrawCircle2D_Fill(SliderX, TrackY + TrackH div 2, TrackH div 2, ActiveColor, Alpha);
-    if SliderX - X > 4 then
-      DrawRectangle2D(X + 2, TrackY, SliderX - X - 2, TrackH, ActiveColor, Alpha, True);
-  end;
+    DrawRectangle2D(X, TrackY, Round(Progress * ScaledWidth), TrackH, ActiveColor, Alpha, True);
 
   // Thumb: shadow + white circle
   DrawCircle2D_Fill(SliderX + 1, Y + 11, ThumbSize, COLOR_SHADOW, Alpha div 5);
   DrawCircle2D_Fill(SliderX, Y + 10, ThumbSize, ThumbColor, Alpha);
-  DrawCircle2D(SliderX, Y + 10, ThumbSize, COLOR_BORDER, Alpha div 4);
 end;
 
 // iOS-style pill toggle switch
@@ -4314,13 +4630,10 @@ begin
   TextColor := LerpColor(COLOR_ON_SURFACE, COLOR_ON_PRIMARY, HoverProgress * 0.3);
   DrawModernText(X + 4, Y + 6, Text, TextColor, Alpha, 0.75);
 
-  // iOS pill toggle (right side)
-  if HasExpandButton then
-    DrawPillToggle(X + 185, Y + 3, Enabled, Alpha, HoverProgress)
-  else
-    DrawPillToggle(X + 210, Y + 3, Enabled, Alpha, HoverProgress);
+  // iOS pill toggle (always same X for alignment)
+  DrawPillToggle(X + 195, Y + 3, Enabled, Alpha, HoverProgress);
 
-  // Chevron expand button
+  // Chevron expand button (after pill)
   if HasExpandButton then
     DrawModernExpandButton(ExpandButtonX, Y + 4, Expanded, Alpha, HoverProgress);
 end;
@@ -4883,11 +5196,15 @@ begin
       if Settings.MaxVisibleDistanceSection.AnimProgress > 0.01 then
         TotalHeight := TotalHeight + Round(180 * Settings.MaxVisibleDistanceSection.AnimProgress) + MARGIN;
 
-      // NewSky + MegaRealism + CitySelector + SystemTime toggles.
-      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;  // MegaRealism
-      if Settings.MegaRealism then
-        TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN; // City selector
-      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;  // NewSky
+      // NewSky (expandable) + SystemTime toggles.
+      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;  // NewSky toggle
+      if Settings.NewSkySection.AnimProgress > 0.01 then
+      begin
+        TotalHeight := TotalHeight + Round(70 * Settings.NewSkySection.AnimProgress);
+        if Settings.MegaRealism then
+          TotalHeight := TotalHeight + Round(30 * Settings.NewSkySection.AnimProgress);
+        TotalHeight := TotalHeight + MARGIN;
+      end;
       TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;  // SystemTime
     end;
     
@@ -5205,30 +5522,42 @@ begin
         Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
       end;
       
-      // Mega Realism
-      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('MegaRealismText'), Settings.MegaRealism, Alpha,
-        False, 0, False,
-        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
-      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
-
-      // City selector (visible only when MegaRealism is on)
-      if Settings.MegaRealism then
-      begin
-        if HoverFor(ScaledX + Round((MARGIN + 8) * Win.Scale), ContentY,
-                    Round(220 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)) > 0.5 then
-          DrawText2D(0, ScaledX + Round((MARGIN + 8) * Win.Scale), ContentY + Round(5 * Win.Scale),
-            '< ' + MegaRealismCityNames[Settings.MegaRealismCityIndex] + ' >', $FFFFFF, Alpha, 0.7)
-        else
-          DrawText2D(0, ScaledX + Round((MARGIN + 8) * Win.Scale), ContentY + Round(5 * Win.Scale),
-            '< ' + MegaRealismCityNames[Settings.MegaRealismCityIndex] + ' >', $AAAAAA, Alpha, 0.7);
-        Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
-      end;
-
-      // New Sky
+      // New Sky (expandable, with MegaRealism inside)
+      ExpandButtonX := ScaledX + Round(250 * Win.Scale);
       DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY, GetText('NewSkyText'), Settings.NewSky, Alpha,
-        False, 0, False,
+        True, ExpandButtonX, Settings.NewSkySection.Expanded,
         HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY, Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
       Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
+      // NewSky секция (Мега реализм + город)
+      if Settings.NewSkySection.AnimProgress > 0.01 then
+      begin
+        SectionHeight := Round(70 * Settings.NewSkySection.AnimProgress * Win.Scale);
+        if Settings.MegaRealism then
+          SectionHeight := SectionHeight + Round(30 * Settings.NewSkySection.AnimProgress * Win.Scale);
+
+        DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
+
+        // Мега реализм checkbox
+        if SectionHeight > Round(10 * Win.Scale) then
+          DrawModernCheckbox(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(10 * Win.Scale), GetText('MegaRealismText'), Settings.MegaRealism, Alpha,
+            HoverFor(ScaledX + Round((MARGIN + 16) * Win.Scale), ContentY + Round(10 * Win.Scale), Round(200 * Win.Scale), Round(20 * Win.Scale)));
+
+        // City selector (только при включённом MegaRealism)
+        if Settings.MegaRealism and (SectionHeight > Round(40 * Win.Scale)) then
+        begin
+          if HoverFor(ScaledX + Round((MARGIN + 32) * Win.Scale), ContentY + Round(40 * Win.Scale),
+                      Round(200 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)) > 0.5 then
+            DrawText2D(0, ScaledX + Round((MARGIN + 32) * Win.Scale), ContentY + Round(45 * Win.Scale),
+              '< ' + MegaRealismCityNames[Settings.MegaRealismCityIndex] + ' >', $FFFFFF, Alpha, 0.7)
+          else
+            DrawText2D(0, ScaledX + Round((MARGIN + 32) * Win.Scale), ContentY + Round(45 * Win.Scale),
+              '< ' + MegaRealismCityNames[Settings.MegaRealismCityIndex] + ' >', COLOR_SECONDARY_LABEL, Alpha, 0.7);
+        end;
+
+        Inc(ContentY, SectionHeight + Round(MARGIN * Win.Scale));
+      end;
 
       // System Time — подмена AbsoluteTime симулятора на Windows time.
       // SystemTime.pas читает InitSystemTimeEnable каждый кадр, так что
@@ -6189,39 +6518,53 @@ begin
       Inc(ContentY, SectionHeight + MARGIN);
     end;
     
-    // Mega Realism toggle
-    if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
+    // NewSky expand button
+    if InRect(X, Y, WorldWindow.X + 250, ContentY + 6, BUTTON_SIZE, BUTTON_SIZE) then
     begin
-      Settings.MegaRealism := not Settings.MegaRealism;
-      SaveConfig;
-      SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
+      Settings.NewSkySection.Expanded := not Settings.NewSkySection.Expanded;
       Exit;
-    end;
-    Inc(ContentY, ITEM_HEIGHT + MARGIN);
-
-    // City selector (click cycles to next city)
-    if Settings.MegaRealism then
-    begin
-      if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
-      begin
-        Settings.MegaRealismCityIndex := (Settings.MegaRealismCityIndex + 1) mod MEGA_REALISM_CITY_COUNT;
-        SaveConfig;
-        SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
-        Exit;
-      end;
-      Inc(ContentY, ITEM_HEIGHT + MARGIN);
     end;
 
     // New Sky toggle
     if InRect(X, Y, WorldWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
     begin
       Settings.NewSky := not Settings.NewSky;
+      if Settings.NewSky then Settings.NewSkySection.Expanded := True;
       SaveConfig;
       SyncConfigFromMenu(Settings.Freecam, Settings.MainCamera, Settings.MaxVisibleDistance, Settings.NewSky);
       SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
       Exit;
     end;
     Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
+    // NewSky секция (MegaRealism + city)
+    if Settings.NewSkySection.AnimProgress > 0.01 then
+    begin
+      SectionHeight := Round(70 * Settings.NewSkySection.AnimProgress);
+      if Settings.MegaRealism then
+        SectionHeight := SectionHeight + Round(30 * Settings.NewSkySection.AnimProgress);
+
+      // MegaRealism checkbox
+      if (SectionHeight > 10) and InRect(X, Y, WorldWindow.X + MARGIN + 16, ContentY + 5, 200, ITEM_HEIGHT) then
+      begin
+        Settings.MegaRealism := not Settings.MegaRealism;
+        SaveConfig;
+        SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
+        Exit;
+      end;
+
+      // City selector
+      if Settings.MegaRealism and (SectionHeight > 40) and
+         InRect(X, Y, WorldWindow.X + MARGIN + 32, ContentY + 35, 200, ITEM_HEIGHT) then
+      begin
+        Settings.MegaRealismCityIndex := (Settings.MegaRealismCityIndex + 1) mod MEGA_REALISM_CITY_COUNT;
+        SaveConfig;
+        SyncMegaRealismConfig(Settings.MegaRealism, Settings.MegaRealismCityIndex);
+        Exit;
+      end;
+
+      Inc(ContentY, SectionHeight + MARGIN);
+    end;
 
     // System Time toggle — пишет в InitSystemTimeEnable, который
     // SystemTime.pas читает на каждый кадр.
@@ -6708,6 +7051,38 @@ begin
   begin Result := DE_HOT_DELETE; Exit; end;
 end;
 
+// Хотспот внутри value-strip группы (XYZ/RXRYRZ/Scale).
+// CellY = CardY + 30 (как у текста). CellX начинается с CardX + 8.
+function DEGrpHotspotAtPoint(MX, MY, CardX, CardY: Integer): Integer;
+var
+  CellX, CellY, i: Integer;
+  StepHotMinus: array[0..6] of Integer;
+  StepHotPlus:  array[0..6] of Integer;
+  StepHotVal:   array[0..6] of Integer;
+begin
+  Result := DE_HOT_NONE;
+  CellY := CardY + 30;
+  StepHotMinus[0] := DE_HOT_X_MINUS;  StepHotPlus[0] := DE_HOT_X_PLUS;  StepHotVal[0] := DE_HOT_X_VAL;
+  StepHotMinus[1] := DE_HOT_Y_MINUS;  StepHotPlus[1] := DE_HOT_Y_PLUS;  StepHotVal[1] := DE_HOT_Y_VAL;
+  StepHotMinus[2] := DE_HOT_Z_MINUS;  StepHotPlus[2] := DE_HOT_Z_PLUS;  StepHotVal[2] := DE_HOT_Z_VAL;
+  StepHotMinus[3] := DE_HOT_RX_MINUS; StepHotPlus[3] := DE_HOT_RX_PLUS; StepHotVal[3] := DE_HOT_RX_VAL;
+  StepHotMinus[4] := DE_HOT_RY_MINUS; StepHotPlus[4] := DE_HOT_RY_PLUS; StepHotVal[4] := DE_HOT_RY_VAL;
+  StepHotMinus[5] := DE_HOT_RZ_MINUS; StepHotPlus[5] := DE_HOT_RZ_PLUS; StepHotVal[5] := DE_HOT_RZ_VAL;
+  StepHotMinus[6] := DE_HOT_S_MINUS;  StepHotPlus[6] := DE_HOT_S_PLUS;  StepHotVal[6] := DE_HOT_S_VAL;
+  CellX := CardX + 8;
+  for i := 0 to 6 do
+  begin
+    if DEInRect(MX, MY, CellX, CellY, DE_BTN_SMALL, DE_BTN_SMALL) then
+    begin Result := StepHotMinus[i]; Exit; end;
+    if DEInRect(MX, MY, CellX + DE_BTN_SMALL + 2 + DE_VAL_W + 2, CellY,
+      DE_BTN_SMALL, DE_BTN_SMALL) then
+    begin Result := StepHotPlus[i]; Exit; end;
+    if DEInRect(MX, MY, CellX + DE_BTN_SMALL + 2, CellY, DE_VAL_W, DE_BTN_SMALL) then
+    begin Result := StepHotVal[i]; Exit; end;
+    Inc(CellX, DE_CELL_W);
+  end;
+end;
+
 // Применить шаг +/− к выбранной карточке.
 procedure DEApplyStep(CardIdx, Hotspot: Integer; Sign: Integer);
 begin
@@ -6726,6 +7101,25 @@ begin
     end;
   end;
   if CardIdx = CustomTextSelectedIdx then SyncSlidersFromSelected;
+end;
+
+// +/- для значений группы (аналог DEApplyStep для CustomTextGroups).
+procedure DEApplyStepGroup(GrpIdx, Hotspot: Integer; Sign: Integer);
+begin
+  if (GrpIdx < 0) or (GrpIdx >= Length(CustomTextGroups)) then Exit;
+  case Hotspot of
+    DE_HOT_X_MINUS, DE_HOT_X_PLUS:   CustomTextGroups[GrpIdx].X  := CustomTextGroups[GrpIdx].X  + Sign * DE_STEP_POS;
+    DE_HOT_Y_MINUS, DE_HOT_Y_PLUS:   CustomTextGroups[GrpIdx].Y  := CustomTextGroups[GrpIdx].Y  + Sign * DE_STEP_POS;
+    DE_HOT_Z_MINUS, DE_HOT_Z_PLUS:   CustomTextGroups[GrpIdx].Z  := CustomTextGroups[GrpIdx].Z  + Sign * DE_STEP_POS;
+    DE_HOT_RX_MINUS, DE_HOT_RX_PLUS: CustomTextGroups[GrpIdx].RX := CustomTextGroups[GrpIdx].RX + Sign * DE_STEP_ANG;
+    DE_HOT_RY_MINUS, DE_HOT_RY_PLUS: CustomTextGroups[GrpIdx].RY := CustomTextGroups[GrpIdx].RY + Sign * DE_STEP_ANG;
+    DE_HOT_RZ_MINUS, DE_HOT_RZ_PLUS: CustomTextGroups[GrpIdx].RZ := CustomTextGroups[GrpIdx].RZ + Sign * DE_STEP_ANG;
+    DE_HOT_S_MINUS, DE_HOT_S_PLUS:
+    begin
+      CustomTextGroups[GrpIdx].Scale := CustomTextGroups[GrpIdx].Scale + Sign * DE_STEP_SCALE;
+      if CustomTextGroups[GrpIdx].Scale < 0.0005 then CustomTextGroups[GrpIdx].Scale := 0.0005;
+    end;
+  end;
 end;
 
 // True если хот-спот это +/- кнопка (поддерживает auto-repeat при удержании).
@@ -6858,6 +7252,7 @@ end;
 procedure DETextInputBegin(Kind: TDETextInputKind; CardIdx, Hotspot: Integer);
 var
   V: Single;
+  i: Integer;
 begin
   DETextInputActive := True;
   DETextInputKind := Kind;
@@ -6872,7 +7267,22 @@ begin
     begin
       V := 0.0;
       // Достаём текущее значение в зависимости от поля + EditMode.
-      if DEEditMode = demImages then
+      if CardIdx >= 10000 then
+      begin
+        // Значение группы (CardIdx = GrpIdx + 10000)
+        i := CardIdx - 10000;
+        if (i >= 0) and (i < Length(CustomTextGroups)) then
+          case Hotspot of
+            DE_HOT_X_VAL:  V := CustomTextGroups[i].X;
+            DE_HOT_Y_VAL:  V := CustomTextGroups[i].Y;
+            DE_HOT_Z_VAL:  V := CustomTextGroups[i].Z;
+            DE_HOT_RX_VAL: V := CustomTextGroups[i].RX;
+            DE_HOT_RY_VAL: V := CustomTextGroups[i].RY;
+            DE_HOT_RZ_VAL: V := CustomTextGroups[i].RZ;
+            DE_HOT_S_VAL:  V := CustomTextGroups[i].Scale;
+          end;
+      end
+      else if DEEditMode = demImages then
       begin
         if (CardIdx >= 0) and (CardIdx < Length(CustomImages)) then
           case Hotspot of
@@ -6899,11 +7309,18 @@ begin
           end;
       end;
       DETextInputBuffer := FormatGizmoFloat(V, 6);
-      // FormatGizmoFloat может оставить trailing zeros — это нормально, пользователь сам обрежет.
     end;
     tikName:
     begin
-      if DEEditMode = demImages then
+      if Hotspot = DE_HOT_GRP_NAME then
+      begin
+        // Переименование группы
+        if (CardIdx >= 0) and (CardIdx < Length(CustomTextGroups)) then
+          DETextInputBuffer := CustomTextGroups[CardIdx].Name
+        else
+          DETextInputBuffer := '';
+      end
+      else if DEEditMode = demImages then
       begin
         if (CardIdx >= 0) and (CardIdx < Length(CustomImages)) then
           DETextInputBuffer := CustomImages[CardIdx].Name
@@ -6939,13 +7356,33 @@ end;
 procedure DETextInputCommit;
 var
   V, K, OldSize: Single;
+  GI: Integer;
 begin
   if not DETextInputActive then Exit;
   case DETextInputKind of
     tikValue:
     if DEParseInputFloat(V) then
     begin
-      if DEEditMode = demImages then
+      if DETextInputCardIdx >= 10000 then
+      begin
+        // Значение группы (CardIdx = GrpIdx + 10000)
+        GI := DETextInputCardIdx - 10000;
+        if (GI >= 0) and (GI < Length(CustomTextGroups)) then
+          case DETextInputHotspot of
+            DE_HOT_X_VAL:  CustomTextGroups[GI].X     := V;
+            DE_HOT_Y_VAL:  CustomTextGroups[GI].Y     := V;
+            DE_HOT_Z_VAL:  CustomTextGroups[GI].Z     := V;
+            DE_HOT_RX_VAL: CustomTextGroups[GI].RX    := V;
+            DE_HOT_RY_VAL: CustomTextGroups[GI].RY    := V;
+            DE_HOT_RZ_VAL: CustomTextGroups[GI].RZ    := V;
+            DE_HOT_S_VAL:
+            begin
+              if V < 0.0005 then V := 0.0005;
+              CustomTextGroups[GI].Scale := V;
+            end;
+          end;
+      end
+      else if DEEditMode = demImages then
       begin
         if (DETextInputCardIdx >= 0) and (DETextInputCardIdx < Length(CustomImages)) then
           case DETextInputHotspot of
@@ -6992,7 +7429,13 @@ begin
     end;
     tikName:
     begin
-      if DEEditMode = demImages then
+      if DETextInputHotspot = DE_HOT_GRP_NAME then
+      begin
+        // Переименование группы
+        if (DETextInputCardIdx >= 0) and (DETextInputCardIdx < Length(CustomTextGroups)) then
+          CustomTextGroups[DETextInputCardIdx].Name := DETextInputBuffer;
+      end
+      else if DEEditMode = demImages then
       begin
         if (DETextInputCardIdx >= 0) and (DETextInputCardIdx < Length(CustomImages)) then
           CustomImages[DETextInputCardIdx].Name := DETextInputBuffer;
@@ -7230,6 +7673,141 @@ begin
   end;
 end;
 
+// Построить display list для текстового режима DevEditor:
+// порядок — группы (каждая → заголовок + раскрытые дети), потом корневые элементы.
+// ListY — абсолютная Y-координата верха списка. Результат — суммарная высота контента.
+procedure BuildDEDisplayList(ListY: Integer);
+var
+  g, i, CurY: Integer;
+  Cnt: Integer;
+  GH: Integer;
+begin
+  // Подсчитаем максимальный размер
+  Cnt := Length(CustomTextGroups);
+  for i := 0 to Length(CustomTexts) - 1 do Inc(Cnt);
+  SetLength(DEDisplayList, Cnt);
+  DEDisplayCount := 0;
+  CurY := ListY + 6;
+  // Сначала группы с их детьми
+  for g := 0 to Length(CustomTextGroups) - 1 do
+  begin
+    // Выбранная группа — увеличенная высота (с контролами XYZ/RX/RY/RZ/S)
+    if g = CustomGroupSelectedIdx then GH := DE_GROUP_H_SEL
+    else GH := DE_GROUP_H;
+    if DEDisplayCount >= Length(DEDisplayList) then
+      SetLength(DEDisplayList, Length(DEDisplayList) + 64);
+    DEDisplayList[DEDisplayCount].Kind := dekGroup;
+    DEDisplayList[DEDisplayCount].DataIdx := g;
+    DEDisplayList[DEDisplayCount].YPos := CurY;
+    DEDisplayList[DEDisplayCount].ItemH := GH;
+    DEDisplayList[DEDisplayCount].Indent := 0;
+    Inc(DEDisplayCount);
+    Inc(CurY, GH + DE_CARD_GAP);
+    if CustomTextGroups[g].Expanded then
+      for i := 0 to Length(CustomTexts) - 1 do
+        if CustomTexts[i].GroupIdx = g then
+        begin
+          if DEDisplayCount >= Length(DEDisplayList) then
+            SetLength(DEDisplayList, Length(DEDisplayList) + 64);
+          DEDisplayList[DEDisplayCount].Kind := dekText;
+          DEDisplayList[DEDisplayCount].DataIdx := i;
+          DEDisplayList[DEDisplayCount].YPos := CurY;
+          DEDisplayList[DEDisplayCount].ItemH := DE_CARD_H;
+          DEDisplayList[DEDisplayCount].Indent := DE_GROUP_INDENT;
+          Inc(DEDisplayCount);
+          Inc(CurY, DE_CARD_H + DE_CARD_GAP);
+        end;
+  end;
+  // Корневые элементы (GroupIdx < 0)
+  for i := 0 to Length(CustomTexts) - 1 do
+    if CustomTexts[i].GroupIdx < 0 then
+    begin
+      if DEDisplayCount >= Length(DEDisplayList) then
+        SetLength(DEDisplayList, Length(DEDisplayList) + 64);
+      DEDisplayList[DEDisplayCount].Kind := dekText;
+      DEDisplayList[DEDisplayCount].DataIdx := i;
+      DEDisplayList[DEDisplayCount].YPos := CurY;
+      DEDisplayList[DEDisplayCount].ItemH := DE_CARD_H;
+      DEDisplayList[DEDisplayCount].Indent := 0;
+      Inc(DEDisplayCount);
+      Inc(CurY, DE_CARD_H + DE_CARD_GAP);
+    end;
+  DEDisplayContentH := CurY - ListY - 6;
+end;
+
+// Найти визуальную Y-координату карточки текста (с учётом scroll).
+// Если элемент скрыт (свёрнутая группа) — вернёт -10000 (off-screen).
+function DEGetTextCardY(TextIdx, ScrollY: Integer): Integer;
+var
+  d: Integer;
+begin
+  Result := -10000;
+  for d := 0 to DEDisplayCount - 1 do
+    if (DEDisplayList[d].Kind = dekText) and (DEDisplayList[d].DataIdx = TextIdx) then
+    begin
+      Result := DEDisplayList[d].YPos - ScrollY;
+      Exit;
+    end;
+end;
+
+// Подсчитать количество элементов в группе.
+function DEGroupItemCount(GrpIdx: Integer): Integer;
+var
+  i: Integer;
+begin
+  Result := 0;
+  for i := 0 to Length(CustomTexts) - 1 do
+    if CustomTexts[i].GroupIdx = GrpIdx then Inc(Result);
+end;
+
+// Добавить новую группу.
+procedure AddCustomTextGroup;
+var
+  N: Integer;
+begin
+  N := Length(CustomTextGroups);
+  SetLength(CustomTextGroups, N + 1);
+  CustomTextGroups[N].Name := 'Group ' + IntToStr(N);
+  CustomTextGroups[N].X := 0.0;
+  CustomTextGroups[N].Y := 0.0;
+  CustomTextGroups[N].Z := 0.0;
+  CustomTextGroups[N].RX := 0.0;
+  CustomTextGroups[N].RY := 0.0;
+  CustomTextGroups[N].RZ := 0.0;
+  CustomTextGroups[N].Scale := 1.0;
+  CustomTextGroups[N].Expanded := True;
+  CustomTextGroups[N].AnimProgress := 1.0;
+  GT_SelectGroup(N);
+end;
+
+// Удалить группу — все элементы внутри перемещаются на корневой уровень.
+procedure DeleteCustomTextGroup(GrpIdx: Integer);
+var
+  i, j: Integer;
+begin
+  if (GrpIdx < 0) or (GrpIdx >= Length(CustomTextGroups)) then Exit;
+  // Все дети → корень
+  for i := 0 to Length(CustomTexts) - 1 do
+    if CustomTexts[i].GroupIdx = GrpIdx then
+      CustomTexts[i].GroupIdx := -1;
+  // Сдвигаем ссылки: индексы > GrpIdx уменьшаются на 1
+  for i := 0 to Length(CustomTexts) - 1 do
+    if CustomTexts[i].GroupIdx > GrpIdx then
+      Dec(CustomTexts[i].GroupIdx);
+  // Удаляем из массива
+  for j := GrpIdx to Length(CustomTextGroups) - 2 do
+    CustomTextGroups[j] := CustomTextGroups[j + 1];
+  SetLength(CustomTextGroups, Length(CustomTextGroups) - 1);
+  if CustomGroupSelectedIdx = GrpIdx then
+  begin
+    CustomGroupSelectedIdx := -1;
+    if GizmoTargetKind = gtkGroup then
+      GizmoTargetKind := gtkNone;
+  end
+  else if CustomGroupSelectedIdx > GrpIdx then
+    Dec(CustomGroupSelectedIdx);
+end;
+
 procedure DrawDevEditor;
 var
   ScrW, ScrH: Integer;
@@ -7251,6 +7829,14 @@ var
   PkrX, PkrY, PkrW, PkrH: Integer;
   Col, Row: Integer;
   PaletteX, PaletteY: Integer;
+  // Display list iteration
+  d: Integer;
+  DI: TDEDisplayItem;
+  GrpIdx, GrpItemCnt: Integer;
+  IsGrpSel, IsGrpHover: Boolean;
+  ExpandArrow: string;
+  // Drag overlay
+  MX, MY: Integer;
 begin
   if not DevEditorVisible then Exit;
   ScrW := InitResX;
@@ -7408,9 +7994,32 @@ begin
         COLOR_ON_SURFACE, 220, 0.6);
     end;
 
-    // Подсказка справа — короткая, чтобы не упиралась в кнопки.
-    DrawText2D(0, ScrW - DE_PAD_X - 280, ToolbarY + 13,
-      'Click row to select  |  Wheel = scroll  |  Esc = cancel gizmo drag',
+    // [+ Add Group] — слева от Apply, только для текстового режима.
+    if DEEditMode = demTexts then
+    begin
+      if DevEditorHoveredHotspot = DE_HOT_ADD_GROUP then
+        DrawStyledRect(ScrW - DE_PAD_X - 220, ToolbarY + 10, 110, 24,
+          COLOR_ACCENT, 255, True, COLOR_ACCENT)
+      else
+        DrawStyledRect(ScrW - DE_PAD_X - 220, ToolbarY + 10, 110, 24,
+          COLOR_SURFACE_VARIANT, 255, True, COLOR_BORDER);
+      DrawText2D(0, ScrW - DE_PAD_X - 208, ToolbarY + 13, '+ Add Group',
+        COLOR_ON_SURFACE, 255, 0.65);
+    end;
+
+    // Кнопка APPLY (Save) — справа на тулбаре.
+    if DevEditorHoveredHotspot = DE_HOT_APPLY then
+      DrawStyledRect(ScrW - DE_PAD_X - 100, ToolbarY + 10, 80, 24,
+        COLOR_ACCENT, 255, True, COLOR_ACCENT)
+    else
+      DrawStyledRect(ScrW - DE_PAD_X - 100, ToolbarY + 10, 80, 24,
+        COLOR_PRIMARY, 255, True, COLOR_PRIMARY_VARIANT);
+    DrawText2D(0, ScrW - DE_PAD_X - 86, ToolbarY + 13,
+      'APPLY', COLOR_ON_PRIMARY, 255, 0.65);
+
+    // Подсказка — слева от Apply.
+    DrawText2D(0, ScrW - DE_PAD_X - 380, ToolbarY + 13,
+      'Click row to select  |  Esc = cancel drag',
       COLOR_BORDER_LIGHT, 200, 0.55);
 
     // === LIST AREA ===
@@ -7433,7 +8042,10 @@ begin
     if DEEditMode = demImages then
       ContentH := Length(CustomImages) * (DE_CARD_H + DE_CARD_GAP)
     else
-      ContentH := Length(CustomTexts) * (DE_CARD_H + DE_CARD_GAP);
+    begin
+      BuildDEDisplayList(ListY);
+      ContentH := DEDisplayContentH;
+    end;
     if ContentH > (ListBottom - ListY - 8) then
       DevEditorMaxScroll := ContentH - (ListBottom - ListY - 8)
     else
@@ -7459,7 +8071,7 @@ begin
         if IsSel then
         begin
           CardBg := COLOR_PRIMARY_VARIANT;
-          CardBorder := COLOR_ACCENT;
+          CardBorder := COLOR_PRIMARY;
         end
         else if IsHover then
         begin
@@ -7473,6 +8085,9 @@ begin
         end;
         DrawRectangle2D(CardX, CardY, CardInnerW, DE_CARD_H, CardBg, 240, True);
         DrawRectangle2D(CardX, CardY, CardInnerW, DE_CARD_H, CardBorder, 240, False);
+        // Яркая полоса-индикатор слева для выделенной карточки.
+        if IsSel then
+          DrawRectangle2D(CardX, CardY + 2, 4, DE_CARD_H - 4, COLOR_PRIMARY, 255, True);
 
         // Index label + name
         DrawText2D(0, CardX + 10, CardY + 30, '#' + IntToStr(i),
@@ -7580,13 +8195,122 @@ begin
       end;
     end
     else
-    // Карточки (TEXTS)
-    for i := 0 to Length(CustomTexts) - 1 do
+    // Карточки (TEXTS) — итерируем по display list (группы + элементы)
+    for d := 0 to DEDisplayCount - 1 do
     begin
-      CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+      DI := DEDisplayList[d];
+      CardY := DI.YPos - DevEditorScrollY;
       // Off-screen — скип.
-      if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
+      if (CardY + DI.ItemH < ListY) or (CardY > ListBottom) then Continue;
 
+      // ========= GROUP HEADER =========
+      if DI.Kind = dekGroup then
+      begin
+        GrpIdx := DI.DataIdx;
+        IsGrpSel := (GrpIdx = CustomGroupSelectedIdx);
+        IsGrpHover := (GrpIdx = DevEditorHoveredGroupIdx);
+
+        if IsGrpSel then
+        begin CardBg := COLOR_PRIMARY_VARIANT; CardBorder := COLOR_PRIMARY; end
+        else if IsGrpHover then
+        begin CardBg := COLOR_SURFACE_VARIANT; CardBorder := COLOR_BORDER_LIGHT; end
+        else
+        begin CardBg := COLOR_SURFACE; CardBorder := COLOR_BORDER; end;
+
+        DrawRectangle2D(CardX, CardY, CardInnerW, DI.ItemH, CardBg, 240, True);
+        DrawRectangle2D(CardX, CardY, CardInnerW, DI.ItemH, CardBorder, 240, False);
+        if IsGrpSel then
+          DrawRectangle2D(CardX, CardY + 2, 4, DI.ItemH - 4, COLOR_PRIMARY, 255, True);
+
+        // Expand/collapse triangle
+        if CustomTextGroups[GrpIdx].Expanded then
+          ExpandArrow := 'v'
+        else
+          ExpandArrow := '>';
+        if IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_GRP_EXPAND) then
+          DrawStyledRect(CardX + 6, CardY + 6, 24, 24,
+            COLOR_ACCENT, 255, True, COLOR_ACCENT)
+        else
+          DrawStyledRect(CardX + 6, CardY + 6, 24, 24,
+            COLOR_SURFACE_VARIANT, 255, True, COLOR_BORDER);
+        DrawText2D(0, CardX + 14, CardY + 9, ExpandArrow, COLOR_ON_SURFACE, 255, 0.7);
+
+        // Group name
+        if CustomTextGroups[GrpIdx].Name <> '' then
+          DrawText2D(0, CardX + 36, CardY + 9,
+            CustomTextGroups[GrpIdx].Name, COLOR_ON_SURFACE, 255, 0.7)
+        else
+          DrawText2D(0, CardX + 36, CardY + 9,
+            'Group', COLOR_BORDER_LIGHT, 180, 0.7);
+
+        // Item count
+        GrpItemCnt := DEGroupItemCount(GrpIdx);
+        DrawText2D(0, CardX + 260, CardY + 9,
+          '(' + IntToStr(GrpItemCnt) + ' items)',
+          COLOR_BORDER_LIGHT, 200, 0.55);
+
+        // Delete group button [x]
+        if IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_GRP_DELETE) then
+          DrawStyledRect(CardInnerW + CardX - 32, CardY + 6, 24, 24,
+            COLOR_WARNING, 255, True, COLOR_WARNING)
+        else
+          DrawStyledRect(CardInnerW + CardX - 32, CardY + 6, 24, 24,
+            COLOR_SURFACE_VARIANT, 255, True, COLOR_BORDER);
+        DrawText2D(0, CardInnerW + CardX - 24, CardY + 9,
+          'X', COLOR_ON_SURFACE, 255, 0.6);
+
+        // === Контролы XYZ / RX RY RZ / Scale (только для выбранной группы) ===
+        if IsGrpSel then
+        begin
+          CellX := CardX + 8;
+          // X
+          HotMinus := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_X_MINUS);
+          HotPlus  := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_X_PLUS);
+          ValStr := FormatGizmoFloat(CustomTextGroups[GrpIdx].X, 3);
+          DEDrawValueCell(CellX, CardY + 30, 'X', ValStr, 240, HotMinus, HotPlus);
+          Inc(CellX, DE_CELL_W);
+          // Y
+          HotMinus := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_Y_MINUS);
+          HotPlus  := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_Y_PLUS);
+          ValStr := FormatGizmoFloat(CustomTextGroups[GrpIdx].Y, 3);
+          DEDrawValueCell(CellX, CardY + 30, 'Y', ValStr, 240, HotMinus, HotPlus);
+          Inc(CellX, DE_CELL_W);
+          // Z
+          HotMinus := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_Z_MINUS);
+          HotPlus  := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_Z_PLUS);
+          ValStr := FormatGizmoFloat(CustomTextGroups[GrpIdx].Z, 3);
+          DEDrawValueCell(CellX, CardY + 30, 'Z', ValStr, 240, HotMinus, HotPlus);
+          Inc(CellX, DE_CELL_W);
+          // RX
+          HotMinus := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_RX_MINUS);
+          HotPlus  := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_RX_PLUS);
+          ValStr := FormatGizmoFloat(CustomTextGroups[GrpIdx].RX, 1);
+          DEDrawValueCell(CellX, CardY + 30, 'RX', ValStr, 240, HotMinus, HotPlus);
+          Inc(CellX, DE_CELL_W);
+          // RY
+          HotMinus := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_RY_MINUS);
+          HotPlus  := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_RY_PLUS);
+          ValStr := FormatGizmoFloat(CustomTextGroups[GrpIdx].RY, 1);
+          DEDrawValueCell(CellX, CardY + 30, 'RY', ValStr, 240, HotMinus, HotPlus);
+          Inc(CellX, DE_CELL_W);
+          // RZ
+          HotMinus := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_RZ_MINUS);
+          HotPlus  := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_RZ_PLUS);
+          ValStr := FormatGizmoFloat(CustomTextGroups[GrpIdx].RZ, 1);
+          DEDrawValueCell(CellX, CardY + 30, 'RZ', ValStr, 240, HotMinus, HotPlus);
+          Inc(CellX, DE_CELL_W);
+          // Scale
+          HotMinus := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_S_MINUS);
+          HotPlus  := IsGrpHover and (DevEditorHoveredGroupHotspot = DE_HOT_S_PLUS);
+          ValStr := FormatGizmoFloat(CustomTextGroups[GrpIdx].Scale, 3);
+          DEDrawValueCell(CellX, CardY + 30, 'Scale', ValStr, 240, HotMinus, HotPlus);
+        end;
+
+        Continue; // группа отрисована, идём дальше
+      end;
+
+      // ========= TEXT CARD =========
+      i := DI.DataIdx;
       T := CustomTexts[i];
       IsSel := (i = CustomTextSelectedIdx);
       IsHover := (i = DevEditorHoveredCard);
@@ -7594,7 +8318,7 @@ begin
       if IsSel then
       begin
         CardBg := COLOR_PRIMARY_VARIANT;
-        CardBorder := COLOR_ACCENT;
+        CardBorder := COLOR_PRIMARY;
       end
       else if IsHover then
       begin
@@ -7606,42 +8330,45 @@ begin
         CardBg := COLOR_SURFACE;
         CardBorder := COLOR_BORDER;
       end;
-      DrawRectangle2D(CardX, CardY, CardInnerW, DE_CARD_H, CardBg, 240, True);
-      DrawRectangle2D(CardX, CardY, CardInnerW, DE_CARD_H, CardBorder, 240, False);
+      DrawRectangle2D(CardX + DI.Indent, CardY, CardInnerW - DI.Indent, DE_CARD_H, CardBg, 240, True);
+      DrawRectangle2D(CardX + DI.Indent, CardY, CardInnerW - DI.Indent, DE_CARD_H, CardBorder, 240, False);
+      // Яркая полоса-индикатор слева для выделенной карточки.
+      if IsSel then
+        DrawRectangle2D(CardX + DI.Indent, CardY + 2, 4, DE_CARD_H - 4, COLOR_PRIMARY, 255, True);
 
       // Все интерактивные элементы — на горизонтальной полосе CardY+30, h=22.
       // Над ними — column-labels (X/Y/Z/...) на высоте CardY+13 (на 3 px выше).
 
       // Index label (#N) и имя элемента над ним. Имя редактируется через
       // text-input (клик по «Name»-строке внутри карточки активирует ввод).
-      DrawText2D(0, CardX + 10, CardY + 30,
+      DrawText2D(0, CardX + DI.Indent + 10, CardY + 30,
         '#' + IntToStr(i), COLOR_ACCENT, 255, 0.7);
       // «Имя» — над Index label'ом (выше column-labels). Пустое поле
       // подсказывает «Name» серым; задание имени — белым.
       if CustomTexts[i].Name <> '' then
-        DrawText2D(0, CardX + 10, CardY + 6,
+        DrawText2D(0, CardX + DI.Indent + 10, CardY + 6,
           CustomTexts[i].Name, COLOR_ON_SURFACE, 255, 0.55)
       else
-        DrawText2D(0, CardX + 10, CardY + 6,
+        DrawText2D(0, CardX + DI.Indent + 10, CardY + 6,
           'Name', COLOR_BORDER_LIGHT, 180, 0.5);
 
       // "Source" заголовок над combobox'ом — поднят на 3 px.
-      DEDrawHdrLabel(CardX + DE_IDX_W + DE_SOURCE_W div 2, CardY + 13,
+      DEDrawHdrLabel(CardX + DI.Indent + DE_IDX_W + DE_SOURCE_W div 2, CardY + 13,
         'Source', 240);
 
       // Source combobox — высота совпадает с кнопками, центр совпадает с кнопками.
-      DrawStyledRect(CardX + DE_IDX_W, CardY + 30, DE_SOURCE_W, DE_BTN_SMALL,
+      DrawStyledRect(CardX + DI.Indent + DE_IDX_W, CardY + 30, DE_SOURCE_W, DE_BTN_SMALL,
         COLOR_SURFACE_VARIANT, 240, True, COLOR_BORDER);
-      DrawText2D(0, CardX + DE_IDX_W + 8, CardY + 30,
+      DrawText2D(0, CardX + DI.Indent + DE_IDX_W + 8, CardY + 30,
         KlubSourceName(T.Source), COLOR_ON_SURFACE, 240, 0.6);
-      DrawText2D(0, CardX + DE_IDX_W + DE_SOURCE_W - 14, CardY + 30,
+      DrawText2D(0, CardX + DI.Indent + DE_IDX_W + DE_SOURCE_W - 14, CardY + 30,
         'v', COLOR_BORDER_LIGHT, 240, 0.6);
       // Под combobox'ом — текущее живое значение источника (-3 px).
-      DrawText2D(0, CardX + DE_IDX_W + 8, CardY + 53,
+      DrawText2D(0, CardX + DI.Indent + DE_IDX_W + 8, CardY + 53,
         '= ' + GetKlubSourceValue(T.Source), COLOR_ACCENT, 220, 0.55);
 
       // Семь -/value/+ ячеек
-      CellX := CardX + DE_IDX_W + DE_SOURCE_W + 12;
+      CellX := CardX + DI.Indent + DE_IDX_W + DE_SOURCE_W + 12;
       // X
       HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_X_MINUS);
       HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_X_PLUS);
@@ -7681,7 +8408,7 @@ begin
       // Scale
       HotMinus := IsHover and (DevEditorHoveredHotspot = DE_HOT_S_MINUS);
       HotPlus  := IsHover and (DevEditorHoveredHotspot = DE_HOT_S_PLUS);
-      ValStr := FormatGizmoFloat(T.Scale, 4);
+      ValStr := FormatGizmoFloat(T.Scale, 3);
       DEDrawValueCell(CellX, CardY + 30, 'Scale', ValStr, 240, HotMinus, HotPlus);
       Inc(CellX, DE_CELL_W);
 
@@ -7742,13 +8469,50 @@ begin
         COLOR_PRIMARY, 240, True);
     end;
 
+    // === DRAG & DROP OVERLAY ===
+    if DEDragging and (DEDragStartIdx >= 0) and (DEDragStartIdx < Length(CustomTexts)) then
+    begin
+      // Подсветка целевой группы (или индикатор «в корень»).
+      if DEDragDropTarget >= 0 then
+      begin
+        // Подсвечиваем заголовок целевой группы
+        for d := 0 to DEDisplayCount - 1 do
+          if (DEDisplayList[d].Kind = dekGroup) and (DEDisplayList[d].DataIdx = DEDragDropTarget) then
+          begin
+            CardY := DEDisplayList[d].YPos - DevEditorScrollY;
+            DrawRectangle2D(CardX, CardY, CardInnerW, DE_GROUP_H,
+              COLOR_ACCENT, 80, True);
+            DrawRectangle2D(CardX, CardY, CardInnerW, DE_GROUP_H,
+              COLOR_ACCENT, 200, False);
+            Break;
+          end;
+      end
+      else if DEDragDropTarget = -1 then
+      begin
+        // Индикатор «drop to root»: горизонтальная линия под всеми элементами
+        DrawRectangle2D(CardX, ListBottom - 4, CardInnerW, 3,
+          COLOR_ACCENT, 200, True);
+      end;
+      // Метка у курсора
+      MX := Round(MoveXcoord);
+      MY := Round(MoveYcoord);
+      DrawRectangle2D(MX + 12, MY - 10, 140, 20, COLOR_SURFACE, 220, True);
+      DrawRectangle2D(MX + 12, MY - 10, 140, 20, COLOR_ACCENT, 220, False);
+      if (DEDragDropTarget >= 0) and (DEDragDropTarget < Length(CustomTextGroups)) then
+        DrawText2D(0, MX + 16, MY - 7, '-> ' + CustomTextGroups[DEDragDropTarget].Name,
+          COLOR_ACCENT, 255, 0.55)
+      else
+        DrawText2D(0, MX + 16, MY - 7, '-> Root',
+          COLOR_ACCENT, 255, 0.55);
+    end;
+
     // === COMBOBOX DROPDOWN OVERLAY ===
     if DevEditorComboboxOpen and
        (DevEditorComboboxCardIdx >= 0) and
        (DevEditorComboboxCardIdx < Length(CustomTexts)) then
     begin
       Idx := DevEditorComboboxCardIdx;
-      CardY := ListY + 6 + Idx * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+      CardY := DEGetTextCardY(Idx, DevEditorScrollY);
       CmbX := CardX + DE_IDX_W;
       // Дропдаун выпадает СРАЗУ под combobox'ом (combobox: CardY+30, h=DE_BTN_SMALL).
       CmbY := CardY + 30 + DE_BTN_SMALL + 2;
@@ -7777,7 +8541,7 @@ begin
        (DevEditorColorPickerCardIdx < Length(CustomTexts)) then
     begin
       Idx := DevEditorColorPickerCardIdx;
-      CardY := ListY + 6 + Idx * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+      CardY := DEGetTextCardY(Idx, DevEditorScrollY);
       // Расположение palette: справа от swatch'а. Считаем X swatch'а.
       CellX := CardX + DE_IDX_W + DE_SOURCE_W + 8 + 7 * DE_CELL_W;
       PkrW := DE_PICKER_COLS * (DE_PICKER_SIZE + 2) + 8;
@@ -7811,7 +8575,17 @@ begin
     begin
       // Определяем CardY с учётом scroll и того, какой массив редактируется.
       Idx := DETextInputCardIdx;
-      if DEEditMode = demImages then
+      if DETextInputHotspot = DE_HOT_GRP_NAME then
+      begin
+        // Редактирование имени группы
+        if Idx >= Length(CustomTextGroups) then DETextInputActive := False;
+      end
+      else if Idx >= 10000 then
+      begin
+        // Редактирование значения группы (CardIdx = GrpIdx + 10000)
+        if (Idx - 10000) >= Length(CustomTextGroups) then DETextInputActive := False;
+      end
+      else if DEEditMode = demImages then
       begin
         if Idx >= Length(CustomImages) then DETextInputActive := False;
       end
@@ -7821,7 +8595,20 @@ begin
       end;
       if DETextInputActive then
       begin
-        CardY := ListY + 6 + Idx * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+        if (DETextInputHotspot = DE_HOT_GRP_NAME) or (Idx >= 10000) then
+        begin
+          // Ищем Y-позицию группы в display list
+          CardY := -10000;
+          k := Idx;
+          if k >= 10000 then k := k - 10000;
+          for d := 0 to DEDisplayCount - 1 do
+            if (DEDisplayList[d].Kind = dekGroup) and (DEDisplayList[d].DataIdx = k) then
+            begin CardY := DEDisplayList[d].YPos - DevEditorScrollY; Break; end;
+        end
+        else if DEEditMode = demImages then
+          CardY := ListY + 6 + Idx * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY
+        else
+          CardY := DEGetTextCardY(Idx, DevEditorScrollY);
         // Координаты редактируемого rect зависят от Hotspot.
         case DETextInputKind of
           tikValue:
@@ -7829,8 +8616,12 @@ begin
             // Поле value: ячейка номер k (0..6) для X/Y/Z/RX/RY/RZ/S.
             k := DETextInputHotspot - DE_HOT_X_VAL; // 0..6
             if (k < 0) or (k > 6) then k := 0;
-            CellX := CardX + DE_IDX_W + DE_SOURCE_W + 8 + k * DE_CELL_W
-                     + DE_BTN_SMALL + 2;
+            if Idx >= 10000 then
+              // Группа: cells начинаются с CardX + 8
+              CellX := CardX + 8 + k * DE_CELL_W + DE_BTN_SMALL + 2
+            else
+              CellX := CardX + DE_IDX_W + DE_SOURCE_W + 8 + k * DE_CELL_W
+                       + DE_BTN_SMALL + 2;
             // Если выделен весь buffer — фон голубой (как Windows-style highlight),
             // иначе тёмный (обычное editing).
             if DETextInputAllSelected then
@@ -7855,23 +8646,44 @@ begin
           end;
           tikName:
           begin
-            // Name-rect: верхняя полоса карточки.
-            if DETextInputAllSelected then
-              DrawRectangle2D(CardX + 4, CardY + 4, DE_IDX_W + DE_SOURCE_W - 4, 20,
-                COLOR_PRIMARY, 255, True)
+            if DETextInputHotspot = DE_HOT_GRP_NAME then
+            begin
+              // Группа: name-rect внутри group header.
+              if DETextInputAllSelected then
+                DrawRectangle2D(CardX + 34, CardY + 4, 200, 28,
+                  COLOR_PRIMARY, 255, True)
+              else
+                DrawRectangle2D(CardX + 34, CardY + 4, 200, 28,
+                  COLOR_BACKGROUND, 255, True);
+              DrawRectangle2D(CardX + 33, CardY + 3, 202, 30,
+                COLOR_ACCENT, 255, False);
+              DrawText2D(0, CardX + 38, CardY + 9,
+                DETextInputBuffer, COLOR_ON_SURFACE, 255, 0.7);
+              if (not DETextInputAllSelected) and
+                 (((GetTickCount - DETextInputCursorBlinkStart) mod 1000) < 530) then
+                DrawText2D(0, CardX + 38 + Length(DETextInputBuffer) * 8, CardY + 9,
+                  '|', COLOR_ACCENT, 255, 0.7);
+            end
             else
+            begin
+              // Text card: Name-rect: верхняя полоса карточки.
+              if DETextInputAllSelected then
+                DrawRectangle2D(CardX + 4, CardY + 4, DE_IDX_W + DE_SOURCE_W - 4, 20,
+                  COLOR_PRIMARY, 255, True)
+              else
+                DrawRectangle2D(CardX + 4, CardY + 4, DE_IDX_W + DE_SOURCE_W - 4, 20,
+                  COLOR_BACKGROUND, 255, True);
+              DrawRectangle2D(CardX + 3, CardY + 3, DE_IDX_W + DE_SOURCE_W - 2, 22,
+                COLOR_ACCENT, 255, False);
               DrawRectangle2D(CardX + 4, CardY + 4, DE_IDX_W + DE_SOURCE_W - 4, 20,
-                COLOR_BACKGROUND, 255, True);
-            DrawRectangle2D(CardX + 3, CardY + 3, DE_IDX_W + DE_SOURCE_W - 2, 22,
-              COLOR_ACCENT, 255, False);
-            DrawRectangle2D(CardX + 4, CardY + 4, DE_IDX_W + DE_SOURCE_W - 4, 20,
-              COLOR_ACCENT, 255, False);
-            DrawText2D(0, CardX + 8, CardY + 6,
-              DETextInputBuffer, COLOR_ON_SURFACE, 255, 0.55);
-            if (not DETextInputAllSelected) and
-               (((GetTickCount - DETextInputCursorBlinkStart) mod 1000) < 530) then
-              DrawText2D(0, CardX + 8 + Length(DETextInputBuffer) * 6, CardY + 6,
-                '|', COLOR_ACCENT, 255, 0.55);
+                COLOR_ACCENT, 255, False);
+              DrawText2D(0, CardX + 8, CardY + 6,
+                DETextInputBuffer, COLOR_ON_SURFACE, 255, 0.55);
+              if (not DETextInputAllSelected) and
+                 (((GetTickCount - DETextInputCursorBlinkStart) mod 1000) < 530) then
+                DrawText2D(0, CardX + 8 + Length(DETextInputBuffer) * 6, CardY + 6,
+                  '|', COLOR_ACCENT, 255, 0.55);
+            end;
           end;
         end;
       end;
@@ -7895,6 +8707,7 @@ var
   CardX, CardY, CardW: Integer;
   i, k: Integer;
   HitCard, HitHotspot: Integer;
+  HitGroup, HitGroupHotspot: Integer;
   CmbX, CmbY, CmbW, CmbH: Integer;
   PkrX, PkrY, PkrW, PkrH: Integer;
   CellX: Integer;
@@ -7903,12 +8716,21 @@ var
   PaletteX, PaletteY: Integer;
   ScrollbarX, ScrollbarTop, ScrollbarHandleH, ScrollbarHandleY: Integer;
   ContentH, VisibleH: Integer;
+  d: Integer;
+  DI: TDEDisplayItem;
 begin
+  // Если гизмо-drag активен — клик принадлежит гизмо, не DevEditor'у.
+  if GizmoDragging then Exit;
+
   // Любой клик мыши при активном text-input — сначала применяет текущее
   // значение buffer'а (commit) и закрывает input. Дальше обычная обработка
   // клика — пользователь может, например, кликнуть в другое поле.
   if DETextInputActive then
     DETextInputCommit;
+  // Любой новый клик отменяет незавершённый drag.
+  DEDragging := False;
+  DEDragStartIdx := -1;
+  DEDragDropTarget := -2;
   if not DevEditorVisible then Exit;
   ScrW := InitResX;
   ScrH := InitResY;
@@ -7925,7 +8747,7 @@ begin
      (DevEditorComboboxCardIdx < Length(CustomTexts)) then
   begin
     Idx := DevEditorComboboxCardIdx;
-    CardY := ListY + 6 + Idx * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+    CardY := DEGetTextCardY(Idx, DevEditorScrollY);
     CmbX := CardX + DE_IDX_W;
     CmbY := CardY + 30 + DE_BTN_SMALL + 2;
     CmbW := DE_SOURCE_W;
@@ -7951,7 +8773,7 @@ begin
      (DevEditorColorPickerCardIdx < Length(CustomTexts)) then
   begin
     Idx := DevEditorColorPickerCardIdx;
-    CardY := ListY + 6 + Idx * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
+    CardY := DEGetTextCardY(Idx, DevEditorScrollY);
     CellX := CardX + DE_IDX_W + DE_SOURCE_W + 8 + 7 * DE_CELL_W;
     PkrW := DE_PICKER_COLS * (DE_PICKER_SIZE + 2) + 8;
     PkrH := DE_PICKER_ROWS * (DE_PICKER_SIZE + 2) + 8;
@@ -7982,10 +8804,12 @@ begin
   end;
 
   // 3) Header — кнопка "< BACK TO MENU"
-  // Возвращаемся в обычное меню (4 окна) и запоминаем, что юзер теперь в нём
-  // (DevEditorIsLastMode := False), чтобы F12 дальше тоглил обычное меню.
+  // Возвращаемся в обычное меню (4 окна). Сбрасываем выделение — гизмо
+  // скрывается, пока юзер снова не выберет элемент.
   if DEInRect(MX, MY, DE_PAD_X + 12, HeaderY + 12, 110, DE_HEADER_H - 24) then
   begin
+    GT_DeselectAll;
+    SaveConfig;
     DevEditorVisible := False;
     DevEditorScrollY := 0;
     DevEditorIsLastMode := False;
@@ -8042,12 +8866,31 @@ begin
     Exit;
   end;
 
+  // 4d) Toolbar — Add Group button (только текстовый режим)
+  if (DEEditMode = demTexts) and
+     DEInRect(MX, MY, ScrW - DE_PAD_X - 220, ToolbarY + 10, 110, 24) then
+  begin
+    AddCustomTextGroup;
+    SaveConfig;
+    Exit;
+  end;
+
+  // 4e) Toolbar — APPLY button (Save)
+  if DEInRect(MX, MY, ScrW - DE_PAD_X - 100, ToolbarY + 10, 80, 24) then
+  begin
+    SaveConfig;
+    Exit;
+  end;
+
   // 5) Scrollbar drag
   if DevEditorMaxScroll > 0 then
   begin
     ScrollbarX := ScrW - DE_PAD_X - 4 - DE_SCROLLBAR_W;
     VisibleH := ListBottom - ListY - 8;
-    ContentH := Length(CustomTexts) * (DE_CARD_H + DE_CARD_GAP);
+    if DEEditMode = demImages then
+      ContentH := Length(CustomImages) * (DE_CARD_H + DE_CARD_GAP)
+    else
+      ContentH := DEDisplayContentH;
     if ContentH < VisibleH then ContentH := VisibleH;
     ScrollbarHandleH := Round(VisibleH * VisibleH / ContentH);
     if ScrollbarHandleH < 24 then ScrollbarHandleH := 24;
@@ -8075,6 +8918,8 @@ begin
   if (MY < ListY) or (MY > ListBottom) then Exit;
   HitCard := -1;
   HitHotspot := DE_HOT_NONE;
+  HitGroup := -1;
+  HitGroupHotspot := DE_HOT_NONE;
   if DEEditMode = demImages then
   begin
     for i := 0 to Length(CustomImages) - 1 do
@@ -8091,19 +8936,95 @@ begin
   end
   else
   begin
-    for i := 0 to Length(CustomTexts) - 1 do
+    // Итерируем по display list (группы + элементы)
+    for d := 0 to DEDisplayCount - 1 do
     begin
-      CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
-      if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
-      if DEInRect(MX, MY, CardX, CardY, CardW, DE_CARD_H) then
+      DI := DEDisplayList[d];
+      CardY := DI.YPos - DevEditorScrollY;
+      if (CardY + DI.ItemH < ListY) or (CardY > ListBottom) then Continue;
+      if DI.Kind = dekGroup then
       begin
-        HitCard := i;
-        HitHotspot := DEHotspotAtPoint(MX, MY, CardX, CardY, CardW);
-        Break;
+        if DEInRect(MX, MY, CardX, CardY, CardW, DI.ItemH) then
+        begin
+          HitGroup := DI.DataIdx;
+          if DEInRect(MX, MY, CardX + 6, CardY + 6, 24, 24) then
+            HitGroupHotspot := DE_HOT_GRP_EXPAND
+          else if DEInRect(MX, MY, CardW + CardX - 32, CardY + 6, 24, 24) then
+            HitGroupHotspot := DE_HOT_GRP_DELETE
+          else if DEInRect(MX, MY, CardX + 36, CardY + 6, 200, 24) then
+            HitGroupHotspot := DE_HOT_GRP_NAME
+          else if (DI.ItemH > DE_GROUP_H) and (MY >= CardY + 30) then
+            // Клик в область value cells (XYZ/RXRYRZ/Scale)
+            HitGroupHotspot := DEGrpHotspotAtPoint(MX, MY, CardX, CardY)
+          else
+            HitGroupHotspot := DE_HOT_NONE;
+          Break;
+        end;
+      end
+      else
+      begin
+        if DEInRect(MX, MY, CardX + DI.Indent, CardY, CardW - DI.Indent, DE_CARD_H) then
+        begin
+          HitCard := DI.DataIdx;
+          HitHotspot := DEHotspotAtPoint(MX, MY, CardX + DI.Indent, CardY, CardW - DI.Indent);
+          Break;
+        end;
       end;
     end;
   end;
-  if HitCard < 0 then Exit;
+
+  // Обработка клика по группе
+  if HitGroup >= 0 then
+  begin
+    GT_SelectGroup(HitGroup);
+    case HitGroupHotspot of
+      DE_HOT_GRP_EXPAND:
+      begin
+        CustomTextGroups[HitGroup].Expanded := not CustomTextGroups[HitGroup].Expanded;
+        if CustomTextGroups[HitGroup].Expanded then
+          CustomTextGroups[HitGroup].AnimProgress := 1.0
+        else
+          CustomTextGroups[HitGroup].AnimProgress := 0.0;
+        SaveConfig;
+      end;
+      DE_HOT_GRP_NAME:
+        DETextInputBegin(tikName, HitGroup, DE_HOT_GRP_NAME);
+      DE_HOT_GRP_DELETE:
+      begin
+        DeleteCustomTextGroup(HitGroup);
+        SaveConfig;
+      end;
+      // +/- кнопки для XYZ/RXRYRZ/Scale группы
+      DE_HOT_X_MINUS, DE_HOT_X_PLUS,
+      DE_HOT_Y_MINUS, DE_HOT_Y_PLUS,
+      DE_HOT_Z_MINUS, DE_HOT_Z_PLUS,
+      DE_HOT_RX_MINUS, DE_HOT_RX_PLUS,
+      DE_HOT_RY_MINUS, DE_HOT_RY_PLUS,
+      DE_HOT_RZ_MINUS, DE_HOT_RZ_PLUS,
+      DE_HOT_S_MINUS, DE_HOT_S_PLUS:
+      begin
+        DEApplyStepGroup(HitGroup, HitGroupHotspot, DEHotspotSign(HitGroupHotspot));
+        DevEditorBtnHeldHotspot := HitGroupHotspot;
+        DevEditorBtnHeldCardIdx := HitGroup + 10000; // +10000 = маркер «группа, не текст»
+        DevEditorBtnHeldStartTime := GetTickCount;
+        DevEditorBtnLastFireTime := DevEditorBtnHeldStartTime;
+        SaveConfig;
+      end;
+      // Textbox-редактирование значения группы (+10000 = маркер «группа»)
+      DE_HOT_X_VAL, DE_HOT_Y_VAL, DE_HOT_Z_VAL,
+      DE_HOT_RX_VAL, DE_HOT_RY_VAL, DE_HOT_RZ_VAL,
+      DE_HOT_S_VAL:
+        DETextInputBegin(tikValue, HitGroup + 10000, HitGroupHotspot);
+    end;
+    Exit;
+  end;
+
+  if HitCard < 0 then
+  begin
+    // Клик в пустое пространство списка — снимаем выделение и гизмо.
+    GT_DeselectAll;
+    Exit;
+  end;
 
   // Выделяем — это активирует гизмо в кабине (через GT_*).
   if DEEditMode = demImages then
@@ -8112,6 +9033,9 @@ begin
   begin
     GT_SelectText(HitCard);
     SyncSlidersFromSelected;
+    // Начинаем отслеживать потенциальный drag (если мышь сдвинется >5px — drag mode)
+    DEDragStartIdx := HitCard;
+    DEDragStartMY := MY;
   end;
 
   // Hotspot-действия. Большинство хотспотов общие, но Source/Color работают
@@ -8185,6 +9109,10 @@ begin
       SaveConfig;
     end;
   end;
+  // Если клик попал на конкретный хотспот (не просто тело карточки) — отменяем drag.
+  // Drag инициируется только при клике в «пустое тело» карточки (HitHotspot = NONE).
+  if HitHotspot <> DE_HOT_NONE then
+    DEDragStartIdx := -1;
 end;
 
 procedure HandleDevEditorMouseUp;
@@ -8192,6 +9120,11 @@ begin
   DevEditorScrollbarDragging := False;
   DevEditorBtnHeldHotspot := DE_HOT_NONE;
   DevEditorBtnHeldCardIdx := -1;
+  // Drag & drop: drop применяется в UpdateDevEditorPerFrame (по GetAsyncKeyState).
+  // Здесь только сброс на случай, если per-frame ещё не успел.
+  DEDragging := False;
+  DEDragStartIdx := -1;
+  DEDragDropTarget := -2;
 end;
 
 // Per-frame обновление: hover state, scrollbar drag, auto-repeat, mouse wheel.
@@ -8205,6 +9138,8 @@ var
   TickNow: Cardinal;
   VisibleH, ScrollbarHandleH, NewHandleY: Integer;
   ContentH: Integer;
+  d: Integer;
+  DI: TDEDisplayItem;
 begin
   if not DevEditorVisible then
   begin
@@ -8214,6 +9149,10 @@ begin
     // зависал в фоне.
     if DETextInputActive then
       DETextInputCancel;
+    // Сброс drag & drop при закрытии редактора
+    DEDragging := False;
+    DEDragStartIdx := -1;
+    DEDragDropTarget := -2;
     Exit;
   end;
 
@@ -8272,11 +9211,26 @@ begin
     DevEditorHoveredHotspot := DE_HOT_TAB_IMAGES;
     DevEditorHoveredCard := -1;
   end
+  // Hover на Add Group-кнопке (слева от Apply, только в текстовом режиме)
+  else if (DEEditMode = demTexts) and
+          DEInRect(MX, MY, ScrW - DE_PAD_X - 220, ToolbarY + 10, 110, 24) then
+  begin
+    DevEditorHoveredHotspot := DE_HOT_ADD_GROUP;
+    DevEditorHoveredCard := -1;
+  end
+  // Hover на Apply-кнопке (справа на тулбаре)
+  else if DEInRect(MX, MY, ScrW - DE_PAD_X - 100, ToolbarY + 10, 80, 24) then
+  begin
+    DevEditorHoveredHotspot := DE_HOT_APPLY;
+    DevEditorHoveredCard := -1;
+  end
   else
   begin
     // Hover на карточках — итерируем по соответствующему массиву.
     DevEditorHoveredCard := -1;
     DevEditorHoveredHotspot := DE_HOT_NONE;
+    DevEditorHoveredGroupIdx := -1;
+    DevEditorHoveredGroupHotspot := DE_HOT_NONE;
     if (MY >= ListY) and (MY <= ListBottom) then
     begin
       if DEEditMode = demImages then
@@ -8295,18 +9249,98 @@ begin
       end
       else
       begin
-        for i := 0 to Length(CustomTexts) - 1 do
+        // Итерируем по display list (группы + элементы)
+        for d := 0 to DEDisplayCount - 1 do
         begin
-          CardY := ListY + 6 + i * (DE_CARD_H + DE_CARD_GAP) - DevEditorScrollY;
-          if (CardY + DE_CARD_H < ListY) or (CardY > ListBottom) then Continue;
-          if DEInRect(MX, MY, CardX, CardY, CardW, DE_CARD_H) then
+          DI := DEDisplayList[d];
+          CardY := DI.YPos - DevEditorScrollY;
+          if (CardY + DI.ItemH < ListY) or (CardY > ListBottom) then Continue;
+          if DI.Kind = dekGroup then
           begin
-            DevEditorHoveredCard := i;
-            DevEditorHoveredHotspot := DEHotspotAtPoint(MX, MY, CardX, CardY, CardW);
+            // Group header hover (полная высота с учётом value cells)
+            if DEInRect(MX, MY, CardX, CardY, CardW, DI.ItemH) then
+            begin
+              DevEditorHoveredGroupIdx := DI.DataIdx;
+              // Определяем хотспот внутри группы
+              if DEInRect(MX, MY, CardX + 6, CardY + 6, 24, 24) then
+                DevEditorHoveredGroupHotspot := DE_HOT_GRP_EXPAND
+              else if DEInRect(MX, MY, CardW + CardX - 32, CardY + 6, 24, 24) then
+                DevEditorHoveredGroupHotspot := DE_HOT_GRP_DELETE
+              else if DEInRect(MX, MY, CardX + 36, CardY + 6, 200, 24) then
+                DevEditorHoveredGroupHotspot := DE_HOT_GRP_NAME
+              else if (DI.ItemH > DE_GROUP_H) and (MY >= CardY + 30) then
+                // Область value cells — используем DEGrpHotspotAtPoint
+                DevEditorHoveredGroupHotspot := DEGrpHotspotAtPoint(MX, MY, CardX, CardY)
+              else
+                DevEditorHoveredGroupHotspot := DE_HOT_NONE;
+              Break;
+            end;
+          end
+          else
+          begin
+            // Text card hover (с учётом indent)
+            if DEInRect(MX, MY, CardX + DI.Indent, CardY, CardW - DI.Indent, DE_CARD_H) then
+            begin
+              DevEditorHoveredCard := DI.DataIdx;
+              DevEditorHoveredHotspot := DEHotspotAtPoint(MX, MY, CardX + DI.Indent, CardY, CardW - DI.Indent);
+              Break;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+
+  // Drag & drop: отслеживание перетаскивания текстовых элементов между группами.
+  if (DEDragStartIdx >= 0) and (DEEditMode = demTexts) then
+  begin
+    if (GetAsyncKeyState(VK_LBUTTON) and $8000) <> 0 then
+    begin
+      // Мышь зажата — проверяем порог для начала drag'а
+      if not DEDragging then
+      begin
+        if Abs(MY - DEDragStartMY) > 5 then
+          DEDragging := True;
+      end;
+      if DEDragging then
+      begin
+        // Определяем drop target по позиции мыши в display list.
+        // Если мышь над группой-заголовком или её дочерним элементом — target = группа.
+        // Если мышь вне групп — target = -1 (корень).
+        DEDragDropTarget := -1; // по умолчанию — в корень
+        for d := 0 to DEDisplayCount - 1 do
+        begin
+          DI := DEDisplayList[d];
+          CardY := DI.YPos - DevEditorScrollY;
+          if (MY >= CardY) and (MY < CardY + DI.ItemH) then
+          begin
+            if DI.Kind = dekGroup then
+              DEDragDropTarget := DI.DataIdx
+            else if (DI.Indent > 0) and (DI.DataIdx >= 0) and
+                    (DI.DataIdx < Length(CustomTexts)) then
+              // Мышь над дочерним элементом группы — target = его группа
+              DEDragDropTarget := CustomTexts[DI.DataIdx].GroupIdx;
             Break;
           end;
         end;
       end;
+    end
+    else
+    begin
+      // Мышь отпущена — применяем drop здесь (а не в HandleDevEditorMouseUp),
+      // т.к. per-frame update может выполниться раньше MouseUp-события.
+      if DEDragging then
+      begin
+        if (DEDragStartIdx >= 0) and (DEDragStartIdx < Length(CustomTexts)) and
+           (DEDragDropTarget >= -1) and (DEDragDropTarget < Length(CustomTextGroups)) then
+        begin
+          CustomTexts[DEDragStartIdx].GroupIdx := DEDragDropTarget;
+          SaveConfig;
+        end;
+      end;
+      DEDragStartIdx := -1;
+      DEDragging := False;
+      DEDragDropTarget := -2;
     end;
   end;
 
@@ -8325,7 +9359,10 @@ begin
     if DevEditorMaxScroll > 0 then
     begin
       VisibleH := ListBottom - ListY - 8;
-      ContentH := Length(CustomTexts) * (DE_CARD_H + DE_CARD_GAP);
+      if DEEditMode = demImages then
+        ContentH := Length(CustomImages) * (DE_CARD_H + DE_CARD_GAP)
+      else
+        ContentH := DEDisplayContentH;
       if ContentH < VisibleH then ContentH := VisibleH;
       ScrollbarHandleH := Round(VisibleH * VisibleH / ContentH);
       if ScrollbarHandleH < 24 then ScrollbarHandleH := 24;
@@ -8344,8 +9381,10 @@ begin
   begin
     if (GetAsyncKeyState(VK_LBUTTON) and $8000) = 0 then
     begin
+      // Кнопка отпущена — сохраняем итоговый результат на диск.
       DevEditorBtnHeldHotspot := DE_HOT_NONE;
       DevEditorBtnHeldCardIdx := -1;
+      SaveConfig;
     end
     else
     begin
@@ -8354,8 +9393,11 @@ begin
       begin
         if TickNow - DevEditorBtnLastFireTime > DE_AUTO_REPEAT_RATE then
         begin
-          // В режиме images используем DEApplyStepImage (W/H для S-кнопок).
-          if DEEditMode = demImages then
+          if DevEditorBtnHeldCardIdx >= 10000 then
+            // Auto-repeat для +/- группы (CardIdx = GrpIdx + 10000)
+            DEApplyStepGroup(DevEditorBtnHeldCardIdx - 10000,
+              DevEditorBtnHeldHotspot, DEHotspotSign(DevEditorBtnHeldHotspot))
+          else if DEEditMode = demImages then
             DEApplyStepImage(DevEditorBtnHeldCardIdx, DevEditorBtnHeldHotspot,
               DEHotspotSign(DevEditorBtnHeldHotspot))
           else

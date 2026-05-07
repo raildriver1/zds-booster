@@ -235,6 +235,15 @@ procedure DrawBLOCK(
   AngZ: Single
 ); stdcall; export;
 
+procedure DrawKlubBilVData(
+  ModelParam2: Cardinal;
+  ModelParam1: Cardinal;
+  AngZ: Single;
+  Z: Single;
+  Y: Single;
+  X: Single
+); stdcall; export;
+
 procedure DrawKPD3(
   x: Single;
   y: Single;
@@ -244,7 +253,7 @@ procedure DrawKPD3(
 ); stdcall; export;
 
 exports
-  HookKLUB, DrawSky, DrawSkorostemer, HookSkorostemerViaKLUB, DrawKLUB, HookSkorostemerCHS7, DrawKPD3, DrawKPD3VL85, DrawBLOCK;
+  HookKLUB, DrawSky, DrawSkorostemer, HookSkorostemerViaKLUB, DrawKLUB, HookSkorostemerCHS7, DrawKPD3, DrawKPD3VL85, DrawBLOCK, DrawKlubBilVData;
 procedure FreeEng;
 procedure InitEng;
 
@@ -1162,6 +1171,10 @@ begin
     
     BeginObj3D;
     
+    // Отключаем туман — иначе при увеличенном куполе (Scale3D по maxvisibledistance)
+    // вершины уходят далеко от камеры и fog забеливает текстуру
+    glDisable(GL_FOG);
+    
     // Отключаем освещение
     DeactiveLight(-1);
     
@@ -1184,6 +1197,9 @@ begin
     except
       Scale3D(1.2);
     end;
+
+    // Масштабирование купола под максимальную дальность видимости
+    Scale3D((maxvisibledistance - 1500) / 1500.0 + 1.0);
     
     // Читаем текущий час и минуты
     try
@@ -1259,32 +1275,35 @@ begin
       mrSR := GetMegaRealismSunrise;  // восход в минутах
       mrSS := GetMegaRealismSunset;   // закат в минутах
 
-      // 12 фаз неба (30-минутные переходы, 30-минутные чистые фазы):
-      // P0..P1: ночь->рассветные сумерки (fade)   SR-90..SR-60
-      // P1..P2: чистые рассветные сумерки          SR-60..SR-30
-      // P2..P3: сумерки->рассвет (fade)            SR-30..SR
-      // P3..P4: чистый рассвет                     SR..SR+30
-      // P4..P5: рассвет->день (fade)               SR+30..SR+60
-      // P5..P6: чистый день                        SR+60..SS-60
-      // P6..P7: день->закат (fade)                 SS-60..SS-30
-      // P7..P8: чистый закат                       SS-30..SS
-      // P8..P9: закат->сумерки (fade)              SS..SS+30
-      // P9..P10: чистые сумерки заката             SS+30..SS+60
-      // P10..P11: сумерки->ночь (fade)             SS+60..SS+90
+      // ~2 часа на каждую текстуру неба, как в стандартной схеме.
+      // Утреннее и вечернее окно — по 4 часа от первой смены до полной фазы,
+      // карусель сдвигается вместе с SR/SS по сезону, но не ужимается.
+      //
+      // P0..P1:  ночь -> dawn (fade 60 мин)            SR-120..SR-60
+      // P1..P2:  чистый dawn (30 мин)                  SR-60..SR-30
+      // P2..P3:  dawn -> sunrise (fade 30 мин)         SR-30..SR
+      // P3..P4:  чистый sunrise (60 мин)               SR..SR+60
+      // P4..P5:  sunrise -> day (fade 60 мин)          SR+60..SR+120
+      // P5..P6:  чистый день                           SR+120..SS-120
+      // P6..P7:  day -> sunset (fade 60 мин)           SS-120..SS-60
+      // P7..P8:  чистый sunset (30 мин)                SS-60..SS-30
+      // P8..P9:  sunset -> twilight (fade 30 мин)      SS-30..SS
+      // P9..P10: чистый twilight (60 мин)              SS..SS+60
+      // P10..P11: twilight -> night (fade 60 мин)      SS+60..SS+120
       // остальное: чистая ночь
 
-      mrP0  := mrSR - 90;
+      mrP0  := mrSR - 120;
       mrP1  := mrSR - 60;
       mrP2  := mrSR - 30;
       mrP3  := mrSR;
-      mrP4  := mrSR + 30;
-      mrP5  := mrSR + 60;
-      mrP6  := mrSS - 60;
-      mrP7  := mrSS - 30;
-      mrP8  := mrSS;
-      mrP9  := mrSS + 30;
+      mrP4  := mrSR + 60;
+      mrP5  := mrSR + 120;
+      mrP6  := mrSS - 120;
+      mrP7  := mrSS - 60;
+      mrP8  := mrSS - 30;
+      mrP9  := mrSS;
       mrP10 := mrSS + 60;
-      mrP11 := mrSS + 90;
+      mrP11 := mrSS + 120;
 
       mrHandled := True;
 
@@ -1292,14 +1311,14 @@ begin
       begin
         // === MEGA REALISM ЗИМА ===
 
-        // Ночь -> Рассветные сумерки (fade 30 мин)
+        // Ночь -> Рассветные сумерки (fade 60 мин)
         if (totalMinutes >= mrP0) and (totalMinutes < mrP1) then
         begin
           DrawSkyLayer(BoosterNightSnowTextureID, 240, modelID);
-          alpha := Round((totalMinutes - mrP0) * 255 / 30);
+          alpha := Round((totalMinutes - mrP0) * 255 / 60);
           DrawSkyLayer(BoosterSunriseDawnSnowTextureID, alpha, modelID);
         end
-        // Чистые рассветные сумерки
+        // Чистые рассветные сумерки (30 мин)
         else if (totalMinutes >= mrP1) and (totalMinutes < mrP2) then
         begin
           DrawSkyLayer(BoosterSunriseDawnSnowTextureID, 255, modelID);
@@ -1311,16 +1330,16 @@ begin
           alpha := Round((totalMinutes - mrP2) * 255 / 30);
           DrawSkyLayer(BoosterSunriseSnowTextureID, alpha, modelID);
         end
-        // Чистый рассвет
+        // Чистый рассвет (60 мин)
         else if (totalMinutes >= mrP3) and (totalMinutes < mrP4) then
         begin
           DrawSkyLayer(BoosterSunriseSnowTextureID, 255, modelID);
         end
-        // Рассвет -> День (fade 30 мин)
+        // Рассвет -> День (fade 60 мин)
         else if (totalMinutes >= mrP4) and (totalMinutes < mrP5) then
         begin
           DrawSkyLayer(BoosterSunriseSnowTextureID, 255, modelID);
-          alpha := Round((totalMinutes - mrP4) * 255 / 30);
+          alpha := Round((totalMinutes - mrP4) * 255 / 60);
           DrawSkyLayer(BoosterDaySnowTextureID, alpha, modelID);
         end
         // Чистый день
@@ -1328,14 +1347,14 @@ begin
         begin
           DrawSkyLayer(BoosterDaySnowTextureID, 255, modelID);
         end
-        // День -> Закат (fade 30 мин)
+        // День -> Закат (fade 60 мин)
         else if (totalMinutes >= mrP6) and (totalMinutes < mrP7) then
         begin
           DrawSkyLayer(BoosterDaySnowTextureID, 255, modelID);
-          alpha := Round((totalMinutes - mrP6) * 255 / 30);
+          alpha := Round((totalMinutes - mrP6) * 255 / 60);
           DrawSkyLayer(BoosterSunsetSnowTextureID, alpha, modelID);
         end
-        // Чистый закат
+        // Чистый закат (30 мин)
         else if (totalMinutes >= mrP7) and (totalMinutes < mrP8) then
         begin
           DrawSkyLayer(BoosterSunsetSnowTextureID, 255, modelID);
@@ -1347,16 +1366,16 @@ begin
           alpha := Round((totalMinutes - mrP8) * 255 / 30);
           DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, alpha, modelID);
         end
-        // Чистые сумерки заката
+        // Чистые сумерки заката (60 мин)
         else if (totalMinutes >= mrP9) and (totalMinutes < mrP10) then
         begin
           DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, 255, modelID);
         end
-        // Сумерки -> Ночь (fade 30 мин)
+        // Сумерки -> Ночь (fade 60 мин)
         else if (totalMinutes >= mrP10) and (totalMinutes < mrP11) then
         begin
           DrawSkyLayer(BoosterSunsetTwilightSnowTextureID, 255, modelID);
-          alpha := Round((totalMinutes - mrP10) * 240 / 30);
+          alpha := Round((totalMinutes - mrP10) * 240 / 60);
           DrawSkyLayer(BoosterNightSnowTextureID, alpha, modelID);
         end
         // Чистая ночь
@@ -1369,14 +1388,14 @@ begin
       begin
         // === MEGA REALISM ЛЕТО ===
 
-        // Ночь -> Рассветные сумерки (fade 30 мин)
+        // Ночь -> Рассветные сумерки (fade 60 мин)
         if (totalMinutes >= mrP0) and (totalMinutes < mrP1) then
         begin
           DrawSkyLayer(nightTextureID, 240, modelID);
-          alpha := Round((totalMinutes - mrP0) * 255 / 30);
+          alpha := Round((totalMinutes - mrP0) * 255 / 60);
           DrawSkyLayer(BoosterSunriseDawnTextureID, alpha, modelID);
         end
-        // Чистые рассветные сумерки
+        // Чистые рассветные сумерки (30 мин)
         else if (totalMinutes >= mrP1) and (totalMinutes < mrP2) then
         begin
           DrawSkyLayer(BoosterSunriseDawnTextureID, 255, modelID);
@@ -1388,16 +1407,16 @@ begin
           alpha := Round((totalMinutes - mrP2) * 255 / 30);
           DrawSkyLayer(sunriseTextureID, alpha, modelID);
         end
-        // Чистый рассвет
+        // Чистый рассвет (60 мин)
         else if (totalMinutes >= mrP3) and (totalMinutes < mrP4) then
         begin
           DrawSkyLayer(sunriseTextureID, 255, modelID);
         end
-        // Рассвет -> День (fade 30 мин)
+        // Рассвет -> День (fade 60 мин)
         else if (totalMinutes >= mrP4) and (totalMinutes < mrP5) then
         begin
           DrawSkyLayer(sunriseTextureID, 255, modelID);
-          alpha := Round((totalMinutes - mrP4) * 255 / 30);
+          alpha := Round((totalMinutes - mrP4) * 255 / 60);
           DrawSkyLayer(dayTextureID, alpha, modelID);
         end
         // Чистый день
@@ -1405,14 +1424,14 @@ begin
         begin
           DrawSkyLayer(dayTextureID, 255, modelID);
         end
-        // День -> Закат (fade 30 мин)
+        // День -> Закат (fade 60 мин)
         else if (totalMinutes >= mrP6) and (totalMinutes < mrP7) then
         begin
           DrawSkyLayer(dayTextureID, 255, modelID);
-          alpha := Round((totalMinutes - mrP6) * 255 / 30);
+          alpha := Round((totalMinutes - mrP6) * 255 / 60);
           DrawSkyLayer(sunsetTextureID, alpha, modelID);
         end
-        // Чистый закат
+        // Чистый закат (30 мин)
         else if (totalMinutes >= mrP7) and (totalMinutes < mrP8) then
         begin
           DrawSkyLayer(sunsetTextureID, 255, modelID);
@@ -1424,16 +1443,16 @@ begin
           alpha := Round((totalMinutes - mrP8) * 255 / 30);
           DrawSkyLayer(BoosterSunsetTwilightTextureID, alpha, modelID);
         end
-        // Чистые сумерки заката
+        // Чистые сумерки заката (60 мин)
         else if (totalMinutes >= mrP9) and (totalMinutes < mrP10) then
         begin
           DrawSkyLayer(BoosterSunsetTwilightTextureID, 255, modelID);
         end
-        // Сумерки -> Ночь (fade 30 мин)
+        // Сумерки -> Ночь (fade 60 мин)
         else if (totalMinutes >= mrP10) and (totalMinutes < mrP11) then
         begin
           DrawSkyLayer(BoosterSunsetTwilightTextureID, 255, modelID);
-          alpha := Round((totalMinutes - mrP10) * 240 / 30);
+          alpha := Round((totalMinutes - mrP10) * 240 / 60);
           DrawSkyLayer(nightTextureID, alpha, modelID);
         end
         // Чистая ночь
@@ -1664,6 +1683,8 @@ begin
     end;
     
   finally
+    // Восстанавливаем туман после отрисовки неба
+    glEnable(GL_FOG);
     EndObj3D;
   end;
 end;
@@ -10925,6 +10946,427 @@ end;
 
 
 // RA3-specific code moved to Modules\RA3.pas
+
+// ==========================================================================
+//  DrawKlubBilVData — реплика оригинальной функции DRAWKLUBBILVDATA
+//  из Launcher.exe+84AB4. Позиции и константы извлечены из дизассемблера.
+//
+//  Параметры (stdcall, 6 стековых — ret 24 для совместимости с register ABI):
+//    ModelParam2, ModelParam1: Cardinal — текстуры моделей (не используются)
+//    AngZ: Single — угол поворота панели (45.0)
+//    Z: Single — позиция Z панели (3.43)
+//    Y: Single — позиция Y панели (7.18)
+//    X: Single — позиция X панели (1.17)
+// ==========================================================================
+procedure DrawKlubBilVData(
+  ModelParam2: Cardinal;
+  ModelParam1: Cardinal;
+  AngZ: Single;
+  Z: Single;
+  Y: Single;
+  X: Single
+); stdcall;
+const
+  BASE: Cardinal = $00400000;
+  // Цвета из ассемблера
+  CLR_GREEN      = $0033FF33;   // зелёный (скорость, время, давления)
+  CLR_LIMIT      = $003333FF;   // ограничение скорости
+  CLR_CYAN       = $0033FFFF;   // целевая скорость
+  CLR_ORANGE     = $0000BBFF;   // оранжевый (станция)
+  // Цвета АЛСН из ассемблера (circle indicators)
+  CLR_ALSN_WHITE  = $00FFFFFF;  // Б — белый
+  CLR_ALSN_RED    = $003333FF;  // К — красный
+  CLR_ALSN_REDYEL = $0033AAFF;  // КЖ — красно-жёлтый
+  CLR_ALSN_YELLOW = $0033DDFF;  // Ж — жёлтый
+  CLR_ALSN_GREEN  = $0055FF33;  // З — зелёный
+  // Константы спидометра из ассемблера (80-bit float → decoded)
+  MAX_SPEED_SCALE = 252.0;      // [0x4873C4] максимум шкалы (градусы)
+  HALF_CIRCLE     = 180.0;      // [0x4873D4]
+  DIAL_RADIUS_Z   = 0.0450;     // [0x4873D8] радиус шкалы по Z (sin)
+  DIAL_OFFSET_Z   = 0.2300;     // [0x4873E4] смещение центра Z
+  DIAL_RADIUS_X   = 0.0549;     // [0x4873F0] радиус шкалы по X (cos)
+  DIAL_OFFSET_X   = -0.0050;    // [0x4873FC] смещение центра X
+  TICK_RADIUS_Z   = 0.0370;     // [0x487484] радиус меток Z (sin)
+  TICK_RADIUS_X   = 0.0486;     // [0x487490] радиус меток X (cos)
+  TICK_STEP       = 5;          // [0x48749C] шаг делений (5 км/ч)
+  ACCEL_DIVISOR   = 1000.0;     // [0x487480] делитель ускорения
+var
+  speedVal: Single;
+  speedInt, limitInt, targetInt: Integer;
+  alsMode: Byte;
+  revByte: Byte;
+  hourVal, minVal, secVal: Integer;
+  tmPressure, urPressure, tcPressure: Single;
+  accelVal: Double;
+  urAddr: Cardinal;
+  speedStr, limitStr: string;
+  timeStr, pressStr, accelStr: string;
+  revStr, stationStr: string;
+  alsColor: Integer;
+  alsZ: Single;
+  OldDecSep: Char;
+  BilFont: Integer;
+  angleRad: Single;
+  i, maxTick: Integer;
+begin
+  // Кешированная загрузка шрифта
+  if KLUBUFont = 0 then
+    KLUBUFont := CreateFont3D('KLUBU');
+  BilFont := KLUBUFont;
+
+  try
+    // ===== ЧТЕНИЕ ДАННЫХ ИЗ ПАМЯТИ =====
+    speedVal := Abs(PSingle(BASE + $4F8C28C)^);
+    speedInt := Round(speedVal);
+    limitInt := PWord(BASE + $34987C)^;
+    targetInt := PWord(BASE + $349880)^;
+    alsMode := PByte(BASE + $8C07ECC)^;
+    revByte := PByte(BASE + $3498A0)^;
+    hourVal := PInteger(BASE + $8C08034)^;
+    minVal  := PInteger(BASE + $8C08038)^;
+    secVal  := PInteger(BASE + $8C0803C)^;
+    tmPressure := PSingle(BASE + $8D10738)^;
+    urPressure := 0.0;
+    try
+      urAddr := PCardinal(BASE + $8D10D78)^;
+      if urAddr <> 0 then
+        urPressure := PSingle(urAddr + $20)^;
+    except
+      urPressure := 0.0;
+    end;
+    tcPressure := GetPressureTCf;
+    accelVal := PDouble(BASE + $3498B8)^;
+
+    // ===== ФОРМАТИРОВАНИЕ СТРОК =====
+    OldDecSep := DecimalSeparator;
+    DecimalSeparator := '.';
+    try
+      speedStr := Format('%.3d', [speedInt]);
+      limitStr := Format('%.3d', [limitInt]);
+      timeStr := Format('%.2d:%.2d:%.2d', [hourVal, minVal, secVal]);
+      pressStr := FormatFloat('0.0', tmPressure);
+      accelStr := FormatFloat('0.00', accelVal / ACCEL_DIVISOR);
+      if revByte = 0 then
+        revStr := #$CF  // "П" — вперёд (CP1251)
+      else
+        revStr := #$CD; // "Н" — назад (CP1251)
+      stationStr := GetCurrentStation;
+      if Length(stationStr) > 8 then
+        stationStr := Copy(stationStr, 1, 8);
+    finally
+      DecimalSeparator := OldDecSep;
+    end;
+
+    // ===== ОТРИСОВКА =====
+    // Ассемблер: glPushMatrix → Position3D(X,Y,Z) → RotateZ(AngZ) → элементы → glPopMatrix
+    BeginObj3D;
+    Position3D(X, Y, Z);
+    RotateZ(AngZ);
+
+    glDisable(GL_LIGHTING);
+
+    // --- 1. ТЕКУЩАЯ СКОРОСТЬ ---
+    // Asm: Position3D(-0.011, 0.001, 0.237), RotateZ(-90), Scale(0.02), Color(0x33FF33)
+    BeginObj3D;
+    Position3D(-0.011, 0.001, 0.237);
+    RotateZ(-90.0);
+    Scale3D(0.02);
+    SetTexture(0);
+    Color3D(CLR_GREEN, 255, False, 0.0);
+    DrawText3D(BilFont, speedStr);
+    EndObj3D;
+
+    // --- 2. МАРКЕР РЕВЕРСА (стрелка-точка) ---
+    // Asm: Position3D(-0.005, 0.001, brightness*0.003+0.1885), RotateZ(-90), Scale(0.035), text="."
+    BeginObj3D;
+    Position3D(-0.005, 0.001, 0.1915);
+    RotateZ(-90.0);
+    Scale3D(0.035);
+    SetTexture(0);
+    Color3D(CLR_GREEN, 255, False, 0.0);
+    DrawText3D(BilFont, '.');
+    EndObj3D;
+
+    // --- 3. ОГРАНИЧЕНИЕ СКОРОСТИ ---
+    // Asm: Position3D(-0.011, 0.001, 0.213), RotateZ(-90), Scale(0.02), Color(0x3333FF)
+    BeginObj3D;
+    Position3D(-0.011, 0.001, 0.213);
+    RotateZ(-90.0);
+    Scale3D(0.02);
+    SetTexture(0);
+    Color3D(CLR_LIMIT, 255, False, 0.0);
+    DrawText3D(BilFont, limitStr);
+    EndObj3D;
+
+    // --- 4. АЛСН ИНДИКАТОР (цветной круг) ---
+    // Asm: Position3D(-0.0865, 0.002, Z), Scale(0.89), цвет по режиму
+    // Режимы: 1=Б(белый), 2=К(красный), 3=КЖ(оранжевый), 4=Ж(жёлтый), 5=З(зелёный)
+    if (alsMode >= 1) and (alsMode <= 5) then
+    begin
+      case alsMode of
+        1: begin alsColor := CLR_ALSN_WHITE;  alsZ := 0.194; end;
+        2: begin alsColor := CLR_ALSN_RED;    alsZ := 0.209; end;
+        3: begin alsColor := CLR_ALSN_REDYEL; alsZ := 0.223; end;
+        4: begin alsColor := CLR_ALSN_YELLOW; alsZ := 0.236; end;
+        5: begin alsColor := CLR_ALSN_GREEN;  alsZ := 0.236; end;
+      else
+        begin alsColor := CLR_ALSN_WHITE; alsZ := 0.194; end;
+      end;
+
+      BeginObj3D;
+      Position3D(-0.0865, 0.002, alsZ);
+      Scale3D(0.89);
+      SetTexture(0);
+      Color3D(alsColor, 254, False, 0.0);
+      // Рисуем заполненный круг как замену 3D-модели сигнала
+      glBegin(GL_TRIANGLE_FAN);
+        glVertex3f(0, 0, 0);
+        for i := 0 to 24 do
+          glVertex3f(
+            0.008 * Cos(i * 2 * Pi / 24),
+            0.008 * Sin(i * 2 * Pi / 24),
+            0
+          );
+      glEnd;
+      EndObj3D;
+    end;
+
+    // --- 5. МАРКЕР ОГРАНИЧЕНИЯ НА ШКАЛЕ ---
+    // Asm: Position на круговой шкале, RotateZ(-90), Scale(0.035), Color(0x3333FF), text="."
+    if limitInt > 0 then
+    begin
+      angleRad := (MAX_SPEED_SCALE - limitInt) * Pi / HALF_CIRCLE;
+      BeginObj3D;
+      Position3D(
+        Cos(angleRad) * DIAL_RADIUS_X + DIAL_OFFSET_X,
+        0.001,
+        Sin(angleRad) * DIAL_RADIUS_Z + DIAL_OFFSET_Z
+      );
+      RotateZ(-90.0);
+      Scale3D(0.035);
+      SetTexture(0);
+      Color3D(CLR_LIMIT, 255, False, 0.0);
+      DrawText3D(BilFont, '.');
+      EndObj3D;
+    end;
+
+    // --- 6. МАРКЕР ЦЕЛЕВОЙ СКОРОСТИ НА ШКАЛЕ ---
+    // Asm: аналогично, Color(0x33FFFF), условие: target > limit и target > 5
+    if (targetInt > limitInt) and (targetInt > 5) then
+    begin
+      angleRad := (MAX_SPEED_SCALE - targetInt) * Pi / HALF_CIRCLE;
+      BeginObj3D;
+      Position3D(
+        Cos(angleRad) * DIAL_RADIUS_X + DIAL_OFFSET_X,
+        0.001,
+        Sin(angleRad) * DIAL_RADIUS_Z + DIAL_OFFSET_Z
+      );
+      RotateZ(-90.0);
+      Scale3D(0.035);
+      SetTexture(0);
+      Color3D(CLR_CYAN, 255, False, 0.0);
+      DrawText3D(BilFont, '.');
+      EndObj3D;
+    end;
+
+    // --- 7. НАЗВАНИЕ СТАНЦИИ ---
+    // Asm: Position3D(-0.026, 0.001, 0.301), RotateZ(-90), Scale(0.011), Color(0x00BBFF)
+    if stationStr <> '' then
+    begin
+      BeginObj3D;
+      Position3D(-0.026, 0.001, 0.301);
+      RotateZ(-90.0);
+      Scale3D(0.011);
+      SetTexture(0);
+      Color3D(CLR_ORANGE, 255, False, 0.0);
+      DrawText3D(BilFont, stationStr);
+      EndObj3D;
+    end;
+
+    // --- 8. ИНДИКАТОР НАПРАВЛЕНИЯ (П/Н) ---
+    // Asm: Position3D(0.068, -0.001, 0.311), RotateZ(-90), Scale(0.012), Color(0x33FF33)
+    BeginObj3D;
+    Position3D(0.068, -0.001, 0.311);
+    RotateZ(-90.0);
+    Scale3D(0.012);
+    SetTexture(0);
+    Color3D(CLR_GREEN, 255, False, 0.0);
+    DrawText3D(BilFont, revStr);
+    EndObj3D;
+
+    // --- 9. ВРЕМЯ HH:MM:SS ---
+    // Asm: Position3D(0.021, 0.001, 0.301), inner RotateZ(-90), Scale(0.011)
+    BeginObj3D;
+    Position3D(0.021, 0.001, 0.301);
+    RotateZ(-90.0);
+    Scale3D(0.011);
+    SetTexture(0);
+    Color3D(CLR_GREEN, 255, False, 0.0);
+    DrawText3D(BilFont, timeStr);
+    EndObj3D;
+
+    // --- 10. ДАВЛЕНИЕ ТМ ---
+    // Asm: Position3D(-0.092, 0.001, 0.1215), inner RotateZ(-90), Scale(0.011)
+    BeginObj3D;
+    Position3D(-0.092, 0.001, 0.1215);
+    RotateZ(-90.0);
+    Scale3D(0.011);
+    SetTexture(0);
+    Color3D(CLR_GREEN, 255, False, 0.0);
+    DrawText3D(BilFont, pressStr);
+    EndObj3D;
+
+    // --- 11. УСКОРЕНИЕ ---
+    // Asm: Position3D(-0.072, 0.001, 0.301), RotateZ(-90), Scale(0.011)
+    BeginObj3D;
+    Position3D(-0.072, 0.001, 0.301);
+    RotateZ(-90.0);
+    Scale3D(0.011);
+    SetTexture(0);
+    Color3D(CLR_GREEN, 255, False, 0.0);
+    DrawText3D(BilFont, accelStr);
+    EndObj3D;
+
+    // --- 12. СПИДОМЕТР — ДУГА СКОРОСТИ (метки от 0 до текущей скорости) ---
+    // Asm: цикл i=0..round(speed/5)*5, шаг 5
+    //   angle = (252 - i) * Pi / 180
+    //   Z = sin(angle) * 0.037 + 0.230
+    //   X = cos(angle) * 0.0486 + (-0.005)
+    //   RotateZ(-90), Scale(0.035), text="."
+    maxTick := (Round(speedVal / 5.0)) * TICK_STEP;
+    i := 0;
+    while i <= maxTick do
+    begin
+      angleRad := (MAX_SPEED_SCALE - i) * Pi / HALF_CIRCLE;
+      BeginObj3D;
+      Position3D(
+        Cos(angleRad) * TICK_RADIUS_X + DIAL_OFFSET_X,
+        0.001,
+        Sin(angleRad) * TICK_RADIUS_Z + DIAL_OFFSET_Z
+      );
+      RotateZ(-90.0);
+      Scale3D(0.035);
+      SetTexture(0);
+      Color3D(CLR_GREEN, 255, False, 0.0);
+      DrawText3D(BilFont, '.');
+      EndObj3D;
+      Inc(i, TICK_STEP);
+    end;
+
+    glEnable(GL_LIGHTING);
+
+    // Внешний EndObj3D — закрываем позиционирование панели
+    EndObj3D;
+
+  except
+    on E: Exception do
+    begin
+      glEnable(GL_LIGHTING);
+    end;
+  end;
+end;
+
+// Вспомогательная процедура: стрелка + деления скоростемера
+procedure DrawSpeedometerNeedle(FontID: Integer; Speed: Single);
+const
+  START_ANGLE = 225.0;   // начальный угол шкалы (градусы)
+  SPEED_RANGE = 270.0;   // диапазон шкалы (градусы)
+  MAX_SPEED   = 250.0;   // максимальная скорость на шкале
+  DEG2RAD     = Pi / 180.0;
+  RADIUS      = 35.0;    // радиус шкалы в единицах (масштабируется Scale3D)
+  TICK_STEP   = 5;       // шаг делений (км/ч)
+var
+  i, tickCount: Integer;
+  angle, ca, sa: Single;
+  needleAngle: Single;
+  segments: Integer;
+begin
+  tickCount := Round(MAX_SPEED) div TICK_STEP;
+
+  // --- Деления шкалы ---
+  BeginObj3D;
+  Position3D(0.10, 0.001, 0.06);
+  RotateZ(-90.0);
+  Scale3D(0.0009);
+  Color3D($FFFFFF, 255, False, 0.0);
+  SetTexture(0);
+
+  glLineWidth(2);
+  glBegin(GL_LINES);
+  for i := 0 to tickCount do
+  begin
+    angle := (START_ANGLE - (i * TICK_STEP / MAX_SPEED) * SPEED_RANGE) * DEG2RAD;
+    ca := Cos(angle);
+    sa := Sin(angle);
+    glVertex3f(RADIUS * ca, RADIUS * sa, 0);
+    glVertex3f((RADIUS + 5) * ca, (RADIUS + 5) * sa, 0);
+  end;
+  glEnd;
+  glLineWidth(1);
+  EndObj3D;
+
+  // --- Цифры делений (каждые 10 км/ч) ---
+  for i := 0 to (Round(MAX_SPEED) div 10) do
+  begin
+    angle := (START_ANGLE - (i * 10 / MAX_SPEED) * SPEED_RANGE) * DEG2RAD;
+    ca := Cos(angle);
+    sa := Sin(angle);
+
+    BeginObj3D;
+    Position3D(
+      0.10 + (RADIUS - 8) * ca * 0.0009,
+      0.001,
+      0.06 + (RADIUS - 8) * sa * 0.0009
+    );
+    RotateZ(-90.0);
+    Scale3D(0.006);
+    Color3D($FFFFFF, 255, False, 0.0);
+    SetTexture(0);
+    DrawText3D(FontID, IntToStr(i * 10));
+    EndObj3D;
+  end;
+
+  // --- Стрелка ---
+  needleAngle := (START_ANGLE - (Speed / MAX_SPEED) * SPEED_RANGE) * DEG2RAD;
+
+  BeginObj3D;
+  Position3D(0.10, 0.001, 0.06);
+  RotateZ(-90.0);
+  Scale3D(0.0009);
+  Color3D($FF6600, 255, False, 0.0);
+  SetTexture(0);
+
+  ca := Cos(needleAngle);
+  sa := Sin(needleAngle);
+
+  // Треугольная стрелка
+  glBegin(GL_TRIANGLES);
+    glVertex3f(3 * Cos(needleAngle + Pi/2), 3 * Sin(needleAngle + Pi/2), 0.5);
+    glVertex3f(3 * Cos(needleAngle - Pi/2), 3 * Sin(needleAngle - Pi/2), 0.5);
+    glVertex3f((RADIUS - 2) * ca, (RADIUS - 2) * sa, 0.5);
+  glEnd;
+
+  // Линия стрелки
+  glLineWidth(2);
+  glBegin(GL_LINES);
+    glVertex3f(0, 0, 0.5);
+    glVertex3f((RADIUS - 2) * ca, (RADIUS - 2) * sa, 0.5);
+  glEnd;
+  glLineWidth(1);
+
+  // Центральный круг
+  segments := 24;
+  glBegin(GL_TRIANGLE_FAN);
+    glVertex3f(0, 0, 0.6);
+    for i := 0 to segments do
+    begin
+      angle := (i * 2 * Pi / segments);
+      glVertex3f(8 * Cos(angle), 8 * Sin(angle), 0.6);
+    end;
+  glEnd;
+
+  EndObj3D;
+end;
 
 
 procedure HookKLUB(

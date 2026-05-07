@@ -548,7 +548,7 @@ end;
 procedure SetCutingPlanes(ZNear, ZFar : single); stdcall;
 begin
 initZNear:=ZNear;
-initZFar:=ZFar;
+initZFar:=6000;
 end;
 {------------------------------------------------------------------}
 procedure SetViewAngle(Angle : single); stdcall;
