@@ -147,6 +147,13 @@ var
   InitBloomRadius     : single  = 1.0;      // upsample tent radius (pixels at sample mip)
   InitBloomIntensity  : single  = 0.4;      // 0..2 — how strongly bloom is mixed in tonemap
 
+  // Bloom fog suppression: the engine's GL_LINEAR fog fades distant geometry
+  // to a bright colour (usually white).  Bloom picks up those bright pixels
+  // and spreads them into a white glow on the horizon.  When enabled, the
+  // tonemap pass reads the depth buffer and attenuates bloom for fragments
+  // beyond ~40% of zFar, fully killing it at ~85% of zFar.
+  InitBloomFogSuppress: boolean = true;
+
   // ACES Filmic tonemapping + manual exposure
   InitTonemapEnable   : boolean = true;     // ACES Filmic curve + sRGB roundtrip
   InitExposure        : single  = 1.0;      // EV gain before tonemap; 1.0 = neutral

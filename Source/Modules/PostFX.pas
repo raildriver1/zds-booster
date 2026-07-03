@@ -212,6 +212,7 @@ const
     'uniform float uExposure;'#10 +
     'uniform float uBloomIntensity;'#10 +
     'uniform float uBloomEnable;'#10 +
+    'uniform float uBloomFogSuppress;'#10 +
     'uniform float uTonemapEnable;'#10 +
     'uniform float uSSAOEnable;'#10 +
     'uniform float uSSAOIntensity;'#10 +
@@ -239,6 +240,21 @@ const
     '  vec3 bloom = texture2D(uBloom, vUV).rgb;'#10 +
     '  float ao = mix(1.0, texture2D(uSSAO, vUV).r, uSSAOEnable);'#10 +
     '  scene *= mix(1.0, ao, uSSAOIntensity);'#10 +
+    // Depth-based bloom suppression: when the engine's GL_LINEAR fog fades
+    // distant pixels to white, bloom picks up those bright pixels and spreads
+    // them into a white glow.  We read the depth and compute a fog-distance
+    // factor that attenuates bloom for far-away fragments so the fog-whitened
+    // horizon doesn't get double-brightened.
+    '  float bloomAtten = 1.0;'#10 +
+    '  if (uBloomFogSuppress > 0.5) {'#10 +
+    '    float d = texture2D(uDepth, vUV).r;'#10 +
+    '    float lz = linearDepth(d);'#10 +
+    // Suppress bloom starting at 40% of zFar, fully kill it at 85% of zFar.
+    // This matches the typical GL_LINEAR fog range where distant geometry
+    // becomes indistinguishable from the fog colour.
+    '    float fogZone = smoothstep(uZFar * 0.4, uZFar * 0.85, lz);'#10 +
+    '    bloomAtten = 1.0 - fogZone;'#10 +
+    '  }'#10 +
     '  if (uFogEnable > 0.5) {'#10 +
     '    float d = texture2D(uDepth, vUV).r;'#10 +
     '    float lz = linearDepth(d);'#10 +
@@ -246,7 +262,7 @@ const
     '    fogF = clamp(fogF, 0.0, 1.0);'#10 +
     '    scene = mix(scene, uFogColor, fogF);'#10 +
     '  }'#10 +
-    '  vec3 c = scene + bloom * uBloomIntensity * uBloomEnable;'#10 +
+    '  vec3 c = scene + bloom * uBloomIntensity * uBloomEnable * bloomAtten;'#10 +
     '  vec3 lin = pow(c, vec3(2.2));'#10 +
     '  lin *= uExposure;'#10 +
     '  vec3 mapped = ACES(lin);'#10 +
@@ -609,7 +625,7 @@ var
   uDS_Tex, uDS_InvSrc: GLint;
   uUS_Tex, uUS_InvSrc, uUS_Radius: GLint;
   uTM_Scene, uTM_Bloom, uTM_SSAO, uTM_Depth: GLint;
-  uTM_Exposure, uTM_BloomI, uTM_BloomEnable, uTM_TonemapEnable: GLint;
+  uTM_Exposure, uTM_BloomI, uTM_BloomEnable, uTM_BloomFogSuppress, uTM_TonemapEnable: GLint;
   uTM_SSAOEnable, uTM_SSAOIntensity: GLint;
   uTM_FogEnable, uTM_FogDensity, uTM_FogStart, uTM_FogColor: GLint;
   uTM_ZNear, uTM_ZFar: GLint;
@@ -828,6 +844,7 @@ begin
   uTM_Exposure      := glGetUniformLocation(ProgTonemap, 'uExposure');
   uTM_BloomI        := glGetUniformLocation(ProgTonemap, 'uBloomIntensity');
   uTM_BloomEnable   := glGetUniformLocation(ProgTonemap, 'uBloomEnable');
+  uTM_BloomFogSuppress := glGetUniformLocation(ProgTonemap, 'uBloomFogSuppress');
   uTM_TonemapEnable := glGetUniformLocation(ProgTonemap, 'uTonemapEnable');
   uTM_SSAOEnable    := glGetUniformLocation(ProgTonemap, 'uSSAOEnable');
   uTM_SSAOIntensity := glGetUniformLocation(ProgTonemap, 'uSSAOIntensity');
@@ -1311,6 +1328,12 @@ begin
   if InitFogEnable and DepthCaptureActive     then FogEn := 1.0 else FogEn := 0.0;
 
   glUniform1f(uTM_BloomEnable,   BloomEn);
+  // Bloom fog suppression: only effective when depth capture is active
+  // (we need the depth texture to compute the distance-based attenuation).
+  if InitBloomFogSuppress and DepthCaptureActive then
+    glUniform1f(uTM_BloomFogSuppress, 1.0)
+  else
+    glUniform1f(uTM_BloomFogSuppress, 0.0);
   glUniform1f(uTM_TonemapEnable, TonemapEn);
   glUniform1f(uTM_SSAOEnable,    SSAOEn);
   glUniform1f(uTM_SSAOIntensity, InitSSAOIntensity);
@@ -1578,6 +1601,7 @@ begin
   AddToLogFile(POSTFX_LOG, 'InitBloomThreshold= ' + FloatToStr(InitBloomThreshold));
   AddToLogFile(POSTFX_LOG, 'InitBloomIntensity= ' + FloatToStr(InitBloomIntensity));
   AddToLogFile(POSTFX_LOG, 'InitBloomKnee     = ' + FloatToStr(InitBloomKnee));
+  AddToLogFile(POSTFX_LOG, 'InitBloomFogSuppress= ' + YN(InitBloomFogSuppress));
   AddToLogFile(POSTFX_LOG, 'InitBloomRadius   = ' + FloatToStr(InitBloomRadius));
   AddToLogFile(POSTFX_LOG, 'InitExposure      = ' + FloatToStr(InitExposure));
   AddToLogFile(POSTFX_LOG, 'DepthCaptureActive= ' + YN(DepthCaptureActive));

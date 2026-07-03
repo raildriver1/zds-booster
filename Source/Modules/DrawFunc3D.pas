@@ -1148,8 +1148,12 @@ var
   mrSR, mrSS: Integer;     // sunrise, sunset in minutes
   mrP0, mrP1, mrP2, mrP3, mrP4, mrP5, mrP6, mrP7, mrP8, mrP9, mrP10, mrP11: Integer;
   mrHandled: Boolean;
+  FogWasEnabled: BYTEBOOL;
+  FogStateCaptured: Boolean;
   
 begin
+  FogWasEnabled := GL_FALSE;
+  FogStateCaptured := False;
   try
     // Загружаем дополнительные текстуры при первом вызове
     if not BoosterTexturesLoaded then
@@ -1173,6 +1177,8 @@ begin
     
     // Отключаем туман — иначе при увеличенном куполе (Scale3D по maxvisibledistance)
     // вершины уходят далеко от камеры и fog забеливает текстуру
+    glGetBooleanv(GL_FOG, @FogWasEnabled);
+    FogStateCaptured := True;
     glDisable(GL_FOG);
     
     // Отключаем освещение
@@ -1683,8 +1689,16 @@ begin
     end;
     
   finally
-    // Восстанавливаем туман после отрисовки неба
-    glEnable(GL_FOG);
+    // Возвращаем именно то состояние fog, которое было до DrawSky.
+    // Принудительное glEnable(GL_FOG) даёт резкую границу тумана/дальности
+    // вокруг сцены после масштабированного sky dome.
+    if FogStateCaptured then
+    begin
+      if FogWasEnabled then
+        glEnable(GL_FOG)
+      else
+        glDisable(GL_FOG);
+    end;
     EndObj3D;
   end;
 end;
@@ -5701,16 +5715,34 @@ end;
 {------------------------------------------------------------------}
 procedure SetFog(Color : Integer; Fog_Start, Fog_End : single); stdcall;
 var fogColor : Array [0..3] of GLFloat;
+    scaledStart, scaledEnd, scale, minEnd: Single;
 begin
  fogColor[0]:=GetRValue(Color)/255;
  fogColor[1]:=GetGValue(Color)/255;
  fogColor[2]:=GetBValue(Color)/255;
  fogColor[3]:=1.0;
+ scaledStart := Fog_Start;
+ scaledEnd := Fog_End;
+
+ // При увеличенной дальности штатный clear-weather fog (обычно около
+ // 5000 м) успевает стать полностью белым внутри видимой сцены. Отсюда
+ // белая плита на горизонте. Растягиваем только дальний fog; короткий
+ // погодный туман 50/100/500/1000 м оставляем как задано сценарием.
+ if (maxvisibledistance > 1500.0) and (Fog_End > 1500.0) then
+ begin
+   scale := maxvisibledistance / 1500.0;
+   scaledStart := Fog_Start * scale;
+   scaledEnd := Fog_End * scale;
+   minEnd := maxvisibledistance * 2.5;
+   if scaledEnd < minEnd then
+     scaledEnd := minEnd;
+ end;
+
  glEnable(GL_FOG);
  glFogi  (GL_FOG_MODE, GL_LINEAR);
  glHint  (GL_FOG_HINT, GL_DONT_CARE);
- glFogf  (GL_FOG_START, Fog_Start);
- glFogf  (GL_FOG_END, Fog_End);
+ glFogf  (GL_FOG_START, scaledStart);
+ glFogf  (GL_FOG_END, scaledEnd);
  glFogfv (GL_FOG_COLOR, @fogColor);
 end;
 {------------------------------------------------------------------}

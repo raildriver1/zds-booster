@@ -50,7 +50,9 @@ uses
   CameraResetPatch in 'Modules\CameraResetPatch.pas',
   FreecamWorldAnchor in 'Modules\FreecamWorldAnchor.pas',
   CustomImages3D in 'Modules\CustomImages3D.pas',
-  BilServer in 'Modules\BilServer.pas';
+  BilServer in 'Modules\BilServer.pas',
+  BilVServerProApi in 'Modules\BilVServerProApi.pas',
+  BilServerPro in 'Modules\BilServerPro.pas';
 
 //Function needed for engine header
 function DLL_ver : byte; stdcall;

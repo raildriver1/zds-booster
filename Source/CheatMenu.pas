@@ -3,7 +3,7 @@
 interface
 uses
   Windows, SysUtils, Classes, Variables, DrawFunc2D, DrawFunc3D, EngineUtils,
-  KlubData, ShellAPI, Math, OpenGL, Advanced3D, CommDlg, BilServer;
+  KlubData, ShellAPI, Math, OpenGL, Advanced3D, CommDlg, BilServer, BilServerPro;
 
 type
   TSlider = record
@@ -111,6 +111,7 @@ type
     // Visual — engine-level post-process toggles (ZDS-Booster).
     FXAAEnable: Boolean;
     BloomEnable: Boolean;
+    BloomFogSuppress: Boolean;  // suppress bloom on fog-whitened horizon
     // PostFX render-graph (Phase 1 + Phase 2). Each toggle is mirrored to
     // its Init* global in Variables.pas which PostFX.pas re-reads every
     // frame, so flips are visible immediately with no restart.
@@ -135,7 +136,7 @@ type
     // дефолты Variables.pas вместо shadow.
     PostFXSaved: record
       Init: Boolean;
-      FXAA, Bloom, Tonemap, Sharpen, Vignette, Grain, SSAO, Fog, DOF: Boolean;
+      FXAA, Bloom, BloomFogSuppress, Tonemap, Sharpen, Vignette, Grain, SSAO, Fog, DOF: Boolean;
     end;
 
     // Locomotive
@@ -398,12 +399,15 @@ type
     MegaRealismText: string;
     SystemTimeText: string;
     BilServerText: string;
+    BilServerProText: string;
+    BilServerProBuyText: string;
     Block160Text: string;
     CollisionText: string;
     FreeWalkText: string;
     CollisionDisableText: string;
     FXAAText: string;
     BloomText: string;
+    BloomFogSuppressText: string;
     PostFXText: string;
     TonemapText: string;
     SharpenText: string;
@@ -453,12 +457,15 @@ const
       MegaRealismText: 'Мега реализм';
       SystemTimeText: 'Системное время';
       BilServerText: 'БИЛ-В Сервер';
+      BilServerProText: 'БИЛ-В Сервер Pro';
+      BilServerProBuyText: 'Купить: t.me/raildrive';
       Block160Text: '160 БЛОК';
       CollisionText: 'Коллизия DMD';
       FreeWalkText: 'Свободная Ходьба';
       CollisionDisableText: 'Откл. коллизии';
       FXAAText: 'Сглаживание FXAA';
       BloomText: 'Свечение (Bloom)';
+      BloomFogSuppressText: 'Подавл. свеч. в дымке';
       PostFXText: 'Графич. эффекты';
       TonemapText: 'Кинокорректор (ACES)';
       SharpenText: 'Резкость (CAS)';
@@ -499,12 +506,15 @@ const
       MegaRealismText: 'Мега реалізм';
       SystemTimeText: 'Системний час';
       BilServerText: 'БІЛ-В Сервер';
+      BilServerProText: 'БІЛ-В Сервер Pro';
+      BilServerProBuyText: 'Купити: t.me/raildrive';
       Block160Text: '160 БЛОК';
       CollisionText: 'Колізія DMD';
       FreeWalkText: 'Вільна Ходьба';
       CollisionDisableText: 'Відкл. колізії';
       FXAAText: 'Згладжування FXAA';
       BloomText: 'Сяйво (Bloom)';
+      BloomFogSuppressText: 'Пригніч. сяйва в імлі';
       PostFXText: 'Граф. ефекти';
       TonemapText: 'Кінокорекція (ACES)';
       SharpenText: 'Різкість (CAS)';
@@ -545,12 +555,15 @@ const
       MegaRealismText: 'Mega Realism';
       SystemTimeText: 'System Time';
       BilServerText: 'BIL-V Server';
+      BilServerProText: 'BIL-V Server Pro';
+      BilServerProBuyText: 'Buy: t.me/raildrive';
       Block160Text: '160 BLOCK';
       CollisionText: 'DMD Collision';
       FreeWalkText: 'Free Walk';
       CollisionDisableText: 'Disable collision';
       FXAAText: 'FXAA Antialiasing';
       BloomText: 'Bloom Glow';
+      BloomFogSuppressText: 'Bloom Fog Suppress';
       PostFXText: 'Graphics FX';
       TonemapText: 'Filmic Tonemap (ACES)';
       SharpenText: 'Sharpen (CAS)';
@@ -594,12 +607,15 @@ begin
   else if TextType = 'MegaRealismText' then Result := LanguageTexts[CurrentLanguage].MegaRealismText
   else if TextType = 'SystemTimeText' then Result := LanguageTexts[CurrentLanguage].SystemTimeText
   else if TextType = 'BilServerText' then Result := LanguageTexts[CurrentLanguage].BilServerText
+  else if TextType = 'BilServerProText' then Result := LanguageTexts[CurrentLanguage].BilServerProText
+  else if TextType = 'BilServerProBuyText' then Result := LanguageTexts[CurrentLanguage].BilServerProBuyText
   else if TextType = 'Block160Text' then Result := LanguageTexts[CurrentLanguage].Block160Text
   else if TextType = 'CollisionText' then Result := LanguageTexts[CurrentLanguage].CollisionText
   else if TextType = 'FreeWalkText' then Result := LanguageTexts[CurrentLanguage].FreeWalkText
   else if TextType = 'CollisionDisableText' then Result := LanguageTexts[CurrentLanguage].CollisionDisableText
   else if TextType = 'FXAAText' then Result := LanguageTexts[CurrentLanguage].FXAAText
   else if TextType = 'BloomText' then Result := LanguageTexts[CurrentLanguage].BloomText
+  else if TextType = 'BloomFogSuppressText' then Result := LanguageTexts[CurrentLanguage].BloomFogSuppressText
   else if TextType = 'PostFXText' then Result := LanguageTexts[CurrentLanguage].PostFXText
   else if TextType = 'TonemapText' then Result := LanguageTexts[CurrentLanguage].TonemapText
   else if TextType = 'SharpenText' then Result := LanguageTexts[CurrentLanguage].SharpenText
@@ -1455,6 +1471,19 @@ begin
   Result := CustomXSlider.IsDragging or CustomYSlider.IsDragging or CustomZSlider.IsDragging or
             CustomRXSlider.IsDragging or CustomRYSlider.IsDragging or CustomRZSlider.IsDragging or
             CustomScaleSlider.IsDragging;
+end;
+
+// True если хоть один обычный слайдер меню сейчас перетаскивается.
+function AnyMenuSliderDragging: Boolean;
+begin
+  Result := Settings.BrightnessSlider.IsDragging or
+            Settings.BasespeedSlider.IsDragging or
+            Settings.FastspeedSlider.IsDragging or
+            Settings.TurnspeedSlider.IsDragging or
+            Settings.StepForwardSlider.IsDragging or
+            Settings.MaxVisibleDistanceSlider.IsDragging or
+            Settings.ViewAngleSlider.IsDragging or
+            Settings.CameraSensitivitySlider.IsDragging;
 end;
 
 // =====================================================================
@@ -3328,6 +3357,10 @@ begin
           Settings.BloomEnable := (Value = '1');
           InitBloomEnable := Settings.BloomEnable;
         end;
+        if Key = 'bloomfogsuppress' then begin
+          Settings.BloomFogSuppress := (Value = '1');
+          InitBloomFogSuppress := Settings.BloomFogSuppress;
+        end;
         if Key = 'postfx' then begin
           Settings.PostFXEnable := (Value = '1');
           InitPostFXEnable := Settings.PostFXEnable;
@@ -3506,6 +3539,10 @@ begin
   // активно тянет мышкой (drag живёт только в RAM до falling edge ЛКМ).
   if GizmoDragging then Exit;
 
+  // То же для UI-слайдеров: во время drag'а значения живут в RAM, а чтение
+  // cfg раз в 200 мс даёт микрофризы и может откатить значение к старому.
+  if AnyMenuSliderDragging or AnyCustomSliderDragging then Exit;
+
   // Аналогично — не читаем во время auto-repeat +/− кнопок в DevEditor:
   // их шаги пишутся сразу в массив, а LoadConfig их прочитает обратно с диска
   // (старое значение!) и съест приращение.
@@ -3575,6 +3612,7 @@ begin
     if Settings.PostFXEnable    then WriteLn(F, 'postfx: 1')      else WriteLn(F, 'postfx: 0');
     if Settings.FXAAEnable      then WriteLn(F, 'fxaa: 1')        else WriteLn(F, 'fxaa: 0');
     if Settings.BloomEnable     then WriteLn(F, 'bloom: 1')       else WriteLn(F, 'bloom: 0');
+    if Settings.BloomFogSuppress then WriteLn(F, 'bloomfogsuppress: 1') else WriteLn(F, 'bloomfogsuppress: 0');
     if Settings.TonemapEnable   then WriteLn(F, 'tonemap: 1')     else WriteLn(F, 'tonemap: 0');
     if Settings.SharpenEnable   then WriteLn(F, 'sharpen: 1')     else WriteLn(F, 'sharpen: 0');
     if Settings.VignetteEnable  then WriteLn(F, 'vignette: 1')    else WriteLn(F, 'vignette: 0');
@@ -4148,6 +4186,7 @@ begin
   // ZDS-Booster: seed Visual tab state from engine globals.
   Settings.FXAAEnable := InitFXAAEnable;
   Settings.BloomEnable := InitBloomEnable;
+  Settings.BloomFogSuppress := InitBloomFogSuppress;
   // Seed system-time toggle from its global.
   Settings.SystemTimeEnable := InitSystemTimeEnable;
   // PostFX (Phase 1 + Phase 2) — seed from Variables.pas defaults.
@@ -4799,7 +4838,7 @@ const
   POSTFX_PAD_TOP    = 10;
   POSTFX_PAD_BOTTOM = 10;
   POSTFX_ROW_GAP    = 6;
-  POSTFX_TOGGLE_COUNT = 9;
+  POSTFX_TOGGLE_COUNT = 10;
   POSTFX_INNER_X    = MARGIN;       // inner toggles aligned with the header
   POSTFX_BG_X       = MARGIN - 4;   // background panel — slight outset
   POSTFX_BG_W       = 270 + 24;     // wide enough to wrap the toggles
@@ -4814,7 +4853,7 @@ begin
             (POSTFX_TOGGLE_COUNT - 1) * POSTFX_ROW_GAP;
 end;
 
-// Render the 9 effect toggles inside the expanded section.
+// Render the 10 effect toggles inside the expanded section.
 // X, Y point to the top-left of the inner content area (already accounting
 // for section padding); SectionHeight is the currently animated height in
 // scaled pixels (so we can fade items in/out as the section expands).
@@ -4869,6 +4908,7 @@ begin
   // SSAO/Fog/DOF need depth).
   DrawOne('FXAAText',     Settings.FXAAEnable);
   DrawOne('BloomText',    Settings.BloomEnable);
+  DrawOne('BloomFogSuppressText', Settings.BloomFogSuppress);
   DrawOne('TonemapText',  Settings.TonemapEnable);
   DrawOne('SharpenText',  Settings.SharpenEnable);
   DrawOne('VignetteText', Settings.VignetteEnable);
@@ -4898,6 +4938,7 @@ begin
     Settings.PostFXSaved.Init     := True;
     Settings.PostFXSaved.FXAA     := Settings.FXAAEnable;
     Settings.PostFXSaved.Bloom    := Settings.BloomEnable;
+    Settings.PostFXSaved.BloomFogSuppress := Settings.BloomFogSuppress;
     Settings.PostFXSaved.Tonemap  := Settings.TonemapEnable;
     Settings.PostFXSaved.Sharpen  := Settings.SharpenEnable;
     Settings.PostFXSaved.Vignette := Settings.VignetteEnable;
@@ -4908,6 +4949,7 @@ begin
 
     Settings.FXAAEnable     := False;  InitFXAAEnable     := False;
     Settings.BloomEnable    := False;  InitBloomEnable    := False;
+    Settings.BloomFogSuppress := False;  InitBloomFogSuppress := False;
     Settings.TonemapEnable  := False;  InitTonemapEnable  := False;
     Settings.SharpenEnable  := False;  InitSharpenEnable  := False;
     Settings.VignetteEnable := False;  InitVignetteEnable := False;
@@ -4923,6 +4965,7 @@ begin
     begin
       Settings.FXAAEnable     := Settings.PostFXSaved.FXAA;
       Settings.BloomEnable    := Settings.PostFXSaved.Bloom;
+      Settings.BloomFogSuppress := Settings.PostFXSaved.BloomFogSuppress;
       Settings.TonemapEnable  := Settings.PostFXSaved.Tonemap;
       Settings.SharpenEnable  := Settings.PostFXSaved.Sharpen;
       Settings.VignetteEnable := Settings.PostFXSaved.Vignette;
@@ -4938,6 +4981,7 @@ begin
       // they never enabled.
       Settings.FXAAEnable     := True;
       Settings.BloomEnable    := True;
+      Settings.BloomFogSuppress := True;
       Settings.TonemapEnable  := True;
       Settings.SharpenEnable  := True;
       Settings.VignetteEnable := True;
@@ -4948,6 +4992,7 @@ begin
     end;
     InitFXAAEnable     := Settings.FXAAEnable;
     InitBloomEnable    := Settings.BloomEnable;
+    InitBloomFogSuppress := Settings.BloomFogSuppress;
     InitTonemapEnable  := Settings.TonemapEnable;
     InitSharpenEnable  := Settings.SharpenEnable;
     InitVignetteEnable := Settings.VignetteEnable;
@@ -5187,6 +5232,10 @@ begin
       TotalHeight := TotalHeight + MARGIN + ITEM_HEIGHT;
       if BilServerRunning then
         TotalHeight := TotalHeight + (ITEM_HEIGHT + MARGIN) * BilServerIPCount;
+
+      // BIL-V Server Pro (toggle + строка IP/«купить»)
+      TotalHeight := TotalHeight + MARGIN + ITEM_HEIGHT;
+      TotalHeight := TotalHeight + ITEM_HEIGHT + MARGIN;
     end;
     
     1: // WORLD окно
@@ -5481,6 +5530,36 @@ begin
           Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
         end;
       end;
+
+      // BIL-V Server Pro (отдельный платный сервер через BilVServerPro.dll)
+      DrawModernToggle(ScaledX + Round(MARGIN * Win.Scale), ContentY,
+        GetText('BilServerProText'), BilServerPro_IsRunning, Alpha,
+        False, 0, False,
+        HoverFor(ScaledX + Round(MARGIN * Win.Scale), ContentY,
+          Round(270 * Win.Scale), Round(ITEM_HEIGHT * Win.Scale)));
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
+
+      // Под PRO-toggle:
+      //   server running          → URL зелёным;
+      //   куплен, выключен        → ничего (юзер нажимает toggle сам);
+      //   нет DLL / нет лицензии  → ссылка «Купить» голубым.
+      if BilServerPro_IsRunning then
+      begin
+        DrawText2D(0,
+          ScaledX + Round((MARGIN + 8) * Win.Scale),
+          ContentY + Round(5 * Win.Scale),
+          BilServerPro_GetUrl,
+          $00FFAA, Alpha, 0.7);
+      end
+      else if not BilServerPro_IsAuthorized then
+      begin
+        DrawText2D(0,
+          ScaledX + Round((MARGIN + 8) * Win.Scale),
+          ContentY + Round(5 * Win.Scale),
+          GetText('BilServerProBuyText'),
+          $66AAFF, Alpha, 0.7);
+      end;
+      Inc(ContentY, Round((ITEM_HEIGHT + MARGIN) * Win.Scale));
     end;
     
     1: // WORLD окно
@@ -5738,16 +5817,10 @@ begin
   end;
 end;
 
-// Per-drag throttle для SaveConfig.
-// SaveConfig — это write всего .cfg на диск; в горячем пути drag'а это
-// убивало FPS до однозначных цифр на быстрых движениях слайдера. Теперь
-// помечаем "грязный" флаг, на диск пишем не чаще раза в N миллисекунд,
-// и финальный гарантированный save делается в HandleMouseUp (см. ниже).
-const
-  SLIDER_SAVE_THROTTLE_MS = 250;
+// Во время drag слайдера диск не трогаем: только live-значение в RAM.
+// Финальный гарантированный SaveConfig делается в HandleMouseUp (см. ниже).
 var
   SliderDirty: Boolean = False;
-  LastSliderSaveTime: Cardinal = 0;
 
 // Старт drag'а — фиксируем якорь курсора и текущее value слайдера.
 // Вызывается со всех HandleClick-сайтов вместо «голого» IsDragging := True;
@@ -5768,7 +5841,6 @@ end;
 procedure HandleSliderDrag(X: Integer; var Slider: TSlider; SliderX: Integer);
 var
   Delta, Range, NewValue, OldValue: Single;
-  CurrentTime: Cardinal;
 begin
   if not Slider.IsDragging then Exit;
 
@@ -5808,16 +5880,9 @@ begin
         WriteFloatToMemory(CameraSensitivityAddr, Settings.CameraSensitivitySlider.Value);
     end;
 
-    // SaveConfig теперь throttled — на диск пишем максимум раз в 250 мс
-    // во время drag, а финальный save точно случится в HandleMouseUp.
+    // В drag'е не пишем cfg: SaveConfig дополнительно трогает per-loco
+    // тексты/картинки, из-за чего при настройке появляются микрофризы.
     SliderDirty := True;
-    CurrentTime := GetTickCount;
-    if (CurrentTime - LastSliderSaveTime) > SLIDER_SAVE_THROTTLE_MS then
-    begin
-      SaveConfig;
-      LastSliderSaveTime := CurrentTime;
-      SliderDirty := False;
-    end;
 
     if (@Slider <> @Settings.BrightnessSlider) then
       ApplySettingsThrottled;
@@ -6356,13 +6421,14 @@ begin
             case I_PFX of
               0: begin Settings.FXAAEnable     := not Settings.FXAAEnable;     InitFXAAEnable     := Settings.FXAAEnable;     end;
               1: begin Settings.BloomEnable    := not Settings.BloomEnable;    InitBloomEnable    := Settings.BloomEnable;    end;
-              2: begin Settings.TonemapEnable  := not Settings.TonemapEnable;  InitTonemapEnable  := Settings.TonemapEnable;  end;
-              3: begin Settings.SharpenEnable  := not Settings.SharpenEnable;  InitSharpenEnable  := Settings.SharpenEnable;  end;
-              4: begin Settings.VignetteEnable := not Settings.VignetteEnable; InitVignetteEnable := Settings.VignetteEnable; end;
-              5: begin Settings.GrainEnable    := not Settings.GrainEnable;    InitGrainEnable    := Settings.GrainEnable;    end;
-              6: begin Settings.SSAOEnable     := not Settings.SSAOEnable;     InitSSAOEnable     := Settings.SSAOEnable;     end;
-              7: begin Settings.FogEnable      := not Settings.FogEnable;      InitFogEnable      := Settings.FogEnable;      end;
-              8: begin Settings.DOFEnable      := not Settings.DOFEnable;      InitDOFEnable      := Settings.DOFEnable;      end;
+              2: begin Settings.BloomFogSuppress := not Settings.BloomFogSuppress; InitBloomFogSuppress := Settings.BloomFogSuppress; end;
+              3: begin Settings.TonemapEnable  := not Settings.TonemapEnable;  InitTonemapEnable  := Settings.TonemapEnable;  end;
+              4: begin Settings.SharpenEnable  := not Settings.SharpenEnable;  InitSharpenEnable  := Settings.SharpenEnable;  end;
+              5: begin Settings.VignetteEnable := not Settings.VignetteEnable; InitVignetteEnable := Settings.VignetteEnable; end;
+              6: begin Settings.GrainEnable    := not Settings.GrainEnable;    InitGrainEnable    := Settings.GrainEnable;    end;
+              7: begin Settings.SSAOEnable     := not Settings.SSAOEnable;     InitSSAOEnable     := Settings.SSAOEnable;     end;
+              8: begin Settings.FogEnable      := not Settings.FogEnable;      InitFogEnable      := Settings.FogEnable;      end;
+              9: begin Settings.DOFEnable      := not Settings.DOFEnable;      InitDOFEnable      := Settings.DOFEnable;      end;
             end;
             SaveConfig;
             Exit;
@@ -6426,6 +6492,37 @@ begin
         BilServer_Stop
       else
         BilServer_Start;
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+    if BilServerRunning then
+      Inc(ContentY, (ITEM_HEIGHT + MARGIN) * BilServerIPCount);
+
+    // BIL-V Server Pro toggle:
+    //   нет DLL или нет лицензии → открываем Telegram (купить);
+    //   есть лицензия → запускаем/останавливаем PRO-сервер.
+    if InRect(X, Y, RenderWindow.X + MARGIN, ContentY, 250, ITEM_HEIGHT) then
+    begin
+      if (not BilServerPro_IsLoaded) or (not BilServerPro_IsAuthorized) then
+      begin
+        ShellExecute(0, 'open', 'https://t.me/raildrive', nil, nil, SW_SHOWNORMAL);
+      end
+      else
+      begin
+        if BilServerPro_IsRunning then
+          BilServerPro_Stop
+        else
+          BilServerPro_Start;
+      end;
+      Exit;
+    end;
+    Inc(ContentY, ITEM_HEIGHT + MARGIN);
+
+    // Клик по строке "Купить: t.me/raildrive" — только если PRO ещё не куплен.
+    if (not BilServerPro_IsAuthorized) and
+       InRect(X, Y, RenderWindow.X + MARGIN + 8, ContentY, 250, ITEM_HEIGHT) then
+    begin
+      ShellExecute(0, 'open', 'https://t.me/raildrive', nil, nil, SW_SHOWNORMAL);
       Exit;
     end;
   end;
@@ -6711,7 +6808,6 @@ begin
   begin
     SaveConfig;
     SliderDirty := False;
-    LastSliderSaveTime := GetTickCount;
   end;
 
   // Слайдеры редактора кастомных текстов

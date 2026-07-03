@@ -1618,10 +1618,10 @@ begin
   // Получаем полный путь к исполняемому файлу текущего процесса
   if GetModuleFileName(0, ModuleName, MAX_PATH) > 0 then
   begin
-    ProcessName := ExtractFileName(string(ModuleName));
+    ProcessName := LowerCase(ExtractFileName(string(ModuleName)));
     
-    // Проверяем, является ли это процессом Launcher.exe (без учета регистра)
-    Result := LowerCase(ProcessName) = 'launcher.exe';
+    // Проверяем, является ли это процессом Launcher.exe или ZDSimulator.exe
+    Result := (ProcessName = 'launcher.exe') or (ProcessName = 'zdsimulator.exe');
   end;
 end;
 {--------------------------------------------------------------------}
