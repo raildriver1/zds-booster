@@ -69,6 +69,61 @@ uses DrawFunc3D;
 // context init (probed via glGetFloatv since the dglOpenGL extension flag is
 // unreliable on 3.0+ contexts). GL_TEXTURE_LOD_BIAS is core in GL 1.4, so we
 // don't gate it on a flag.
+function NormalizeTextureMinFilter(Filter: GLint; UseMipMapping: boolean): GLint;
+begin
+  case Filter of
+    GL_NEAREST:
+      if UseMipMapping then
+        Result := GL_NEAREST_MIPMAP_NEAREST
+      else
+        Result := GL_NEAREST;
+    GL_LINEAR:
+      if UseMipMapping then
+        Result := GL_LINEAR_MIPMAP_LINEAR
+      else
+        Result := GL_LINEAR;
+    GL_NEAREST_MIPMAP_NEAREST, GL_NEAREST_MIPMAP_LINEAR,
+    GL_LINEAR_MIPMAP_NEAREST, GL_LINEAR_MIPMAP_LINEAR:
+      if UseMipMapping then
+        Result := Filter
+      else if (Filter = GL_NEAREST_MIPMAP_NEAREST) or (Filter = GL_NEAREST_MIPMAP_LINEAR) then
+        Result := GL_NEAREST
+      else
+        Result := GL_LINEAR;
+  else
+    if UseMipMapping then
+      Result := GL_LINEAR_MIPMAP_LINEAR
+    else
+      Result := GL_LINEAR;
+  end;
+end;
+
+function NormalizeTextureMagFilter(Filter: GLint): GLint;
+begin
+  if Filter = GL_NEAREST then
+    Result := GL_NEAREST
+  else
+    Result := GL_LINEAR;
+end;
+
+procedure ApplyDefaultTextureParameters(Target: GLenum; UseMipMapping: boolean);
+var
+  MinFilter: GLint;
+  MagFilter: GLint;
+begin
+  MinFilter := NormalizeTextureMinFilter(DefaultTextureMinFilter, UseMipMapping);
+  MagFilter := NormalizeTextureMagFilter(DefaultTextureMagFilter);
+
+  if not _TextureFiltering then
+  begin
+    MinFilter := GL_NEAREST;
+    MagFilter := GL_NEAREST;
+  end;
+
+  glTexParameteri(Target, GL_TEXTURE_MIN_FILTER, MinFilter);
+  glTexParameteri(Target, GL_TEXTURE_MAG_FILTER, MagFilter);
+end;
+
 procedure ApplyAnisotropy;
 begin
   if ActualMaxAniso > 1.0 then
@@ -223,8 +278,7 @@ begin
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, Width, Height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0)
   else
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, Width, Height, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  ApplyDefaultTextureParameters(GL_TEXTURE_2D, false);
   WriteTextureInfo(Texture,Width,Height,0,4);
   result:=Texture;
   glBindTexture(GL_TEXTURE_2D, 0);
@@ -345,8 +399,7 @@ begin
  glTexImage2D(GL_TEXTURE_2D, 0, comp, Size, Size, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, 0);
  WriteTextureInfo(Texture,Size,Size,0,5);
  glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
- glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
- glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+ ApplyDefaultTextureParameters(GL_TEXTURE_2D, false);
  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
  glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_TEXTURE_MODE_ARB, GL_LUMINANCE);
@@ -461,25 +514,7 @@ begin
 
   if NeedResize then FreeMem(pData2);
 
-  if MipMapping then
-  begin
-
-   if _TextureFiltering then
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR_MIPMAP_LINEAR)
-     else glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST_MIPMAP_NEAREST);
-
-  end else
-  begin
-
-  if _TextureFiltering then
-   glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR) else
-   glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-
-  end;
-
-  if _TextureFiltering then
-  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR) else
-  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+  ApplyDefaultTextureParameters(GL_TEXTURE_2D, MipMapping);
 
   if MipMapping and _TextureFiltering then ApplyAnisotropy;
 
@@ -1066,9 +1101,7 @@ s := TMemoryStream.Create;
 
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0 );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, ch.num_mipmaps );
-
- 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	ApplyDefaultTextureParameters(GL_TEXTURE_2D, true);
 
 	ApplyAnisotropy;
 

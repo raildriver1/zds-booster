@@ -43,7 +43,7 @@ const
 
   // Тот же базовый pointer, что и в RA3Physics (ADDR_LOCS_BASE_PTR).
   // По адресу лежит DWORD = указатель на heap-блок LOCSECTIONS.
-  LOCS_PTR_SLOT = $004AAEA0;
+  LOCS_PTR_SLOT = $0074AEA0;
 
   // Offsets в LOCSECTIONS структуре (в байтах).
   // Из IDA: `*((double *)&LOCSECTIONS + 3..5)` = смещения 24/32/40 в byte.

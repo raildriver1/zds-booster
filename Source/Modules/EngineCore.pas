@@ -422,12 +422,13 @@ end;
 
 procedure SetTextureLODBias(x : integer); stdcall;
 begin
-   x := 0;
+  InitLODBias := x;
 end;
 
 procedure SetTextureDefaultFilteringParameters(x: integer; y: integer); stdcall;
 begin
-   x := x + y;
+  DefaultTextureMinFilter := x;
+  DefaultTextureMagFilter := y;
 end;
 
 {Timer-------------------------------------------------------------------------}

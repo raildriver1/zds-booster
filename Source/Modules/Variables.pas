@@ -101,6 +101,8 @@ var
   InitFullscreen : boolean =  true;
   _TextureCompression : boolean = false;
   _TextureFiltering : boolean = true;
+  DefaultTextureMinFilter : GLint = GL_LINEAR;
+  DefaultTextureMagFilter : GLint = GL_LINEAR;
   _AllowAutoPause : boolean = true;
   _UseVBO         : boolean = true;
   _UseFBO         : boolean = true;
