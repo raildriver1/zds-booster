@@ -23,6 +23,8 @@ unit Variables;
 interface
 uses Windows,IniFile,OpenGL;
 
+function DetectZDSVersion: Integer;
+
 type
 
 TVertex=record X, Y, Z: single; end;
@@ -82,9 +84,11 @@ const
   EngineLog = 'DGLEngine_Log.txt';
 
 var
+  ZDSVersion: Integer = 0; // 54=54.006, 55=55.008; 0=not detected
+
   WND_TITLE : PAnsiChar = ENGINE_LABEL;
   IniFileName : string = 'Settings.ini';
-  PROCESS_INTERVAL : byte = 20;
+  PROCESS_INTERVAL : byte = 1;
   h_Wnd  : HWND;
   h_DC   : HDC;
   h_RC   : HGLRC;
@@ -250,4 +254,15 @@ var
   glDraw, ProcessGame, LoadTextures, DestroyAll: procedure;
 
 implementation
+
+function DetectZDSVersion: Integer;
+begin
+  if PByte($00400000 + $11D)^ = $68 then
+    Result := 55
+  else if PByte($00400000 + $11D)^ = $9C then
+    Result := 54
+  else
+    Result := 0;
+end;
+
 end.

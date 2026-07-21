@@ -41,23 +41,21 @@ uses Variables, DrawFunc3D;
 const
   FWA_LOG = 'DGLEngine_Log.txt';
 
-  // Тот же базовый pointer, что и в RA3Physics (ADDR_LOCS_BASE_PTR).
-  // По адресу лежит DWORD = указатель на heap-блок LOCSECTIONS.
-  LOCS_PTR_SLOT = $0074AEA0;
-
   // Offsets в LOCSECTIONS структуре (в байтах).
   // Из IDA: `*((double *)&LOCSECTIONS + 3..5)` = смещения 24/32/40 в byte.
   OFF_LOCO_WORLD_X = 24;
   OFF_LOCO_WORLD_Y = 32;
   OFF_LOCO_WORLD_Z = 40;
 
-  // Адреса freecam (из DrawFunc3D.ADDR_X/Y/Z).
-  FREECAM_X = $9008028;
-  FREECAM_Y = $900802C;
-  FREECAM_Z = $9008030;
-
   // Hotkey toggle delay (мс).
   TOGGLE_KEY_DELAY = 250;
+
+var
+  // Версионно-зависимые адреса
+  LOCS_PTR_SLOT: Cardinal = $0074AEA0;
+  FREECAM_X: Cardinal = $9008028;
+  FREECAM_Y: Cardinal = $900802C;
+  FREECAM_Z: Cardinal = $9008030;
 
 var
   WorldAnchorInitialized: Boolean = False;
@@ -211,4 +209,19 @@ begin
   PSingle(FREECAM_Z)^ := FZ - DZ;
 end;
 
+initialization
+  if ZDSVersion = 54 then
+  begin
+    LOCS_PTR_SLOT := 0; // не найдено
+    FREECAM_X := 0;
+    FREECAM_Y := 0;
+    FREECAM_Z := 0;
+  end
+  else
+  begin
+    LOCS_PTR_SLOT := $0074AEA0;
+    FREECAM_X := $9008028;
+    FREECAM_Y := $900802C;
+    FREECAM_Z := $9008030;
+  end;
 end.

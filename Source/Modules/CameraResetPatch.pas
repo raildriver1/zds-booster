@@ -25,13 +25,12 @@ procedure UpdateCameraResetSuppress;
 
 implementation
 
-uses RA3, CheatMenu;
+uses RA3, CheatMenu, Variables;
 
 const
   CRP_LOG = 'DGLEngine_Log.txt';
 
   LAUNCHER_BASE = $00400000;
-  PATCH_ADDR    = LAUNCHER_BASE + $324CEC;   // $00724CEC
   PATCH_SIZE    = 6;
 
   // 0F 84 3B 01 00 00 = je Launcher.exe+$324E2D (оригинал)
@@ -48,6 +47,7 @@ var
   SignatureValid:      Boolean = False;
   InstallLogged:       Boolean = False;
   FailLogged:          Boolean = False;
+  PATCH_ADDR:          Cardinal = $00724CEC;
 
 procedure WriteSitebytes(const NewBytes: array of Byte);
 var
@@ -147,5 +147,9 @@ begin
     CurrentlySkipping := False;
   end;
 end;
+
+initialization
+  if ZDSVersion = 54 then
+    PATCH_ADDR := $00708972;
 
 end.

@@ -4254,13 +4254,28 @@ begin
   CustomTextSelectedIdx := -1;
   CustomGroupSelectedIdx := -1;
 
+  // Определение версии ZDSimulator
+  if ZDSVersion = 0 then
+    ZDSVersion := DetectZDSVersion;
+
   // Адреса для угла обзора
-  ViewAngleNopAddr1 := $723909;
-  ViewAngleNopAddr2 := $72384C;
-  ViewAngleSliderAddr := $725C1C;
+  if ZDSVersion = 54 then
+  begin
+    ViewAngleNopAddr2 := $00707500;
+    ViewAngleNopAddr1 := $007075BD;
+    ViewAngleSliderAddr := $0049971C;
+  end else
+  begin
+    ViewAngleNopAddr1 := $723909;
+    ViewAngleNopAddr2 := $72384C;
+    ViewAngleSliderAddr := $725C1C;
+  end;
 
   // Адрес для чувствительности камеры
-  CameraSensitivityAddr := $7229F8;
+  if ZDSVersion = 54 then
+    CameraSensitivityAddr := $007066AC
+  else
+    CameraSensitivityAddr := $7229F8;
 
   // Читаем оригинальные значения
   ReadOriginalViewAngleValues;
@@ -4293,22 +4308,58 @@ begin
   ReverseAddr := $00400000 + $84CA3;
   AdditionalAddr := $00400000 + $85630;
   RadiusAddr := $00400000 + $85F40;
+
+  if ZDSVersion = 54 then
+  begin
+    SpeedXAddr := $00485FE7;
+    AllowedSpeedAddr := $004861E1;
+    ShuntingSpeedAddr := $00486882;
+    TrainSpeedAddr := $0048689C;
+    TimeAddr := $0048696D;
+    NumberAccelAddr := $00486E35;
+    ReverseAddr := $0048615F;
+    AdditionalAddr := $00486AEC;
+    RadiusAddr := $004873FC;
+  end;
   
-  MenuCallAddr := $743B9E;
+  if ZDSVersion = 54 then
+    MenuCallAddr := $007270B2
+  else
+    MenuCallAddr := $743B9E;
   
   // Адреса освещения
-  MainLightAddr := $4942AC;
-  AdditionalLightAddr := $4942B4;
-  SunOrbitAddr := $4942CC;
-  SunHeightAddr := $4942B8;
+  if ZDSVersion = 54 then
+  begin
+    MainLightAddr := $00483CE4;
+    AdditionalLightAddr := $00483CEC;
+    SunOrbitAddr := $00495890;
+    SunHeightAddr := $00483CF0;
+  end else
+  begin
+    MainLightAddr := $4942AC;
+    AdditionalLightAddr := $4942B4;
+    SunOrbitAddr := $4942CC;
+    SunHeightAddr := $4942B8;
+  end;
   
   // Адреса дальности
-  WireAddrs[0] := $494408;
-  WireAddrs[1] := $494414;
-  DistantModelAddr := $494358;
-  TrafficLightAddrs[0] := $48DB9C;
-  TrafficLightAddrs[1] := $48DC1C;
-  TrafficLightAddrs[2] := $48DBA0;
+  if ZDSVersion = 54 then
+  begin
+    WireAddrs[0] := $00495A0C;
+    WireAddrs[1] := $00495A18;
+    DistantModelAddr := $00495970;
+    TrafficLightAddrs[0] := $0048F058;
+    TrafficLightAddrs[1] := $0048F0D8;
+    TrafficLightAddrs[2] := $0048F05C;
+  end else
+  begin
+    WireAddrs[0] := $494408;
+    WireAddrs[1] := $494414;
+    DistantModelAddr := $494358;
+    TrafficLightAddrs[0] := $48DB9C;
+    TrafficLightAddrs[1] := $48DC1C;
+    TrafficLightAddrs[2] := $48DBA0;
+  end;
   
   // Читаем оригинальные значения
   ReadOriginalLightingValues;
@@ -4329,14 +4380,14 @@ begin
   // Инициализация окон с transform анимацией
   RenderWindow.Title := GetText('RenderTitle');
   RenderWindow.X := 50;
-  RenderWindow.Y := 50;
+  RenderWindow.Y := 70;
   RenderWindow.Width := 310;
   RenderWindow.OriginalWidth := 310;
   RenderWindow.Height := 120;
   RenderWindow.Alpha := 0.0;
   RenderWindow.TargetAlpha := 1.0;
   RenderWindow.OriginalX := 50;
-  RenderWindow.OriginalY := 50;
+  RenderWindow.OriginalY := 70;
   RenderWindow.Scale := 0.3;
   RenderWindow.TargetScale := 1.0;
   RenderWindow.TransformProgress := 0.0;
@@ -4352,15 +4403,15 @@ begin
   RenderWindow.SpawnDelay := 0.0;
   
   WorldWindow.Title := GetText('WorldTitle');
-  WorldWindow.X := 350;
-  WorldWindow.Y := 50;
+  WorldWindow.X := 440;
+  WorldWindow.Y := 70;
   WorldWindow.Width := 310;
   WorldWindow.OriginalWidth := 310;
   WorldWindow.Height := 170;
   WorldWindow.Alpha := 0.0;
   WorldWindow.TargetAlpha := 1.0;
-  WorldWindow.OriginalX := 350;
-  WorldWindow.OriginalY := 50;
+  WorldWindow.OriginalX := 440;
+  WorldWindow.OriginalY := 70;
   WorldWindow.Scale := 0.3;
   WorldWindow.TargetScale := 1.0;
   WorldWindow.TransformProgress := 0.0;
@@ -4376,15 +4427,15 @@ begin
   WorldWindow.SpawnDelay := 0.1;
   
   LocomotiveWindow.Title := GetText('LocomotiveTitle');
-  LocomotiveWindow.X := 650;
-  LocomotiveWindow.Y := 50;
+  LocomotiveWindow.X := 830;
+  LocomotiveWindow.Y := 70;
   LocomotiveWindow.Width := 310;
   LocomotiveWindow.OriginalWidth := 310;
   LocomotiveWindow.Height := 100;
   LocomotiveWindow.Alpha := 0.0;
   LocomotiveWindow.TargetAlpha := 1.0;
-  LocomotiveWindow.OriginalX := 650;
-  LocomotiveWindow.OriginalY := 50;
+  LocomotiveWindow.OriginalX := 830;
+  LocomotiveWindow.OriginalY := 70;
   LocomotiveWindow.Scale := 0.3;
   LocomotiveWindow.TargetScale := 1.0;
   LocomotiveWindow.TransformProgress := 0.0;
@@ -4400,15 +4451,15 @@ begin
   LocomotiveWindow.SpawnDelay := 0.2;
   
   MenuWindow.Title := GetText('MenuTitle');
-  MenuWindow.X := 950;
-  MenuWindow.Y := 50;
+  MenuWindow.X := 1220;
+  MenuWindow.Y := 70;
   MenuWindow.Width := 320;
   MenuWindow.OriginalWidth := 320;
   MenuWindow.Height := 200;
   MenuWindow.Alpha := 0.0;
   MenuWindow.TargetAlpha := 1.0;
-  MenuWindow.OriginalX := 950;
-  MenuWindow.OriginalY := 50;
+  MenuWindow.OriginalX := 1220;
+  MenuWindow.OriginalY := 70;
   MenuWindow.Scale := 0.3;
   MenuWindow.TargetScale := 1.0;
   MenuWindow.TransformProgress := 0.0;
@@ -5322,7 +5373,7 @@ begin
   HeaderGradientStart := LerpColor(COLOR_SURFACE_VARIANT, COLOR_SURFACE, 0.5);
 
   // Header background — frosted dark, no harsh borders
-  DrawRectangle2D(ScaledX, ScaledY, ScaledWidth, Round(HEADER_HEIGHT * Win.Scale), HeaderGradientStart, Round(Alpha * 0.92), True);
+  DrawRectangle2D(ScaledX, ScaledY, ScaledWidth, Round(HEADER_HEIGHT * Win.Scale), HeaderGradientStart, Alpha, True);
   // Thin bottom separator
   DrawLine2D(ScaledX, ScaledY + Round(HEADER_HEIGHT * Win.Scale),
              ScaledX + ScaledWidth, ScaledY + Round(HEADER_HEIGHT * Win.Scale),
@@ -5359,7 +5410,7 @@ begin
         SectionHeight := Round(170 * Settings.FreecamSection.AnimProgress * Win.Scale);
 
         DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
-          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True);
 
         if SectionHeight > Round(50 * Win.Scale) then
         begin
@@ -5404,7 +5455,7 @@ begin
         SectionHeight := Round(200 * Settings.MainCameraSection.AnimProgress * Win.Scale);
 
         DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
-          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True);
 
         if SectionHeight > Round(40 * Win.Scale) then
         begin
@@ -5463,7 +5514,7 @@ begin
         SectionHeight := Round(GetPostFXContentHeight * Settings.PostFXSection.AnimProgress * Win.Scale);
 
         DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
-          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True);
 
         if SectionHeight > Round(POSTFX_PAD_TOP * Win.Scale) then
           DrawPostFXToggles(
@@ -5489,7 +5540,7 @@ begin
           SectionHeight := SectionHeight + Round(30 * Settings.FreeWalkSection.AnimProgress * Win.Scale);
 
         DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
-          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True);
 
         // Коллизия DMD checkbox
         if SectionHeight > Round(10 * Win.Scale) then
@@ -5577,7 +5628,7 @@ begin
         SectionHeight := Round(180 * Settings.MaxVisibleDistanceSection.AnimProgress * Win.Scale);
 
         DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
-          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True);
 
         if SectionHeight > Round(40 * Win.Scale) then
         begin
@@ -5616,7 +5667,7 @@ begin
           SectionHeight := SectionHeight + Round(30 * Settings.NewSkySection.AnimProgress * Win.Scale);
 
         DrawRectangle2D(ScaledX + Round(POSTFX_BG_X * Win.Scale), ContentY,
-          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Round(Alpha * 0.6), True);
+          Round(POSTFX_BG_W * Win.Scale), SectionHeight, COLOR_SURFACE, Alpha, True);
 
         // Мега реализм checkbox
         if SectionHeight > Round(10 * Win.Scale) then
@@ -5715,7 +5766,7 @@ var
   InfoText: string;
   R: Integer;
 begin
-  Alpha := Round(RenderWindow.Alpha * 180);
+  Alpha := 255;
   if Alpha <= 0 then Exit;
 
   InfoText := GetText('InfoText');
@@ -5726,15 +5777,15 @@ begin
   R := BarHeight div 2;
 
   // Pill-shaped background (frosted dark)
-  DrawCircle2D_Fill(BarX + R, BarY + R, R, COLOR_SURFACE_VARIANT, Round(Alpha * 0.85));
-  DrawCircle2D_Fill(BarX + BarWidth - R, BarY + R, R, COLOR_SURFACE_VARIANT, Round(Alpha * 0.85));
-  DrawRectangle2D(BarX + R, BarY, BarWidth - BarHeight, BarHeight, COLOR_SURFACE_VARIANT, Round(Alpha * 0.85), True);
+  DrawCircle2D_Fill(BarX + R, BarY + R, R, COLOR_SURFACE_VARIANT, Alpha);
+  DrawCircle2D_Fill(BarX + BarWidth - R, BarY + R, R, COLOR_SURFACE_VARIANT, Alpha);
+  DrawRectangle2D(BarX + R, BarY, BarWidth - BarHeight, BarHeight, COLOR_SURFACE_VARIANT, Alpha, True);
 
   // Accent dot
   DrawCircle2D_Fill(BarX + 18, BarY + BarHeight div 2, 4, COLOR_PRIMARY, Alpha);
 
   // Text
-  DrawModernText(BarX + 30, BarY + 8, InfoText, COLOR_ON_SURFACE, Round(Alpha * 0.9), 0.75);
+  DrawModernText(BarX + 30, BarY + 8, InfoText, COLOR_ON_SURFACE, 255, 0.75);
 end;
 
 procedure DrawCheatMenu; stdcall;
@@ -5801,7 +5852,7 @@ begin
     // Современное затемнение фона
     if Settings.BrightnessSlider.Value > 0 then
     begin
-      BackgroundAlpha := Round(Settings.BrightnessSlider.Value * RenderWindow.Alpha * 0.7);
+      BackgroundAlpha := Round(Settings.BrightnessSlider.Value * RenderWindow.Alpha * 1.0);
       OverlayColor := LerpColor(COLOR_BACKGROUND, COLOR_SHADOW, 0.3);
       DrawRectangle2D(0, 0, InitResX, InitResY, OverlayColor, BackgroundAlpha, True);
     end;
@@ -5902,6 +5953,8 @@ begin
   begin
     RenderWindow.X := X - RenderWindow.DragOffsetX;
     RenderWindow.Y := Y - RenderWindow.DragOffsetY;
+    if RenderWindow.Y < 0 then
+      RenderWindow.Y := 0;
     RenderWindow.OriginalX := RenderWindow.X;
     RenderWindow.OriginalY := RenderWindow.Y;
     RenderWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
@@ -5924,6 +5977,8 @@ begin
   begin
     WorldWindow.X := X - WorldWindow.DragOffsetX;
     WorldWindow.Y := Y - WorldWindow.DragOffsetY;
+    if WorldWindow.Y < 0 then
+      WorldWindow.Y := 0;
     WorldWindow.OriginalX := WorldWindow.X;
     WorldWindow.OriginalY := WorldWindow.Y;
     WorldWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
@@ -5946,6 +6001,8 @@ begin
   begin
     LocomotiveWindow.X := X - LocomotiveWindow.DragOffsetX;
     LocomotiveWindow.Y := Y - LocomotiveWindow.DragOffsetY;
+    if LocomotiveWindow.Y < 0 then
+      LocomotiveWindow.Y := 0;
     LocomotiveWindow.OriginalX := LocomotiveWindow.X;
     LocomotiveWindow.OriginalY := LocomotiveWindow.Y;
     LocomotiveWindow.TargetDragWidthExpansion := DRAG_EXPANSION;
@@ -5968,6 +6025,8 @@ begin
   begin
     MenuWindow.X := X - MenuWindow.DragOffsetX;
     MenuWindow.Y := Y - MenuWindow.DragOffsetY;
+    if MenuWindow.Y < 0 then
+      MenuWindow.Y := 0;
     MenuWindow.OriginalX := MenuWindow.X;
     MenuWindow.OriginalY := MenuWindow.Y;
     MenuWindow.TargetDragWidthExpansion := DRAG_EXPANSION;

@@ -73,10 +73,10 @@ function  IsSpeedHookActive: Boolean;
 implementation
 
 uses
-  Windows, SysUtils, Math;
+  Windows, SysUtils, Math, Variables;
 
 // ============================================================================
-const
+var
   // ── ВХОДЫ (читаем напрямую) ─────────────────────────────────────────────
   ADDR_KONTROLLER      : Cardinal = $091D5B05;  // byte: позиция КМ (0..5, 251..255)
   ADDR_REVERS_DIRECT   : Cardinal = $0538BFD6;  // byte: реверсор (0/1/255 = neutral/fwd/bwd)
@@ -89,12 +89,11 @@ const
   ADDR_SILATYAGI       : Cardinal = $09007CD8;  // double: сила тяги в Ньютонах (8 байт)
 
   // ── СТАРЫЕ ПОЙНТЕРНЫЕ АДРЕСА (оставлены как fallback) ───────────────────
-  // У меня раньше revers через $0034B28C → +$1C попадал в 0x9110D98 — это
-  // НЕ та переменная, что использует физика. Реальный revers по абсолютному
-  ADDR_LOCS_BASE_PTR   : Cardinal = $400000 + $0034AEA0;  // legacy: LOCSECTIONS[36] (НЕ физическая F)
+  ADDR_LOCS_BASE_PTR   : Cardinal = $400000 + $0034AEA0;  // legacy: LOCSECTIONS[36]
   ADDR_REVERS_BASE_PTR : Cardinal = $400000 + $0034B28C;
   ADDR_SPEED_BASE_PTR  : Cardinal = $400000 + $0034B41C;
 
+const
   OFF_LOCS_36  = $B4;
   OFF_REVERS   = $1C;
   OFF_SPEEDKPH = $3C;
@@ -263,10 +262,10 @@ var
   SpeedHookInstalled: Boolean = False;
   SpeedHook_Saved:   array[0..27] of Byte;
 
-const
+var
   ADDR_SPEED_INTEG     : Cardinal = $400000 + $00345F00;  // начало секции v+=a/dt
   ADDR_SPEED_INTEG_END : Cardinal = $400000 + $00345F1B;  // следующая инструкция (после fstp + wait)
-  SPEED_INTEG_LEN      = 28;                              // байт от F00 до F1B
+  SPEED_INTEG_LEN      : Cardinal = 28;                              // байт от F00 до F1B
 
 var
   // Логирование
@@ -686,9 +685,9 @@ end;
 
 // Адрес позиции крана 395.
 // 1,2 = поездное (отпуск), 3,4 = перекрыша, 5,6,50 = торможение.
-const
+var
   ADDR_KRAN395  : Cardinal = $090043A0;
-  V_HYDRO_BRAKE_OFF_KPH : Double = 5.0;  // RRS MPSU: ниже этой v гидротормоз отключается
+  V_HYDRO_BRAKE_OFF_KPH : Double = 5.0;
 
 function ReadKran395Byte: Byte;
 begin
@@ -1205,6 +1204,7 @@ var
   oldProtect, dummy: DWORD;
 begin
   if SpeedHookInstalled then Exit;
+  if ZDSVersion = 54 then Exit;
   target := Pointer(ADDR_SPEED_INTEG);
   if not VirtualProtect(target, SPEED_INTEG_LEN, PAGE_EXECUTE_READWRITE, oldProtect) then
     Exit;
@@ -1235,6 +1235,7 @@ var
   oldProtect, dummy: DWORD;
 begin
   if not SpeedHookInstalled then Exit;
+  if ZDSVersion = 54 then Exit;
   target := Pointer(ADDR_SPEED_INTEG);
   if not VirtualProtect(target, SPEED_INTEG_LEN, PAGE_EXECUTE_READWRITE, oldProtect) then
     Exit;
@@ -1250,6 +1251,40 @@ end;
 function IsSpeedHookActive: Boolean;
 begin
   Result := SpeedHookInstalled;
+end;
+
+procedure InitRA3PhysicsAddrs;
+begin
+  if ZDSVersion = 54 then
+  begin
+    ADDR_REVERS_DIRECT := $0536FA2E;
+    ADDR_SPEED_DIRECT  := $0536FCE0;
+    ADDR_KONTROLLER    := 0;
+    ADDR_BV            := 0;
+    ADDR_PANTOGRAF     := 0;
+    ADDR_SILATYAGI     := 0;
+    ADDR_LOCS_BASE_PTR := 0;
+    ADDR_REVERS_BASE_PTR := 0;
+    ADDR_SPEED_BASE_PTR := 0;
+    ADDR_SPEED_INTEG   := 0;
+    ADDR_SPEED_INTEG_END := 0;
+    ADDR_KRAN395       := 0;
+  end
+  else
+  begin
+    ADDR_REVERS_DIRECT := $0538BFD6;
+    ADDR_SPEED_DIRECT  := $0538C28C;
+    ADDR_KONTROLLER    := $091D5B05;
+    ADDR_BV            := $091D5B06;
+    ADDR_PANTOGRAF     := $091D5B07;
+    ADDR_SILATYAGI     := $09007CD8;
+    ADDR_LOCS_BASE_PTR := $400000 + $0034AEA0;
+    ADDR_REVERS_BASE_PTR := $400000 + $0034B28C;
+    ADDR_SPEED_BASE_PTR := $400000 + $0034B41C;
+    ADDR_SPEED_INTEG   := $400000 + $00345F00;
+    ADDR_SPEED_INTEG_END := $400000 + $00345F1B;
+    ADDR_KRAN395       := $090043A0;
+  end;
 end;
 
 end.

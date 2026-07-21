@@ -353,6 +353,15 @@ var
   LastMousePos: TPoint;
 
   FloatValueAddr: Cardinal = $00400000 + $8D1072C; // Адрес float значения
+  _dlgMode: Cardinal = $00400000 + $349888;
+  _dlgCommandBlock: Cardinal = $00400000 + $34988C;
+  _dlgVk: Cardinal = $00400000 + $4F8D940;
+  _dlgPathNumber: Cardinal = $00400000 + $4F8D958;
+  _dlgPathDirection: Cardinal = $00400000 + $349890;
+  _dlgRb: Cardinal = $00400000 + $349914;
+  _dlgRbs: Cardinal = $00400000 + $349910;
+  _dlgAls: Cardinal = $00400000 + $8C07ECC;
+  _dlgPressureTm: Cardinal = $00400000 + $8D10738;
   LastFloatValue: Single = -999.0; // Для отслеживания изменений
   FloatAsInt: Integer;
   FloatStr: string;
@@ -564,6 +573,7 @@ var
   CommandBuffer: string = '';
   PointerAddress: Cardinal = $900421C;
   WindowOpenAddress: Cardinal = $00400000 + $4F8D915;
+  _dlgPressureAltPtr: Cardinal = $00400000 + $8D10D78;
 
   // Массивы для отслеживания состояний клавиш
   PreviousKeyStates: array[0..11] of Byte;
@@ -7590,7 +7600,7 @@ begin
   
   baseAddr := $900805C;
   currentPiketAddr := $749A0C;
-  trafficLightAddr := $400000 + $8C07ECC;
+  trafficLightAddr := _dlgAls;
   oneDirection := PByte(Pointer($749818))^ = 1;
   currentPiket := PInteger(Pointer(currentPiketAddr))^;
   trafficLightState := PByte(Pointer(trafficLightAddr))^;
@@ -9149,7 +9159,7 @@ var
 
 function GetStateBLOCK: Byte;
 begin
-  Result := PByte($400000 + $34988C)^;
+  Result := PByte(_dlgCommandBlock)^;
 end;
 
 // Функция записи байта в память
@@ -9282,11 +9292,11 @@ begin
            AddToLogFile(EngineLog, '[ВВОД] ✓ Первое число корректное: ' + IntToStr(Number));
            
            // Записываем введенное значение по адресу 0x400000 + 0x4F8D958
-           WriteByteToMemory(Pointer($400000 + $4F8D958), Byte(Number));
-           AddToLogFile(EngineLog, '[ВВОД] ✓ Записано значение ' + IntToStr(Number) + ' по адресу 0x' + IntToHex($400000 + $4F8D958, 8));
+           WriteByteToMemory(Pointer(_dlgPathNumber), Byte(Number));
+           AddToLogFile(EngineLog, '[ВВОД] ✓ Записано значение ' + IntToStr(Number) + ' по адресу 0x' + IntToHex(_dlgPathNumber, 8));
            
            // Записываем 21 и переходим к следующему состоянию
-           WriteByteToMemory(Pointer($400000 + $34988C), 21);
+           WriteByteToMemory(Pointer(_dlgCommandBlock), 21);
            ButtonPState := 2;
            InputBuffer := '';
            AddToLogFile(EngineLog, '[ВВОД] ✓ Ожидаем второе число');
@@ -9303,11 +9313,11 @@ begin
            AddToLogFile(EngineLog, '[ВВОД] ✓ Второе число корректное: ' + IntToStr(Number));
            
            // Записываем 0 или 1 по адресу 0x400000 + 0x349890
-           WriteByteToMemory(Pointer($400000 + $349890), Byte(Number));
-           AddToLogFile(EngineLog, '[ВВОД] ✓ Записано значение ' + IntToStr(Number) + ' по адресу 0x' + IntToHex($400000 + $349890, 8));
+           WriteByteToMemory(Pointer(_dlgPathDirection), Byte(Number));
+           AddToLogFile(EngineLog, '[ВВОД] ✓ Записано значение ' + IntToStr(Number) + ' по адресу 0x' + IntToHex(_dlgPathDirection, 8));
            
            // Записываем 0 и завершаем процедуру
-           WriteByteToMemory(Pointer($400000 + $34988C), 0);
+           WriteByteToMemory(Pointer(_dlgCommandBlock), 0);
            ButtonPState := 0;
            InputBuffer := '';
            AddToLogFile(EngineLog, '[ВВОД] ✓ Процедура завершена');
@@ -9732,7 +9742,7 @@ begin
     begin
       // Команда К7 - переход в состояние 10 (НОМЕР МАШИНИСТА)
       AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К7 - НОМЕР МАШИНИСТА');
-      WriteByteToMemory(Pointer($400000 + $34988C), 10);
+      WriteByteToMemory(Pointer(_dlgCommandBlock), 10);
       InputBuffer := '';
       AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 10');
     end
@@ -9740,7 +9750,7 @@ begin
     begin
       // Команда К70 - переход в состояние 70 + запись в память
       AddToLogFile(EngineLog, '[К-ВВОД] ✓ Команда К70');
-      WriteByteToMemory(Pointer($400000 + $34988C), 70);
+      WriteByteToMemory(Pointer(_dlgCommandBlock), 70);
       WriteByteToMemory(Pointer($0538D95A), 0);
       InputBuffer := '';
       AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход в состояние 70, записан 0 в 0x0538D95A');
@@ -9758,7 +9768,7 @@ begin
     begin
       // Неизвестная команда - сбрасываем в состояние 0
       AddToLogFile(EngineLog, '[К-ВВОД] ✗ Неизвестная команда: "' + InputBuffer + '", сброс');
-      WriteByteToMemory(Pointer($400000 + $34988C), 0);
+      WriteByteToMemory(Pointer(_dlgCommandBlock), 0);
       InputBuffer := '';
       AddToLogFile(EngineLog, '[К-ВВОД] ✓ Сброс в состояние 0');
     end;
@@ -9801,13 +9811,13 @@ begin
     if currentState = 19 then
     begin
       // После 19 переходим к 0
-      WriteByteToMemory(Pointer($400000 + $34988C), 0);
+      WriteByteToMemory(Pointer(_dlgCommandBlock), 0);
       AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход с 19 на 0');
     end
     else
     begin
       // Увеличиваем состояние на 1
-      WriteByteToMemory(Pointer($400000 + $34988C), currentState + 1);
+      WriteByteToMemory(Pointer(_dlgCommandBlock), currentState + 1);
       AddToLogFile(EngineLog, '[К-ВВОД] ✓ Переход с ' + IntToStr(currentState) + ' на ' + IntToStr(currentState + 1));
     end;
     Exit;
@@ -9837,13 +9847,13 @@ begin
   
   try
     // Существующая логика - записываем 0 по адресу 0x400000 + 0x4F8D940
-    WriteByteToMemory(Pointer($400000 + $4F8D940), 0);
-    AddToLogFile(EngineLog, '[КНОПКА ВК] ✓ Записан 0 по адресу 0x' + IntToHex($400000 + $4F8D940, 8));
+    WriteByteToMemory(Pointer(_dlgVk), 0);
+    AddToLogFile(EngineLog, '[КНОПКА ВК] ✓ Записан 0 по адресу 0x' + IntToHex(_dlgVk, 8));
     
     // НОВАЯ ЛОГИКА: проверяем условия для записи в 0x538D940
     alsValue := GetALS;
-    addr349914 := PByte($400000 + $349914)^;
-    addr349910 := PByte($400000 + $349910)^;
+    addr349914 := PByte(_dlgRb)^;
+    addr349910 := PByte(_dlgRbs)^;
     
     AddToLogFile(EngineLog, '[КНОПКА ВК] Проверка условий: GetALS=' + IntToStr(alsValue) + 
                            ', addr349914=' + IntToStr(addr349914) + 
@@ -9853,7 +9863,7 @@ begin
     if (alsValue = 2) and (addr349914 = 1) and (addr349910 = 1) then
     begin
       // Все условия выполнены - записываем 1 по адресу 0x538D940
-      WriteByteToMemory(Pointer($538D940), 1);
+      WriteByteToMemory(Pointer(_dlgVk), 1);
       AddToLogFile(EngineLog, '[КНОПКА ВК] ✓ Условия выполнены! Записана 1 по адресу 0x538D940');
     end
     else
@@ -10170,7 +10180,7 @@ var
 begin
   try
     // Читаем текущее состояние из памяти
-    currentRMPState := PByte($00400000 + $349888)^;
+    currentRMPState := PByte(_dlgMode)^;
     
     if currentRMPState = 2 then
     begin
@@ -10214,7 +10224,7 @@ begin
     UpdateRMPBlink;
     
     // Читаем байт по адресу BaseAddress + $349888
-    b := PByte($00400000 + $349888)^;
+    b := PByte(_dlgMode)^;
     case b of
       0: Result := 'П';
       1: Result := 'М';
@@ -12661,7 +12671,7 @@ begin
 
 
   // Получаем состояние основного светофора
-  mainTrafficLight := PByte(Pointer($400000 + $8C07ECC))^;
+  mainTrafficLight := PByte(Pointer(_dlgAls))^;
 
   // Показываем блоки ТОЛЬКО при mainTrafficLight == 5
   if (mainTrafficLight = 5) and (als_en_state) and (PByte($905B754)^ = 0) then
@@ -13074,5 +13084,39 @@ begin
 
   Result := count;
 end;
+
+initialization
+  if ZDSVersion = 54 then
+  begin
+    _dlgMode := $00400000 + $32CA84;
+    _dlgCommandBlock := $00400000 + $32CA88;
+    _dlgVk := $00400000 + $4F711B8;
+    _dlgPathNumber := $00400000 + $4F711D0;
+    _dlgPathDirection := $00400000 + $32CA8C;
+    _dlgRb := $00400000 + $32CB08;
+    _dlgRbs := $00400000 + $32CB04;
+    _dlgAls := $00400000 + $8BEB744;
+    _dlgPressureTm := $00400000 + $8CF3FA8;
+    _dlgPressureAltPtr := $00400000 + $8CF45D0;
+    FloatValueAddr := 0;
+    PointerAddress := 0;
+    WindowOpenAddress := 0;
+  end
+  else
+  begin
+    _dlgMode := _dlgMode;
+    _dlgCommandBlock := $00400000 + $34988C;
+    _dlgVk := $00400000 + $4F8D940;
+    _dlgPathNumber := $00400000 + $4F8D958;
+    _dlgPathDirection := $00400000 + $349890;
+    _dlgRb := $00400000 + $349914;
+    _dlgRbs := $00400000 + $349910;
+    _dlgAls := $00400000 + $8C07ECC;
+    _dlgPressureTm := $00400000 + $8D10738;
+    _dlgPressureAltPtr := $00400000 + $8D10D78;
+    FloatValueAddr := $00400000 + $8D1072C;
+    PointerAddress := $900421C;
+    WindowOpenAddress := $00400000 + $4F8D915;
+  end;
 
 end.

@@ -48,6 +48,9 @@ function GetSpeedTargetByTRACK_NextRange: Integer;
 
 implementation
 
+uses
+  Variables;
+
 const
   BaseAddress: Cardinal = $00400000;
 
@@ -58,6 +61,39 @@ var
   CachedRouteValue: string = '';
   CachedFileName: string = '';
   LastSettingsCheck: Cardinal = 0;
+
+// Версионно-зависимые RVA-смещения
+var
+  _speedLimit,
+  _speed,
+  _targetSpeed,
+  _targetDistance,
+  _currentPiket,
+  _frequency,
+  _pathNumber,
+  _pathDirection,
+  _stationListPtr,
+  _signalScanCurrentPiket,
+  _routePath,
+  _hour,
+  _minute,
+  _second,
+  _pressureTm,
+  _locoId,
+  _pressureAltPtr,
+  _pressureTcDirect,
+  _pressureCommonPtr,
+  _pressureChs4KvrPtr,
+  _pressureDefaultPtr,
+  _coordinate,
+  _als,
+  _acceleration,
+  _controllerED4M,
+  _wagonCountAbs,
+  _signalScanBase,
+  _trafficLightAddr,
+  _chs8TrainPtr,
+  _signalDirectionFlag: Cardinal;
 
 // Структура для хранения диапазона скоростей
 type
@@ -71,7 +107,7 @@ type
 function GetWagonCount: Integer;
 begin
   try
-    Result := PByte($00749990)^;
+    Result := PByte(_wagonCountAbs)^;
   except
     Result := 0;
   end;
@@ -137,7 +173,7 @@ var
 begin
   Result := 0;
   try
-    Addr := BaseAddress + $08DD5B05;
+    Addr := BaseAddress + _controllerED4M;
 
     Result := PByte(Addr)^;
 
@@ -377,13 +413,13 @@ begin
   Result := 0;
 
   // Сначала получаем обычный результат
-  Result := PWord(BaseAddress + $34987C)^;
+  Result := PWord(BaseAddress + _speedLimit)^;
   if GetALS <= 4 then
     Exit;
 
   try
     // Быстрое чтение из памяти
-    CurrentTrackValue := PInteger(BaseAddress + $349A0C)^;
+    CurrentTrackValue := PInteger(BaseAddress + _signalScanCurrentPiket)^;
     
     // Загружаем данные только при необходимости
     if RangesCount = 0 then
@@ -450,7 +486,7 @@ begin
   if GetALS <= 4 then
     Exit;
 
-  CurrentTrackValue := PInteger(BaseAddress + $349A0C)^;
+  CurrentTrackValue := PInteger(BaseAddress + _signalScanCurrentPiket)^;
 
 if CurrentTrackValue = LastTrackValue then
 begin
@@ -498,7 +534,7 @@ begin
   Result := '';
   try
     // Адрес карты для версии 55
-    MapAddr := BaseAddress + $8DD46D7;
+    MapAddr := BaseAddress + _routePath;
     
     // Читаем строку из памяти
     FillChar(Buffer, SizeOf(Buffer), 0);
@@ -534,7 +570,7 @@ begin
   Result := True; // По умолчанию
   try
     // Адрес карты для версии 55
-    MapAddr := BaseAddress + $8DD46D7;
+    MapAddr := BaseAddress + _routePath;
     
     // Читаем строку из памяти
     FillChar(Buffer, SizeOf(Buffer), 0);
@@ -674,7 +710,7 @@ begin
   Result := '';
   try
     // Получаем текущий пикет
-    CurrentPiket := PWord(BaseAddress + $8C08054)^;
+    CurrentPiket := PWord(BaseAddress + _currentPiket)^;
     
     // Получаем путь маршрута из памяти
     RoutePath := GetRoutePathFromMemory;
@@ -708,7 +744,7 @@ end;
 function GetChannel: string;
 begin
   try
-    Result := IntToStr(PByte(BaseAddress + $3498A4)^);
+    Result := IntToStr(PByte(BaseAddress + _frequency)^);
   except
     Result := 'Err';
   end;
@@ -735,7 +771,7 @@ begin
   
   try
     // Получаем текущий пикет
-    CurrentPiket := PWord(BaseAddress + $8C08054)^;
+    CurrentPiket := PWord(BaseAddress + _currentPiket)^;
     
     // Получаем путь маршрута из памяти
     RoutePath := GetRoutePathFromMemory;
@@ -851,14 +887,14 @@ var
   suffix: string;
 begin
   try
-    // Читаем первый байт по адресу BaseAddress + $4F8D958
-    byte1 := PByte(BaseAddress + $4F8D958)^;
+    // Читаем первый байт по адресу BaseAddress + _pathNumber
+    byte1 := PByte(BaseAddress + _pathNumber)^;
     
     // Складываем два байта
     totalValue := byte1;
     
-    // Проверяем значение по адресу BaseAddress + $349890
-    checkValue := PByte(BaseAddress + $349890)^;
+    // Проверяем значение по адресу BaseAddress + _pathDirection
+    checkValue := PByte(BaseAddress + _pathDirection)^;
     
     // Определяем суффикс
     if checkValue = 0 then
@@ -892,10 +928,10 @@ begin
   
   try
     // Получаем текущий пикет
-    currentPiket := PWord(BaseAddress + $8C08054)^;
+    currentPiket := PWord(BaseAddress + _currentPiket)^;
     
     // Получаем базовый адрес станций
-    baseStationAddress := PCardinal(BaseAddress + $403AEC)^ - $04;
+    baseStationAddress := PCardinal(BaseAddress + _stationListPtr)^ - $04;
     stationsCount := PByte(Pointer(baseStationAddress))^;
     
     if stationsCount = 0 then Exit;
@@ -908,7 +944,7 @@ begin
     begin
       try
         // Читаем имя станции
-        nameAddress := PCardinal(BaseAddress + $403AEC)^ + $70 + i * $48;
+        nameAddress := PCardinal(BaseAddress + _stationListPtr)^ + $70 + i * $48;
         
         // Читаем длину строки
         nameLength := PByte(Pointer(nameAddress))^;
@@ -924,7 +960,7 @@ begin
         stationName := Trim(UpperCase(string(buffer)));
         
         // Читаем пикет станции
-        piketAddress := PCardinal(BaseAddress + $403AEC)^ + $48 + i * $48;
+        piketAddress := PCardinal(BaseAddress + _stationListPtr)^ + $48 + i * $48;
         stationPiket := PInteger(Pointer(piketAddress))^;
         
         // Вычисляем расстояние
@@ -957,7 +993,7 @@ var
   roundedSpeed: Integer;
 begin
   try
-    val := PSingle(BaseAddress + $04F8C28C)^;
+    val := PSingle(BaseAddress + _speed)^;
     roundedSpeed := Round(Abs(val));  // Добавлена функция Abs()
     Result := IntToStr(roundedSpeed);
   except
@@ -970,7 +1006,7 @@ var
   val: Word;
 begin
   try
-    val := PWord(BaseAddress + $34987C)^;
+    val := PWord(BaseAddress + _speedLimit)^;
     Result := IntToStr(val);
   except
     Result := 'Err';
@@ -980,7 +1016,7 @@ end;
 function GetSpeedValue: Integer;
 begin
   try
-    Result := Round(Abs(PSingle(BaseAddress + $04F8C28C)^));
+    Result := Round(Abs(PSingle(BaseAddress + _speed)^));
   except
     Result := 0;
   end;
@@ -989,7 +1025,7 @@ end;
 function GetSpeedValue2: Single;
 begin
   try
-    Result := Round(Abs(PSingle(BaseAddress + $04F8C28C)^));
+    Result := Round(Abs(PSingle(BaseAddress + _speed)^));
   except
     Result := 0;
   end;
@@ -998,7 +1034,7 @@ end;
 function GetDistanceValue: Integer;
 begin
   try
-    Result := Abs(PInteger(BaseAddress + $8C07EB8)^);
+    Result := Abs(PInteger(BaseAddress + _targetDistance)^);
   except
     Result := 0;
   end;
@@ -1008,7 +1044,7 @@ function GetLimitSpeedValue: Integer;
 begin
   try
     // Используй тот же адрес, что и в GetLimitSpeed, но возвращай число
-    Result := PWord(BaseAddress + $34987C)^;
+    Result := PWord(BaseAddress + _speedLimit)^;
     Result := Abs(Result);
   except
     Result := 0;
@@ -1018,7 +1054,7 @@ end;
 function GetTargetSpeedValue: Integer;
 begin
   try
-    Result := PWord(BaseAddress + $349880)^;
+    Result := PWord(BaseAddress + _targetSpeed)^;
     Result := Abs(Result);
   except
     Result := 0;
@@ -1030,7 +1066,7 @@ var
   val: Integer;
 begin
   try
-    val := PInteger(BaseAddress + $8C07EB8)^;
+    val := PInteger(BaseAddress + _targetDistance)^;
     Result := IntToStr(val);
   except
     Result := 'Err';
@@ -1047,9 +1083,9 @@ var
   hour, minute, second: Byte;
 begin
   try
-    hour := PInteger(BaseAddress + $8C08034)^;
-    minute := PInteger(BaseAddress + $8C08038)^;
-    second := PInteger(BaseAddress + $8C0803C)^;
+    hour := PInteger(BaseAddress + _hour)^;
+    minute := PInteger(BaseAddress + _minute)^;
+    second := PInteger(BaseAddress + _second)^;
     Result := Format('%.2d:%.2d:%.2d', [hour, minute, second]);
   except
     Result := 'Err';
@@ -1059,7 +1095,7 @@ end;
 function GetPressureTMf: Single;
 begin
   try
-    Result := PSingle(BaseAddress + $8D10738)^;
+    Result := PSingle(BaseAddress + _pressureTm)^;
   except
     Result := 0.0;
   end;
@@ -1074,9 +1110,9 @@ begin
 
   try
     // тип локомотива
-    locType := PInteger(Pointer(BaseAddress + $4F8D93C))^;
+    locType := PInteger(Pointer(BaseAddress + _locoId))^;
 
-    addr := PCardinal(BaseAddress + $8D10D78)^;
+    addr := PCardinal(BaseAddress + _pressureAltPtr)^;
     if addr = 0 then Exit;
 
     case locType of
@@ -1100,7 +1136,7 @@ begin
     OldDecimalSeparator := DecimalSeparator;
     DecimalSeparator := '.';
     try
-      val := PSingle(BaseAddress + $8D10738)^;
+      val := PSingle(BaseAddress + _pressureTm)^;
       Result := FormatFloat('0.00', val);
     finally
       DecimalSeparator := OldDecimalSeparator;
@@ -1122,7 +1158,7 @@ begin
     DecimalSeparator := '.';
     try
       // Базовый адрес для большинства локомотивов
-      addr := PCardinal(BaseAddress + $08D10D78)^;
+      addr := PCardinal(BaseAddress + _pressureAltPtr)^;
       if addr <> 0 then
       begin
         val := PSingle(addr + $20)^;
@@ -1173,7 +1209,7 @@ begin
   
   try
     // Определяем тип локомотива
-    locType := PInteger(Pointer(baseAddr + $4F8D93C))^;
+    locType := PInteger(Pointer(baseAddr + _locoId))^;
     
     case locType of
       // Группа 1: ED9M, ED4M, 2M62 - используем float
@@ -1182,7 +1218,7 @@ begin
       1462: // М62 (2M62)
       begin
         try
-          Result := PSingle(baseAddr + $8D107B0)^;
+          Result := PSingle(baseAddr + _pressureTcDirect)^;
         except
           Result := 0.0;
         end;
@@ -1198,7 +1234,7 @@ begin
       882:   // ВЛ82М (VL82M)
       begin
         try
-          addr := GetPtrAddr($4F8D8D4, [$A8]);
+          addr := GetPtrAddr(_pressureCommonPtr, [$A8]);
           if addr <> 0 then
             Result := PDouble(addr)^
           else
@@ -1215,7 +1251,7 @@ begin
       23152: // 2ЭС5К (2ES5K)
       begin
         try
-          addr := GetPtrAddr($8D10D78, [$68]);
+          addr := GetPtrAddr(_pressureAltPtr, [$68]);
           if addr <> 0 then
             Result := PSingle(addr)^
           else
@@ -1229,7 +1265,7 @@ begin
       822: // ЧС7 (CHS7)
 begin
   try
-    tempAddr := PCardinal(baseAddr + $4F8D8D4)^;
+    tempAddr := PCardinal(baseAddr + _pressureCommonPtr)^;
     if tempAddr <> 0 then
     begin
       addr := tempAddr + $80;  // Просто прибавляем смещение
@@ -1242,7 +1278,7 @@ end;
 812: // ЧС8 (вариант с другим адресом)
 begin
   try
-    tempAddr := PCardinal(baseAddr + $00348538)^;
+    tempAddr := PCardinal(baseAddr + _chs8TrainPtr)^;
     if tempAddr <> 0 then
     begin
       addr := tempAddr + $B8;
@@ -1255,7 +1291,7 @@ end;
       621: // ЧС4Т (CHS4T)
       begin
         try
-          addr := GetPtrAddr($4F8D8D4, [$58]);
+          addr := GetPtrAddr(_pressureCommonPtr, [$58]);
           if addr <> 0 then
             Result := PDouble(addr)^
           else
@@ -1275,7 +1311,7 @@ end;
       524: // ЧС4КВР (CHS4KVR)
       begin
         try
-          addr := GetPtrAddr($34846C, [$1C, $80]);
+          addr := GetPtrAddr(_pressureChs4KvrPtr, [$1C, $80]);
           if addr <> 0 then
             Result := PDouble(addr)^
           else
@@ -1290,7 +1326,7 @@ end;
       23142: // 2ЭС4К (2ES4K)
       begin
         try
-          addr := GetPtrAddr($04F8D8D4, [$28, $48]);
+          addr := GetPtrAddr(_pressureDefaultPtr, [$28, $48]);
           if addr <> 0 then
             Result := PSingle(addr)^
           else
@@ -1304,7 +1340,7 @@ end;
       begin
         // Случай по умолчанию - используем подход из default case
         try
-          addr := GetPtrAddr($04F8D8D4, [$28, $48]);
+          addr := GetPtrAddr(_pressureDefaultPtr, [$28, $48]);
           if addr <> 0 then
             Result := PSingle(addr)^
           else
@@ -1349,7 +1385,7 @@ var
   val: Byte;
 begin
   try
-    val := PInteger(BaseAddress + $4F8D958)^ and $FF;
+    val := PInteger(BaseAddress + _pathNumber)^ and $FF;
     Result := IntToStr(val);
   except
     Result := 'Err';
@@ -1359,8 +1395,8 @@ end;
 function GetTrackNumberInt: Byte;
 begin
   try
-    // Читаем байт по адресу BaseAddress + $4F8D958
-    Result := PByte(BaseAddress + $4F8D958)^;
+    // Читаем байт по адресу BaseAddress + _pathNumber
+    Result := PByte(BaseAddress + _pathNumber)^;
   except
     Result := 0; // или можно вернуть $FF, если нужно обозначить ошибку
   end;
@@ -1414,7 +1450,7 @@ var
   intVal: Int64;
 begin
   try
-    val := PDouble(BaseAddress + $403F50)^;
+    val := PDouble(BaseAddress + _coordinate)^;
     intVal := Round(Abs(val));
     Result := ConvertToDistance(intVal);
   except
@@ -1425,7 +1461,7 @@ end;
 function GetALS: Byte;
 begin
   try
-    Result := PByte(BaseAddress + $8C07ECC)^;
+    Result := PByte(BaseAddress + _als)^;
   except
     Result := 0;
   end;
@@ -1440,7 +1476,7 @@ begin
     OldDecimalSeparator := DecimalSeparator;
     DecimalSeparator := '.';
     try
-      val := PDouble(BaseAddress + $3498B8)^;
+      val := PDouble(BaseAddress + _acceleration)^;
       Result := FormatFloat('0.00', val);
     finally
       DecimalSeparator := OldDecimalSeparator;
@@ -1510,11 +1546,6 @@ type
   end;
 
 function GetTrafficLightsSequence: string;
-const
-  BASE_ADDR = $900805C;
-  CURRENT_PIKET_ADDR = $749A0C;
-  DIRECTION_ADDR = $749818;
-  TRAFFIC_LIGHT_ADDR = $8C07ECC;
 var
   S1, S2: TStringList;
   OneDirection: Boolean;
@@ -1573,7 +1604,7 @@ begin
     try
       // Определяем направление
       try
-        OneDirection := PByte(BaseAddress + DIRECTION_ADDR)^ = 1;
+        OneDirection := PByte(BaseAddress + _signalDirectionFlag)^ = 1;
         WriteToLog('Направление успешно прочитано');
       except
         OneDirection := True;
@@ -1582,7 +1613,7 @@ begin
       
       // Читаем текущий пикет
       try
-        CurrentPiket := PInteger(BaseAddress + CURRENT_PIKET_ADDR)^;
+        CurrentPiket := PInteger(BaseAddress + _signalScanCurrentPiket)^;
         WriteToLog('Текущий пикет успешно прочитан');
       except
         CurrentPiket := 1500;
@@ -1591,7 +1622,7 @@ begin
       
       // Читаем состояние искусственного светофора
       try
-        TrafficLightState := PByte(BaseAddress + TRAFFIC_LIGHT_ADDR)^;
+        TrafficLightState := PByte(BaseAddress + _als)^;
         WriteToLog('Состояние светофора успешно прочитано');
       except
         TrafficLightState := 2;
@@ -1632,5 +1663,73 @@ begin
   
   WriteToLog('=== КОНЕЦ АНАЛИЗА СВЕТОФОРОВ ===');
 end;
+
+initialization
+  if ZDSVersion = 54 then
+  begin
+    _speedLimit               := $32CA78;
+    _speed                    := $04F6FCE0;
+    _targetSpeed              := $32CA7C;
+    _targetDistance            := $8BEB730;
+    _currentPiket              := $0032CBFC;
+    _frequency                 := $32CA98;
+    _pathNumber                := $4F711D0;
+    _pathDirection             := $32CA8C;
+    _stationListPtr            := $003E74F0;
+    _signalScanCurrentPiket    := $32CBFC;
+    _routePath                 := $8DB7F2F;
+    _hour                      := $8BEB8AC;
+    _minute                    := $8BEB8B0;
+    _second                    := $8BEB8B4;
+    _pressureTm                := $8CF3FA8;
+    _locoId                    := $4F711B4;
+    _pressureAltPtr            := $8CF45D0;
+    _pressureTcDirect          := $8CF4020;
+    _pressureCommonPtr         := $4F7114C;
+    _pressureChs4KvrPtr        := $32B46C;
+    _pressureDefaultPtr        := $0375CE8;
+    _coordinate                := $3E79A8;
+    _als                       := $8BEB744;
+    _acceleration              := $32CAAC;
+    _controllerED4M            := 0; // не найдено
+    _wagonCountAbs             := 0; // не найдено
+    _signalScanBase            := $8BEB8D4;
+    _trafficLightAddr          := $8BEB744;
+    _chs8TrainPtr              := 0; // не найдено
+    _signalDirectionFlag       := 0; // 54 не имеет этого поля
+  end
+  else
+  begin
+    _speedLimit               := $34987C;
+    _speed                    := $04F8C28C;
+    _targetSpeed              := $349880;
+    _targetDistance            := $8C07EB8;
+    _currentPiket              := $8C08054;
+    _frequency                 := $3498A4;
+    _pathNumber                := $4F8D958;
+    _pathDirection             := $349890;
+    _stationListPtr            := $403AEC;
+    _signalScanCurrentPiket    := $349A0C;
+    _routePath                 := $8DD46D7;
+    _hour                      := $8C08034;
+    _minute                    := $8C08038;
+    _second                    := $8C0803C;
+    _pressureTm                := $8D10738;
+    _locoId                    := $4F8D93C;
+    _pressureAltPtr            := $8D10D78;
+    _pressureTcDirect          := $8D107B0;
+    _pressureCommonPtr         := $4F8D8D4;
+    _pressureChs4KvrPtr        := $34846C;
+    _pressureDefaultPtr        := $04F8D8D4;
+    _coordinate                := $403F50;
+    _als                       := $8C07ECC;
+    _acceleration              := $3498B8;
+    _controllerED4M            := $08DD5B05;
+    _wagonCountAbs             := $00749990;
+    _signalScanBase            := $900805C;
+    _trafficLightAddr          := $8C07ECC;
+    _chs8TrainPtr              := $00348538;
+    _signalDirectionFlag       := $349818;
+  end;
 
 end.

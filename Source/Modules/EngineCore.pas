@@ -130,8 +130,13 @@ var
   NOPs: array[0..4] of Byte;
   j: Integer;
   OldProtect: DWORD;
+  EnginePatchAddr: Cardinal;
   
   // Переменные для CALL-инструкций
+  Call1Addr: Cardinal;
+  Call2Addr: Cardinal;
+  Call3Addr: Cardinal;
+  HookAddr: Cardinal;
   HookSkorostemerAddr: Cardinal;
   CallAddress: Cardinal;
   NewOffset: Integer;
@@ -258,17 +263,22 @@ begin
     for j := 0 to 4 do
       NOPs[j] := $90;
     
+    // Определяем адрес для версии
+    EnginePatchAddr := $0072ABA2;
+    if ZDSVersion = 54 then
+      EnginePatchAddr := $0070E4F7;
+
     // Патчим главную инструкцию: mov byte ptr [eax], 1 -> mov byte ptr [eax], 0
-    // По адресу .text:0072ABA2 меняем байт 01 на 00
-    AddToLogFile(EngineLog, 'Patching main instruction at $0072ABA2...');
+    // По адресу .text:EnginePatchAddr меняем байт 01 на 00
+    AddToLogFile(EngineLog, 'Patching main instruction at $' + IntToHex(EnginePatchAddr, 8));
     
-    if VirtualProtect(Pointer($0072ABA2), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
+    if VirtualProtect(Pointer(EnginePatchAddr), 4, PAGE_EXECUTE_READWRITE, OldProtect) then
     begin
       // Ищем байт 01 в инструкции mov byte ptr [eax], 1 (обычно C6 00 01)
       // и заменяем на 00 для mov byte ptr [eax], 0 (станет C6 00 00)
-      if PByte($0072ABA2 + 2)^ = $01 then // Проверяем что это действительно mov [eax], 1
+      if PByte(EnginePatchAddr + 2)^ = $01 then // Проверяем что это действительно mov [eax], 1
       begin
-        PByte($0072ABA2 + 2)^ := $00; // Меняем 1 на 0
+        PByte(EnginePatchAddr + 2)^ := $00; // Меняем 1 на 0
         AddToLogFile(EngineLog, 'Successfully patched main instruction: mov byte ptr [eax], 1 -> mov byte ptr [eax], 0');
       end
       else
@@ -286,25 +296,38 @@ begin
         end;
       end;
       
-      VirtualProtect(Pointer($0072ABA2), 4, OldProtect, OldProtect);
+      VirtualProtect(Pointer(EnginePatchAddr), 4, OldProtect, OldProtect);
     end
     else
-      AddToLogFile(EngineLog, 'Failed to patch main instruction at $0072ABA2, error: ' + IntToStr(GetLastError()));
+      AddToLogFile(EngineLog, 'Failed to patch main instruction at $' + IntToHex(EnginePatchAddr, 8) + ', error: ' + IntToStr(GetLastError()));
     
     // Патчим call'ы
     AddToLogFile(EngineLog, 'Patching CALL addresses...');
     
-    // ПЕРВЫЙ CALL - заменяем на CALL к sub_488374
-    AddToLogFile(EngineLog, 'Creating CALL to sub_488374 at $006C4151...');
+    // Определяем адреса для версии
+    Call1Addr := $006C4151;
+    Call2Addr := $006C41FE;
+    Call3Addr := $006C2FBB;
+    HookAddr := $00488374;
+    if ZDSVersion = 54 then
+    begin
+      Call1Addr := $006BE3F1;
+      Call2Addr := $006BE49E;
+      Call3Addr := $006BD25B;
+      HookAddr := $00489830;
+    end;
+
+    // ПЕРВЫЙ CALL - заменяем на CALL к hook
+    AddToLogFile(EngineLog, 'Creating CALL to hook at $' + IntToHex(Call1Addr, 8));
     
     try
-      CallAddress := $006C4151;
-      HookSkorostemerAddr := $00488374; // Адрес sub_488374
+      CallAddress := Call1Addr;
+      HookSkorostemerAddr := HookAddr;
       
       // Вычисляем относительное смещение для CALL
       NewOffset := Integer(HookSkorostemerAddr) - Integer(CallAddress + 5);
       
-      AddToLogFile(EngineLog, 'sub_488374 address: $' + IntToHex(HookSkorostemerAddr, 8));
+      AddToLogFile(EngineLog, 'Hook address: $' + IntToHex(HookSkorostemerAddr, 8));
       AddToLogFile(EngineLog, 'Call address: $' + IntToHex(CallAddress, 8));
       AddToLogFile(EngineLog, 'Calculated offset: $' + IntToHex(Cardinal(NewOffset), 8));
       
@@ -312,46 +335,46 @@ begin
       CallBytes[0] := $E8; // CALL near
       PInteger(@CallBytes[1])^ := NewOffset; // 4 байта смещения
       
-      if VirtualProtect(Pointer($006C4151), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+      if VirtualProtect(Pointer(Call1Addr), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
       begin
-        Move(CallBytes, Pointer($006C4151)^, 5);
-        VirtualProtect(Pointer($006C4151), 5, OldProtect, OldProtect);
-        AddToLogFile(EngineLog, 'Successfully created CALL to sub_488374 at $006C4151');
+        Move(CallBytes, Pointer(Call1Addr)^, 5);
+        VirtualProtect(Pointer(Call1Addr), 5, OldProtect, OldProtect);
+        AddToLogFile(EngineLog, 'Successfully created CALL to hook at $' + IntToHex(Call1Addr, 8));
       end
       else
-        AddToLogFile(EngineLog, 'Failed to patch call at $006C4151, error: ' + IntToStr(GetLastError()));
+        AddToLogFile(EngineLog, 'Failed to patch call at $' + IntToHex(Call1Addr, 8) + ', error: ' + IntToStr(GetLastError()));
         
     except
       on E: Exception do
       begin
-        AddToLogFile(EngineLog, 'Exception while creating CALL to sub_488374: ' + E.Message);
+        AddToLogFile(EngineLog, 'Exception while creating CALL to hook: ' + E.Message);
         // В случае ошибки - ставим NOPs как fallback
-        if VirtualProtect(Pointer($006C4151), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+        if VirtualProtect(Pointer(Call1Addr), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
         begin
-          Move(NOPs, Pointer($006C4151)^, 5);
-          VirtualProtect(Pointer($006C4151), 5, OldProtect, OldProtect);
-          AddToLogFile(EngineLog, 'Fallback: patched $006C4151 with NOPs due to CALL creation error');
+          Move(NOPs, Pointer(Call1Addr)^, 5);
+          VirtualProtect(Pointer(Call1Addr), 5, OldProtect, OldProtect);
+          AddToLogFile(EngineLog, 'Fallback: patched $' + IntToHex(Call1Addr, 8) + ' with NOPs due to CALL creation error');
         end;
       end;
     end;
       
     // Второй CALL - оставляем как NOP
-    if VirtualProtect(Pointer($006C41FE), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+    if VirtualProtect(Pointer(Call2Addr), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
     begin
-      Move(NOPs, Pointer($006C41FE)^, 5);
-      VirtualProtect(Pointer($006C41FE), 5, OldProtect, OldProtect);
-      AddToLogFile(EngineLog, 'Successfully patched call at $006C41FE');
+      Move(NOPs, Pointer(Call2Addr)^, 5);
+      VirtualProtect(Pointer(Call2Addr), 5, OldProtect, OldProtect);
+      AddToLogFile(EngineLog, 'Successfully patched call at $' + IntToHex(Call2Addr, 8));
     end
     else
-      AddToLogFile(EngineLog, 'Failed to patch call at $006C41FE, error: ' + IntToStr(GetLastError()));
+      AddToLogFile(EngineLog, 'Failed to patch call at $' + IntToHex(Call2Addr, 8) + ', error: ' + IntToStr(GetLastError()));
       
     // ТРЕТИЙ CALL - заменяем на CALL к HookSkorostemerViaKLUB
-    AddToLogFile(EngineLog, 'Creating CALL to HookSkorostemerViaKLUB at $006C2FBB...');
+    AddToLogFile(EngineLog, 'Creating CALL to HookSkorostemerViaKLUB at $' + IntToHex(Call3Addr, 8));
     
     try
       // Получаем адрес функции HookSkorostemerViaKLUB
       HookSkorostemerAddr := Cardinal(@HookSkorostemerViaKLUB);
-      CallAddress := $006C2FBB;
+      CallAddress := Call3Addr;
       
       // Вычисляем относительное смещение для CALL
       NewOffset := Integer(HookSkorostemerAddr) - Integer(CallAddress + 5);
@@ -364,25 +387,25 @@ begin
       CallBytes[0] := $E8; // CALL near
       PInteger(@CallBytes[1])^ := NewOffset; // 4 байта смещения
       
-      if VirtualProtect(Pointer($006C2FBB), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+      if VirtualProtect(Pointer(Call3Addr), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
       begin
-        Move(CallBytes, Pointer($006C2FBB)^, 5);
-        VirtualProtect(Pointer($006C2FBB), 5, OldProtect, OldProtect);
-        AddToLogFile(EngineLog, 'Successfully created CALL to HookSkorostemerViaKLUB at $006C2FBB');
+        Move(CallBytes, Pointer(Call3Addr)^, 5);
+        VirtualProtect(Pointer(Call3Addr), 5, OldProtect, OldProtect);
+        AddToLogFile(EngineLog, 'Successfully created CALL to HookSkorostemerViaKLUB at $' + IntToHex(Call3Addr, 8));
       end
       else
-        AddToLogFile(EngineLog, 'Failed to patch call at $006C2FBB, error: ' + IntToStr(GetLastError()));
+        AddToLogFile(EngineLog, 'Failed to patch call at $' + IntToHex(Call3Addr, 8) + ', error: ' + IntToStr(GetLastError()));
         
     except
       on E: Exception do
       begin
         AddToLogFile(EngineLog, 'Exception while creating CALL to HookSkorostemerViaKLUB: ' + E.Message);
         // В случае ошибки - ставим NOPs как fallback
-        if VirtualProtect(Pointer($006C2FBB), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
+        if VirtualProtect(Pointer(Call3Addr), 5, PAGE_EXECUTE_READWRITE, OldProtect) then
         begin
-          Move(NOPs, Pointer($006C2FBB)^, 5);
-          VirtualProtect(Pointer($006C2FBB), 5, OldProtect, OldProtect);
-          AddToLogFile(EngineLog, 'Fallback: patched $006C2FBB with NOPs due to CALL creation error');
+          Move(NOPs, Pointer(Call3Addr)^, 5);
+          VirtualProtect(Pointer(Call3Addr), 5, OldProtect, OldProtect);
+          AddToLogFile(EngineLog, 'Fallback: patched $' + IntToHex(Call3Addr, 8) + ' with NOPs due to CALL creation error');
         end;
       end;
     end;
@@ -2143,7 +2166,7 @@ end;
   end;
 
   if not DrawToPanel then
-   if Vsync then VBL2(vsmSync) else VBL2(vsmNoSync);
+    VBL2(vsmNoSync);
 
   SetTimer(h_Wnd, FPS_TIMER, FPS_INTERVAL, nil);
 

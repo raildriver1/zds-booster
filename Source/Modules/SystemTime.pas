@@ -33,15 +33,13 @@ implementation
 const
   SYSTIME_LOG = 'DGLEngine_Log.txt';
 
-  // Static slot: 4-byte pointer to the heap-allocated double.
-  PTR_ABSOLUTE_TIME = $00400000 + $34AEF0;  // = $004AAEF0
-
   // Throttle "address invalid" warnings to one per N frames so we don't
   // spam the log if the simulator hasn't initialised yet.
   WARN_INTERVAL_FRAMES = 600;
 
 var
   WarnCounter: Cardinal = 0;
+  PTR_ABSOLUTE_TIME: Cardinal = $004AAEF0;
 
 procedure ApplySystemTimeOverride;
 var
@@ -51,6 +49,7 @@ var
   Seconds: Double;
 begin
   if not InitSystemTimeEnable then Exit;
+  if PTR_ABSOLUTE_TIME = 0 then Exit;
 
   // Step 1: read the static pointer slot.
   StaticPtr := PCardinal(PTR_ABSOLUTE_TIME);
@@ -79,5 +78,9 @@ begin
   // textures) will roll forward toward Windows time naturally.
   TimeDouble^ := Seconds;
 end;
+
+initialization
+  if ZDSVersion = 54 then
+    PTR_ABSOLUTE_TIME := 0; // TODO: найти 54-эквивалент через runtime-скан
 
 end.

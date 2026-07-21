@@ -28,10 +28,13 @@ uses
   OpenGL, Windows, SysUtils, Classes, Variables, EngineUtils, DrawFunc3D, Advanced3D, Textures, KlubData, CheatMenu, RA3Physics;
 
 
-const
+var
   ADDR_CAM_X: Cardinal = $9008028;
   ADDR_CAM_Y: Cardinal = $900802C;
   ADDR_CAM_Z: Cardinal = $9008030;
+  _addrLocoAngle: Cardinal = $09110D3C;
+  _addrLocoAngZ: Cardinal = $09007C5C;
+  _addrLocSecPtrSlot: Cardinal = $0074AEA0;
 
   CAM_INIT_X: Single = 0.5500000119;
   CAM_INIT_Y: Single = 9.800003052;
@@ -805,9 +808,11 @@ DoorTextureID := LoadTextureFromFile(
   end;
 end;
 
-const
+var
   NSVETOFORS_ADDR: Cardinal = $091D4EA8; // из ассемблера
-  POEZD_PTR_ADDR = $0074B52C;
+  POEZD_PTR_ADDR: Cardinal = $0074B52C;
+
+const
   POEZD_FIRST_WAGON_OFFSET = 108; // начальное смещение ebx от базы
   WAGON_STRIDE = 144;             // 0x90 байт на вагон
 
@@ -825,7 +830,7 @@ begin
   // NSVETOFORS[584] для локомотива — или из LOCSECTIONS
   // *((double *)&U__VARIABLES____LOCSECTIONS + 61) — это RotateZ локомотива
   // Но проще взять U__VARIABLES____PREVLOKANGLEZDEG
-  Result := PSingle($09110D3C)^;  // off_74B4F4 = PREVLOKANGLEZDEG (нужно уточнить)
+  Result := PSingle(_addrLocoAngle)^;  // off_74B4F4 = PREVLOKANGLEZDEG (нужно уточнить)
 end;
 
 function GetWagonAngleZ(wagonIdx: Integer): Single;
@@ -907,10 +912,10 @@ begin
   poezdBase := PCardinal(POEZD_PTR_ADDR)^;
   if poezdBase = 0 then Exit;
 
-  locsecPtr := PCardinal($0074AEA0)^;
+  locsecPtr := PCardinal(_addrLocSecPtrSlot)^;
   if locsecPtr = 0 then Exit;
 
-  locoAngZ := PDouble($09007C5C)^;
+  locoAngZ := PDouble(_addrLocoAngZ)^;
   locoX := PDouble(locsecPtr + 24)^;
   locoY := PDouble(locsecPtr + 32)^;
   locoZ := PDouble(locsecPtr + 40)^;
@@ -1938,9 +1943,7 @@ var
   LastWrittenCtrlByte: Byte = 0;
   LastWrittenKranByte: Byte = 0;
 
-const
-  // Адреса памяти ZDsim 55.008 (синхронизация визуальных контроллеров кабины
-  // РА-3 со штатными переменными игры).
+var
   ADDR_KONTROLLER_BYTE: Cardinal = $091D5B05;  // byte 0..5 / 251..255 (тяга/тормоз)
   ADDR_KRAN395_BYTE   : Cardinal = $090043A0;  // byte позиции крана 395
 
@@ -2759,5 +2762,33 @@ begin
   Position3D(AngZ - 0.93, z + 0.65, y - 0.32);
   RotateX(35);
 end;
+
+initialization
+  if ZDSVersion = 54 then
+  begin
+    ADDR_CAM_X := 0;
+    ADDR_CAM_Y := 0;
+    ADDR_CAM_Z := 0;
+    _addrLocoAngle := 0;
+    _addrLocoAngZ := 0;
+    _addrLocSecPtrSlot := 0;
+    NSVETOFORS_ADDR := 0;
+    POEZD_PTR_ADDR := 0;
+    ADDR_KONTROLLER_BYTE := 0;
+    ADDR_KRAN395_BYTE := 0;
+  end
+  else
+  begin
+    ADDR_CAM_X := $9008028;
+    ADDR_CAM_Y := $900802C;
+    ADDR_CAM_Z := $9008030;
+    _addrLocoAngle := $09110D3C;
+    _addrLocoAngZ := $09007C5C;
+    _addrLocSecPtrSlot := $0074AEA0;
+    NSVETOFORS_ADDR := $091D4EA8;
+    POEZD_PTR_ADDR := $0074B52C;
+    ADDR_KONTROLLER_BYTE := $091D5B05;
+    ADDR_KRAN395_BYTE := $090043A0;
+  end;
 
 end.
