@@ -25,7 +25,7 @@ var
 implementation
 
 uses
-  OpenGL, Windows, SysUtils, Classes, Variables, EngineUtils, DrawFunc3D, Advanced3D, Textures, KlubData, CheatMenu, RA3Physics;
+  OpenGL, Windows, SysUtils, Classes, Variables, EngineUtils, DrawFunc3D, Advanced3D, Textures, KlubData, CheatMenu, RA3Physics, RA3Animation;
 
 
 var
@@ -87,6 +87,7 @@ var
   ArrowTC1ModelID: Integer = 0;
   ArrowTC2ModelID: Integer = 0;
   ArrowTMModelID: Integer = 0;
+  ArrowTextureID: Integer = 0;
 
   TelegaMotorID: Integer = 0;
   TelegaNemotorID: Integer = 0;
@@ -277,6 +278,25 @@ type
     PressTarget:    Single;        // целевое смещение
   end;
 
+  // Геометрия интерактивных объектов RA-3. В оригинале эти параметры
+  // находятся в data\animations\ra3-head\*.xml. DMD хранит только mesh,
+  // поэтому ось и диапазон должны применяться здесь, на уровне объекта.
+  TNewCabAnimMode = (ncamNone, ncamRotation, ncamTranslation);
+  TNewCabAnimSpec = record
+    Mode: TNewCabAnimMode;
+    AxisX, AxisY, AxisZ: Single;
+    Values: array[0..3] of Single;
+    ValueCount: Integer;
+  end;
+
+  // Базовая матрица отдельного объекта. В старом ZDS эта часть была
+  // разбросана по коду каждой кабины: сначала ставилась модель в её pivot,
+  // затем применялась исходная ориентация, и только потом анимация.
+  TNewCabTransform = record
+    PivotX, PivotY, PivotZ: Single;
+    PreRotateX, PreRotateY, PreRotateZ: Single;
+  end;
+
   TFolderTexCache = record
     Folder: AnsiString;
     TexID:  Integer;
@@ -286,6 +306,196 @@ const
   NEWCAB_HOVER_RADIUS_PX: Integer = 25;     // px радиус hit-теста
   NEWCAB_PRESS_DEPTH:     Single  = -0.004; // насколько кнопка "приседает" по Z
   NEWCAB_PRESS_LERP:      Single  = 0.3;    // скорость анимации press
+
+var
+  Toggle3State: array of Integer;       // 0/1/2 для 3-позиционных тумблеров
+
+function NewCabAnimSpec(const Name: AnsiString;
+  ItemType: TNewCabItemType): TNewCabAnimSpec;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+
+  // Точное соответствие исходным XML RA-3. Значения — абсолютная
+  // величина от исходного (нулевого) положения модели.
+  if Name = 'key_emergency_management' then
+  begin
+    Result.Mode := ncamRotation;
+    Result.AxisX := 0; Result.AxisY := 0; Result.AxisZ := 1;
+    Result.Values[0] := 0; Result.Values[1] := 84;
+    Result.ValueCount := 2;
+    Exit;
+  end;
+
+  if ItemType = nciDimmer then
+  begin
+    Result.Mode := ncamRotation;
+    Result.AxisX := 1; Result.AxisY := 0; Result.AxisZ := 0;
+    Result.Values[0] := 0; Result.Values[1] := 360;
+    Result.ValueCount := 2;
+    Exit;
+  end;
+
+  if (ItemType = nciButton) or (ItemType = nciKey) then
+  begin
+    Result.Mode := ncamTranslation;
+    Result.AxisX := 0; Result.AxisY := -1; Result.AxisZ := 0;
+    Result.Values[0] := 0;
+    Result.Values[1] := 0.0025;
+    Result.ValueCount := 2;
+    if Name = 'button_emergency_stop' then Result.Values[1] := 0.012
+    else if (Name = 'button_RB') or (Name = 'button_RBP') then Result.Values[1] := 0.004
+    else if Name = 'button_RBS' then Result.Values[1] := 0.01
+    else if (Name = 'button_boardnet_on') or (Name = 'button_boardnet_off') or
+            (Name = 'button_open_passdoorsl') or (Name = 'button_open_passdoorsr') or
+            (Name = 'button_close_passdoorsl') or (Name = 'button_close_passdoorsr') or
+            (Name = 'button_maintaining_speed') or (Name = 'button_steps') then
+      Result.Values[1] := 0.0022
+    else if Name = 'button_windscreen_washers' then Result.Values[1] := 0.001;
+    if (Name = 'button_boardnet_on') or (Name = 'button_boardnet_off') then
+    begin
+      Result.AxisY := 0;
+      Result.AxisZ := 1;
+    end;
+    Exit;
+  end;
+
+  if ItemType = nciAzv then
+  begin
+    Result.Mode := ncamRotation;
+    Result.AxisX := 1; Result.AxisY := 0; Result.AxisZ := 0;
+    Result.Values[0] := 0; Result.Values[1] := 80;
+    Result.ValueCount := 2;
+    Exit;
+  end;
+
+  if ItemType <> nciToggle then Exit;
+
+  Result.Mode := ncamRotation;
+  Result.AxisX := 0; Result.AxisY := -1; Result.AxisZ := 0;
+  Result.Values[0] := 0;
+  Result.Values[1] := 84;
+  Result.ValueCount := 2;
+
+  if (Name = 'toggle_conditioner_cabin') or
+     (Name = 'toggle_ventilation_cabin') then
+  begin
+    Result.Values[1] := 60; Result.Values[2] := 120; Result.Values[3] := 180;
+    Result.ValueCount := 4;
+  end
+  else if Name = 'toggle_direction_of_movement' then
+  begin
+    Result.AxisY := 1;
+    Result.Values[0] := -180; Result.Values[1] := -90; Result.Values[2] := 0;
+    Result.ValueCount := 3;
+  end
+  else if (Name = 'toggle_cabin_lighting') or
+          (Name = 'toggle_heater_cabin') or
+          (Name = 'toggle_lighting_salon') or
+          (Name = 'toggle_maneuvering_warning_lights') or
+          (Name = 'toggle_PZD') or
+          (Name = 'toggle_searchlight') or
+          (Name = 'toggle_windscreen_wipers') or
+          (Name = 'toggle_buffered_warning_lights') then
+  begin
+    Result.Values[1] := 42; Result.Values[2] := 84;
+    Result.ValueCount := 3;
+  end
+  else if Name = 'toggle_climate_control_salon' then
+  begin
+    Result.ValueCount := 2;
+  end;
+end;
+
+function NewCabTransform(const Name: AnsiString;
+  ItemType: TNewCabItemType): TNewCabTransform;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+
+  // Важно: PreRotate задаётся до XML-анимации, Pivot — в координатах DMD.
+
+  // Экспорт уже сохраняет исходное нулевое положение модели. Не смещаем
+  // pivot искусственно: нулевой transform должен совпадать с экспортом.
+  if ItemType = nciToggle then
+  begin
+    Result.PivotX := 0;
+    Result.PivotY := 0;
+    Result.PivotZ := 0;
+  end;
+
+  // Именованные поправки оставлены отдельными ветками, чтобы не смешивать
+  // геометрию конкретной модели с общей осью XML.
+  if Name = 'toggle_direction_of_movement' then
+  begin
+    Result.PreRotateX := 0;
+    Result.PreRotateY := 0;
+    Result.PreRotateZ := 0;
+  end;
+
+end;
+
+function NewCabAnimValue(const Spec: TNewCabAnimSpec;
+  Item: TNewCabItem; ItemIndex: Integer): Single;
+var
+  pos: Integer;
+  pressRatio: Single;
+begin
+  Result := 0;
+  if Spec.ValueCount = 0 then Exit;
+
+  if Spec.Mode = ncamTranslation then
+  begin
+    // PressOffset остаётся сглаженным состоянием нажатия, но величина
+    // берётся из оригинального XML, а не из произвольного dz.
+    if NEWCAB_PRESS_DEPTH <> 0 then
+      pressRatio := Item.PressOffset / NEWCAB_PRESS_DEPTH
+    else
+      pressRatio := 0;
+    if pressRatio < 0 then pressRatio := 0;
+    if pressRatio > 1 then pressRatio := 1;
+    Result := Spec.Values[1] * pressRatio;
+    Exit;
+  end;
+
+  pos := 0;
+  if (ItemIndex < Length(Toggle3State)) and (Spec.ValueCount > 2) then
+    pos := Toggle3State[ItemIndex]
+  else if Item.Toggled then
+    pos := 1;
+
+  if pos < 0 then pos := 0;
+  if pos >= Spec.ValueCount then pos := Spec.ValueCount - 1;
+  Result := Spec.Values[pos];
+end;
+
+procedure ApplyNewCabAnim(const Spec: TNewCabAnimSpec; Value: Single;
+  const Transform: TNewCabTransform);
+begin
+  // T * P * Rpre * Ranim * (-P). Это та же схема, что matrix * rotate в
+  // RRS, только pivot хранится отдельно, потому что DMD не хранит node tree.
+  if (Transform.PivotX <> 0) or (Transform.PivotY <> 0) or
+     (Transform.PivotZ <> 0) then
+    Position3D(Transform.PivotX, Transform.PivotY, Transform.PivotZ);
+
+  if Transform.PreRotateX <> 0 then RotateX(Transform.PreRotateX);
+  if Transform.PreRotateY <> 0 then RotateY(Transform.PreRotateY);
+  if Transform.PreRotateZ <> 0 then RotateZ(Transform.PreRotateZ);
+
+  if Spec.Mode = ncamRotation then
+  begin
+    // DGLEngine's RotateX/Y/Z internally use negative OpenGL axes.
+    if Spec.AxisX <> 0 then RotateX(-Value * Spec.AxisX)
+    else if Spec.AxisY <> 0 then RotateY(-Value * Spec.AxisY)
+    else if Spec.AxisZ <> 0 then RotateZ(-Value * Spec.AxisZ);
+  end
+  else if Spec.Mode = ncamTranslation then
+  begin
+    Position3D(Spec.AxisX * Value, Spec.AxisY * Value, Spec.AxisZ * Value);
+  end;
+
+  if (Transform.PivotX <> 0) or (Transform.PivotY <> 0) or
+     (Transform.PivotZ <> 0) then
+    Position3D(-Transform.PivotX, -Transform.PivotY, -Transform.PivotZ);
+end;
 
 var
   NewCabItems:           array of TNewCabItem;
@@ -474,6 +684,7 @@ end;
 procedure InitDynamicRA3;
 var
   basePath, texPath: string;
+  arrowPath: string;
 
   function Load(const FileName: string): Integer;
   begin
@@ -510,11 +721,32 @@ begin
   IndicatorW_M_ModelID  := Load('indicator_LS_W_M.dmd');
   IndicatorRY_M_ModelID := Load('indicator_LS_RY_M.dmd');
 
-  // Gauge arrows
-  ArrowPMModelID  := Load('arrow_PM.dmd');
-  ArrowTC1ModelID := Load('arrow_TC1.dmd');
-  ArrowTC2ModelID := Load('arrow_TC2.dmd');
-  ArrowTMModelID  := Load('arrow_TM.dmd');
+  // Gauge arrows.
+  // These are deliberately loaded from newcab/Material #16.011, not from
+  // dynamic/.  The newcab exports contain the same local pivot/orientation
+  // as the gauge objects.  The old dynamic copies have a different baked
+  // orientation, so they sink into the dial when rotated.
+  arrowPath := 'C:\ZDSimulator55.008new\ra3\newcab\Material #16.011\';
+  if FileExists(arrowPath + 'arrow_PM.dmd') then
+    ArrowPMModelID := LoadModel(arrowPath + 'arrow_PM.dmd', 0, False)
+  else
+    ArrowPMModelID := Load('arrow_PM.dmd');
+  if FileExists(arrowPath + 'arrow_TC1.dmd') then
+    ArrowTC1ModelID := LoadModel(arrowPath + 'arrow_TC1.dmd', 0, False)
+  else
+    ArrowTC1ModelID := Load('arrow_TC1.dmd');
+  if FileExists(arrowPath + 'arrow_TC2.dmd') then
+    ArrowTC2ModelID := LoadModel(arrowPath + 'arrow_TC2.dmd', 0, False)
+  else
+    ArrowTC2ModelID := Load('arrow_TC2.dmd');
+  if FileExists(arrowPath + 'arrow_TM.dmd') then
+    ArrowTMModelID := LoadModel(arrowPath + 'arrow_TM.dmd', 0, False)
+  else
+    ArrowTMModelID := Load('arrow_TM.dmd');
+
+  texPath := arrowPath + 'ra3_11_RGBA.bmp';
+  if FileExists(texPath) then
+    ArrowTextureID := LoadTextureFromFile(texPath, 0, -1);
 
   // Textures
   texPath := basePath + 'ra3_22_RGBA.bmp';
@@ -1553,6 +1785,11 @@ begin
   for i := 0 to High(NewCabFolderTex) do
     NewCabLog(AnsiString('  folder="') + NewCabFolderTex[i].Folder
               + AnsiString('" texID=') + AnsiString(IntToStr(NewCabFolderTex[i].TexID)));
+
+  // Инициализируем массив состояний 3-позиционных тумблеров
+  SetLength(Toggle3State, Length(NewCabItems));
+  for i := 0 to High(Toggle3State) do
+    Toggle3State[i] := 0;
 end;
 
 procedure DrawTelega;
@@ -1847,6 +2084,7 @@ procedure UpdateNewCabClicks;
 var
   i: Integer;
   lb: Boolean;
+  animSpec: TNewCabAnimSpec;
 begin
   lb := IsKeyDownEx(VK_LBUTTON);
 
@@ -1870,11 +2108,17 @@ begin
 
       nciToggle, nciAzv:
         begin
-          // Rising-edge → переключение состояния. Визуально наклон по PressOffset
-          // не делаем (тумблеры рисуются той же моделью); состояние Toggled
-          // сейчас доступно для будущего использования (lighting/audio).
           if lb and not NewCabItems[i].LastLMB then
-            NewCabItems[i].Toggled := not NewCabItems[i].Toggled;
+          begin
+            // Многопозиционные тумблеры: состояние хранится отдельно от
+            // boolean Toggled (прожектор, вентиляция, направление и т.п.).
+            animSpec := NewCabAnimSpec(NewCabItems[i].Name,
+                                       NewCabItems[i].ItemType);
+            if (i < Length(Toggle3State)) and (animSpec.ValueCount > 2) then
+              Toggle3State[i] := (Toggle3State[i] + 1) mod animSpec.ValueCount
+            else
+              NewCabItems[i].Toggled := not NewCabItems[i].Toggled;
+          end;
         end;
 
       nciDimmer:
@@ -1891,7 +2135,10 @@ end;
 procedure DrawNewCabRA3;
 var
   i: Integer;
-  z: Single;
+  z, animValue: Single;
+  sigVal: Single;
+  animSpec: TNewCabAnimSpec;
+  itemTransform: TNewCabTransform;
 begin
   // .dmd объекты в newcab экспортированы с ЛОКАЛЬНЫМ пивотом в центре каждого
   // объекта — координаты пивота (X,Y,Z) живут в objects_data.txt. Поэтому
@@ -1907,19 +2154,55 @@ begin
     NewCabItems[i].PressOffset := NewCabItems[i].PressOffset
       + (NewCabItems[i].PressTarget - NewCabItems[i].PressOffset) * NEWCAB_PRESS_LERP;
 
-    z := NewCabItems[i].BaseZ + NewCabItems[i].PressOffset;
+    animSpec := NewCabAnimSpec(NewCabItems[i].Name, NewCabItems[i].ItemType);
+    itemTransform := NewCabTransform(NewCabItems[i].Name,
+                                     NewCabItems[i].ItemType);
+    animValue := NewCabAnimValue(animSpec, NewCabItems[i], i);
+    if animSpec.Mode = ncamNone then
+      z := NewCabItems[i].BaseZ + NewCabItems[i].PressOffset
+    else
+      z := NewCabItems[i].BaseZ;
+
+    // Подсветка индикаторов (buttonindicator_*) от аналоговых сигналов
+    sigVal := 0;
+    if Copy(string(NewCabItems[i].Name), 1, 16) = 'buttonindicator_' then
+    begin
+      // Ищем сигнал по имени
+      if NewCabItems[i].Name = 'buttonindicator_open_passdoorsl' then
+        sigVal := AnalogSignal[SIGNAL_DOOR_L_WARN]
+      else if NewCabItems[i].Name = 'buttonindicator_open_passdoorsr' then
+        sigVal := AnalogSignal[SIGNAL_DOOR_R_WARN]
+      else if NewCabItems[i].Name = 'buttonindicator_close_passdoorsl' then
+        sigVal := AnalogSignal[126]
+      else if NewCabItems[i].Name = 'buttonindicator_close_passdoorsr' then
+        sigVal := AnalogSignal[135]
+      else if NewCabItems[i].Name = 'buttonindicator_steps' then
+        sigVal := AnalogSignal[131]
+      else if NewCabItems[i].Name = 'buttonindicator_maintaining_speed' then
+        sigVal := AnalogSignal[SIGNAL_SPEED_HOLD]
+      else if NewCabItems[i].Name = 'buttonindicator_mirror_heating' then
+        sigVal := AnalogSignal[178];
+
+      // Если сигнал > 0 — индикатор горит зелёным
+      if sigVal > 0.5 then
+        glColor4f(0, 1, 0, 1)
+      else
+        glColor4f(0.3, 0.3, 0.3, 1);
+    end
+    else if NewCabItems[i].Hovered then
+      glColor4f(1, 1, 0, 1)
+    else
+      glColor4f(1, 1, 1, 1);
 
     BeginObj3D;
       Position3D(NewCabItems[i].X, NewCabItems[i].Y, z);
 
+      // Сначала базовая ориентация/pivot конкретной модели, затем ось и
+      // величина из XML RA-3.
+      ApplyNewCabAnim(animSpec, animValue, itemTransform);
+
       if NewCabItems[i].TextureID <> 0 then
         SetTexture(NewCabItems[i].TextureID);
-
-      // Подсветка: жёлтый при hover.
-      if NewCabItems[i].Hovered then
-        glColor4f(1, 1, 0, 1)
-      else
-        glColor4f(1, 1, 1, 1);
 
       DrawModel(NewCabItems[i].ModelID, 0, False);
     EndObj3D;
@@ -2638,22 +2921,73 @@ begin
   if ModelID = 0 then Exit;
 
   BeginObj3D;
-
-    // 1. ставим модель
     Position3D(x, y, z);
-    SetTexture(ControllerTextureID);
-    DrawModel(ArrowPMModelID, 0, False);
-
+    // RA-3 XML uses axis 0 -1 0 for these arrows.  DGLEngine's RotateY
+    // already applies the negative OpenGL Y axis, so the signal angle is
+    // passed without an extra sign inversion.
+    RotateY(angle);
+    if ArrowTextureID <> 0 then
+      SetTexture(ArrowTextureID)
+    else
+      SetTexture(ControllerTextureID);
+    DrawModel(ModelID, 0, False);
   EndObj3D;
 end;
+
+// Вспомогательная: плавное движение стрелки
+var
+  ArrowAngle_PM: Single = 0;
+  ArrowAngle_BP: Single = 0;
+  ArrowAngle_TC1: Single = 0;
+  ArrowAngle_TC2: Single = 0;
+  ArrowAngle_V24: Single = 0;
+  ArrowAngle_V110: Single = 0;
 
 procedure DrawArrows;
 var
   angle: Single;
+  pm, bp, tc1, tc2, v24, v110: Single;
+  dt: Single;
 begin
-  angle := 0; // временно
+  dt := 1.0 / 60.0; // приблизительный dt
 
-  DrawArrow(ArrowPMModelID, 1.16464, 10.6383, 2.75221, angle);
+  // Читаем сигналы
+  pm  := AnalogSignal[SIGNAL_ARROW_PM];
+  bp  := AnalogSignal[SIGNAL_ARROW_BP];
+  tc1 := AnalogSignal[SIGNAL_ARROW_BC_FWD];
+  tc2 := AnalogSignal[SIGNAL_ARROW_BC_BWD];
+  v24 := AnalogSignal[SIGNAL_ARROW_VOLT_24V];
+  v110 := AnalogSignal[SIGNAL_ARROW_VOLT_110V];
+
+  // Интерполируем через KeyPoints
+  angle := EvalAnim(AnimChannels[SIGNAL_ARROW_PM], pm);
+  LerpTo(ArrowAngle_PM, angle, 10.0, dt);
+
+  angle := EvalAnim(AnimChannels[SIGNAL_ARROW_BP], bp);
+  LerpTo(ArrowAngle_BP, angle, 10.0, dt);
+
+  angle := EvalAnim(AnimChannels[SIGNAL_ARROW_BC_FWD], tc1);
+  LerpTo(ArrowAngle_TC1, angle, 10.0, dt);
+
+  angle := EvalAnim(AnimChannels[SIGNAL_ARROW_BC_BWD], tc2);
+  LerpTo(ArrowAngle_TC2, angle, 10.0, dt);
+
+  angle := EvalAnim(AnimChannels[SIGNAL_ARROW_VOLT_24V], v24);
+  LerpTo(ArrowAngle_V24, angle, 10.0, dt);
+
+  angle := EvalAnim(AnimChannels[SIGNAL_ARROW_VOLT_110V], v110);
+  LerpTo(ArrowAngle_V110, angle, 10.0, dt);
+
+  // Рисуем стрелки в их позициях из objects_data.txt
+  // dial2 (1.1646, 10.6383, 2.7522) — ПМ + ТМ (двухстрелочный)
+  // Запас: если arrow_TM.dmd нет, используем ArrowPMModelID как fallback
+  DrawArrow(ArrowPMModelID, 1.16464, 10.6383, 2.75221, ArrowAngle_PM);
+  if ArrowTMModelID <> 0 then
+    DrawArrow(ArrowTMModelID, 1.16464, 10.6383, 2.75221, ArrowAngle_BP);
+
+  // dial1 (1.0653, 10.6790, 2.7517) — ТЦ1 + ТЦ2 (двухстрелочный)
+  DrawArrow(ArrowTC1ModelID, 1.06527, 10.6790, 2.75172, ArrowAngle_TC1);
+  DrawArrow(ArrowTC2ModelID, 1.06527, 10.6790, 2.75172, ArrowAngle_TC2);
 end;
 
 procedure InitRA3;
@@ -2674,6 +3008,36 @@ end;
 // Раньше это делалось вручную через Alt+Z — теперь автоматически.
 var
   RA3_PrevActive: Boolean = False;
+
+// Синхронизация состояний тогглов newcab → AnalogSignal
+// Вызывается каждый кадр после UpdateNewCabClicks
+procedure SyncToggleSignals;
+var
+  i: Integer;
+begin
+  for i := 0 to High(NewCabItems) do
+  begin
+    if NewCabItems[i].ItemType <> nciToggle then Continue;
+
+    // Сопоставляем имя тумблера с сигналом
+    if NewCabItems[i].Name = 'toggle_searchlight' then
+    begin
+      // 3-позиционный: 0→0.0, 1→0.5, 2→1.0
+      if i < Length(Toggle3State) then
+        AnalogSignal[SIGNAL_SPOTLIGHT] := Toggle3State[i] * 0.5;
+    end
+    else if NewCabItems[i].Name = 'toggle_lighting_salon' then
+      AnalogSignal[SIGNAL_SALON_LIGHT] := Ord(NewCabItems[i].Toggled)
+    else if NewCabItems[i].Name = 'toggle_parking_brake' then
+      AnalogSignal[130] := Ord(NewCabItems[i].Toggled)
+    else if NewCabItems[i].Name = 'toggle_glass_heating' then
+      AnalogSignal[64] := Ord(NewCabItems[i].Toggled)
+    else if NewCabItems[i].Name = 'toggle_cabin_lighting' then
+      AnalogSignal[SIGNAL_CAB_LIGHT] := Ord(NewCabItems[i].Toggled)
+    else if NewCabItems[i].Name = 'toggle_remote_control_lighting_M' then
+      AnalogSignal[SIGNAL_PULT_LIGHT] := Ord(NewCabItems[i].Toggled);
+  end;
+end;
 
 procedure DrawRA3;
 var
@@ -2722,6 +3086,14 @@ begin
 
   StepRA3Physics;
 
+  // ── ЗАПОЛНЕНИЕ АНАЛОГОВЫХ СИГНАЛОВ ──────────────────────────────────
+  FillAnalogSignals;
+
+  // Переносим состояния тумблеров newcab в AnalogSignal
+  UpdateNewCabHover;
+  UpdateNewCabClicks;
+  SyncToggleSignals;
+
   // T = открыть левые, Shift+T = закрыть левые
   tNow := IsKeyDown(Ord('T'));
   if tNow and not LastTState then
@@ -2736,10 +3108,7 @@ begin
 
   // --- отрисовка ---
   DrawCabRA3;
-  // newcab hover/click обновляем ДО отрисовки — чтобы PressOffset/Hovered
-  // флаги были актуальны для DrawNewCabRA3 в этом же кадре.
-  UpdateNewCabHover;
-  UpdateNewCabClicks;
+  // newcab hover/click уже обновлены выше (перед SyncToggleSignals)
   DrawNewCabRA3;
   DrawLocoRA3;
   DrawTelega;

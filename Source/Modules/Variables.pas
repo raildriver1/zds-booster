@@ -237,7 +237,6 @@ var
   newsky : boolean = false;
 
   Config_Freecam: Boolean = False;     // ���������� ���������� ��������� �������
-  Config_MainCamera: Boolean = False;
   Config_MaxDistance: Boolean = False;
   Config_NewSky: Boolean = False;
 
